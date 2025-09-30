@@ -10,8 +10,8 @@
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
-    <Name>RSNA_2024_Lumbar_Spine Degenerative_Classification</Name>
-    <RootNamespace>2024_RSNA_Lumbar_Spine Degenerative_Classification</RootNamespace>
+    <Name>RSNA_2024_Lumbar_Spine_Degenerative_Classification</Name>
+    <RootNamespace>2024_RSNA_Lumbar_Spine_Degenerative_Classification</RootNamespace>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -29,9 +29,10 @@
     <Folder Include=".github\workflows\" />
     <Folder Include="logs\" />
     <Folder Include=".github\" />
-    <Folder Include="src\models\" />
-    <Folder Include="src\utils\" />
-    <Folder Include="src\pipeline\" />
+    <Folder Include="src\core\" />
+    <Folder Include="src\core\models\" />
+    <Folder Include="src\core\pipeline\" />
+    <Folder Include="src\core\utils\" />
     <Folder Include="tests\" />
     <Folder Include="src\" />
     <Folder Include="tests\e2e\test_submission\" />
@@ -47,6 +48,7 @@
     <Folder Include="tests\unit\test_utils\" />
     <Folder Include="tests\unit\test_models\" />
     <Folder Include="tests\unit\test_data\" />
+    <Folder Include="data\" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".github\workflows\main.yml" />

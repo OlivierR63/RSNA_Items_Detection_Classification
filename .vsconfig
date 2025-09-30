@@ -1,0 +1,7 @@
+{
+  "solution": {
+    "search": {
+      "exclude": ["**/data/**"]
+    }
+  }
+}
