@@ -362,4 +362,8 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
+# Exclut uniquement le lien symbolique "data/"
 data/
+
+# Inclut tous les autres répertoires (y compris src/core/data_handlers/)
+!src/core/data_handlers/

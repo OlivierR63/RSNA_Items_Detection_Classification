@@ -1,0 +1,22 @@
+# Chemins
+dicom_root_dir: "data/lumbar_spine/dicom/training/"
+csv_files:
+  series_description: "data/lumbar_spine/csv/train_series_descriptions.csv"
+  label_coordinates: "data/lumbar_spine/csv/train_label_coordinates.csv"
+  train: "data/lumbar_spine/csv/train.csv"
+output_dir: "data/lumbar_spine/output/"
+
+# Modèles
+model_2d:
+  type: "yolo"
+  input_shape: [256, 256, 1]
+  num_classes: 2
+
+model_3d:
+  type: "cnn3d"
+  input_shape: [64, 64, 64, 1]
+  num_classes: 3
+
+# Hyperparamètres
+batch_size: 8
+epochs: 50

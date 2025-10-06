@@ -5,13 +5,15 @@
     <ProjectGuid>18432df5-4b4c-4401-a1d7-4a91bb780257</ProjectGuid>
     <ProjectHome>
     </ProjectHome>
-    <StartupFile>src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py</StartupFile>
+    <StartupFile>src\projects\lumbar_spine\train.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
     <Name>RSNA_2024_Lumbar_Spine_Degenerative_Classification</Name>
     <RootNamespace>2024_RSNA_Lumbar_Spine_Degenerative_Classification</RootNamespace>
+    <InterpreterId>CondaEnv|CondaEnv|airflow_env</InterpreterId>
+    <TestFramework>Pytest</TestFramework>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -24,10 +26,11 @@
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
-    <Compile Include="src\core\data\csv_metadata.py" />
-    <Compile Include="src\core\data\data_loader.py" />
-    <Compile Include="src\core\data\dicom_dataset.py" />
-    <Compile Include="src\core\data\__init__.py" />
+    <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
+    <Compile Include="src\core\data_handlers\data_pipeline.py" />
+    <Compile Include="src\core\data_handlers\dicom_dataset.py" />
+    <Compile Include="src\core\data_handlers\dicom_tfrecord_dataset.py" />
+    <Compile Include="src\core\data_handlers\__init__.py" />
     <Compile Include="src\core\models\base_model.py" />
     <Compile Include="src\core\models\model_2d.py" />
     <Compile Include="src\core\models\model_3d.py" />
@@ -35,18 +38,22 @@
     <Compile Include="src\core\models\__init__.py" />
     <Compile Include="src\core\pipeline\airflow_pipeline.py" />
     <Compile Include="src\core\pipeline\base_pipeline.py" />
+    <Compile Include="src\core\pipeline\lumbar_spine_pipeline.py" />
     <Compile Include="src\core\pipeline\tfx_pipeline.py" />
     <Compile Include="src\core\pipeline\__init__.py" />
     <Compile Include="src\core\utils\file_utils.py" />
     <Compile Include="src\core\utils\logger.py" />
+    <Compile Include="src\core\utils\packing_utils.py" />
     <Compile Include="src\core\utils\visualization.py" />
     <Compile Include="src\core\utils\__init__.py" />
     <Compile Include="src\projects\lumbar_spine\dataset.py" />
+    <Compile Include="src\projects\lumbar_spine\lumbar_dicom_tfrecord_dataset.py" />
     <Compile Include="src\projects\lumbar_spine\pipeline.py" />
     <Compile Include="src\projects\lumbar_spine\train.py" />
     <Compile Include="src\projects\lumbar_spine\__init__.py" />
     <Compile Include="src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py" />
     <Compile Include="tests\conftest.py" />
+    <Compile Include="tests\unit\test_data\test_dicom_dataset.py" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include=".github\workflows\" />
@@ -55,7 +62,7 @@
     <Folder Include="scripts\" />
     <Folder Include="src\core\" />
     <Folder Include="src\core\models\" />
-    <Folder Include="src\core\data\" />
+    <Folder Include="src\core\data_handlers\" />
     <Folder Include="src\core\pipeline\" />
     <Folder Include="src\core\utils\" />
     <Folder Include="src\config\" />
@@ -85,9 +92,12 @@
     <Content Include="scripts\create_symlink.ps1" />
     <Content Include="scripts\run_pipeline.ps1" />
     <Content Include="scripts\setup_environment.ps1" />
-    <Content Include="src\config\default_config.yaml" />
-    <Content Include="src\projects\lumbar_spine\config.yml" />
+    <Content Include="src\config\brain_aneuvrysm.yaml" />
+    <Content Include="src\config\lumbar_spine_config.yaml" />
     <Content Include="tests\requirements.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <InterpreterReference Include="CondaEnv|CondaEnv|airflow_env" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
