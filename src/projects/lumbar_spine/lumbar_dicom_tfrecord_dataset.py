@@ -2,7 +2,7 @@
 
 # src/core/data_handlers/dicom_tfrecord_dataset.py
 import tensorflow as tf
-from typing import Dict, Tuple, List, None
+from typing import Dict, Tuple, List
 from src.core.data_handlers.dicom_tfrecord_dataset import DicomTFRecordDataset
 from src.projects.lumbar_spine.csv_metadata import CSVMetadata
 from pathlib import Path
@@ -10,6 +10,7 @@ from tqdm import tqdm
 import pandas as pd
 import SimpleITK as sitk
 import struct
+import io
 
 class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     """TensorFlow Dataset for loading DICOM TFRecords."""
@@ -450,73 +451,69 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             struct.error: If the byte sequence is shorter than expected (malformed data).
         """
         # Use io.BytesIO for efficient reading of the byte sequence
-    buffer = io.BytesIO(metadata_bytes)
+        buffer = io.BytesIO(metadata_bytes)
     
-    # --- Deserialize Header (15 bytes total) ---
+        # --- Deserialize Header (15 bytes total) ---
     
-    # Read study_id (5 bytes, big-endian, unsigned)
-    study_id_bytes = buffer.read(5)
-    study_id = int.from_bytes(study_id_bytes, byteorder='big', signed=False)
+        # Read study_id (5 bytes, big-endian, unsigned)
+        study_id_bytes = buffer.read(5)
+        study_id = int.from_bytes(study_id_bytes, byteorder='big', signed=False)
 
-    # Read series_id (5 bytes, big-endian, unsigned)
-    series_id_bytes = buffer.read(5)
-    series_id = int.from_bytes(series_id_bytes, byteorder='big', signed=False)
+        # Read series_id (5 bytes, big-endian, unsigned)
+        series_id_bytes = buffer.read(5)
+        series_id = int.from_bytes(series_id_bytes, byteorder='big', signed=False)
 
-    # Read instance_number (2 bytes, unsigned short '=H')
-    # Unpack returns a tuple, so we take the first element [0]
-    instance_number = struct.unpack('=H', buffer.read(2))[0]
+        # Read instance_number (2 bytes, unsigned short '=H')
+        # Unpack returns a tuple, so we take the first element [0]
+        instance_number = struct.unpack('=H', buffer.read(2))[0]
 
-    # Read description (1 byte, unsigned char '=B')
-    description = struct.unpack('=B', buffer.read(1))[0]
+        # Read description (1 byte, unsigned char '=B')
+        description = struct.unpack('=B', buffer.read(1))[0]
     
-    # Read condition (1 byte, unsigned char '=B')
-    condition = struct.unpack('=B', buffer.read(1))[0]
+        # Read condition (1 byte, unsigned char '=B')
+        condition = struct.unpack('=B', buffer.read(1))[0]
     
-    # Read nb_records (1 byte, unsigned char '=B'). This determines the loop count.
-    nb_records = struct.unpack('=B', buffer.read(1))[0]
+        # Read nb_records (1 byte, unsigned char '=B'). This determines the loop count.
+        nb_records = struct.unpack('=B', buffer.read(1))[0]
     
-    # Initialize the results dictionary
-    result = {
-        'study_id': study_id,
-        'series_id': series_id,
-        'instance_number': instance_number,
-        'description': description,
-        'condition': condition,
-        'nb_records': nb_records,
-        'records': []
-    }
+        # Initialize the results dictionary
+        result = {
+            'study_id': study_id,
+            'series_id': series_id,
+            'instance_number': instance_number,
+            'description': description,
+            'condition': condition,
+            'nb_records': nb_records,
+            'records': []
+            }
     
-    # --- Deserialize Payload (8 bytes per record) ---
+        # --- Deserialize Payload (8 bytes per record) ---
     
-    for _ in range(nb_records):
-        # Read level (1 byte, unsigned char '=B')
-        level = struct.unpack('=B', buffer.read(1))[0]
+        for _ in range(nb_records):
+            # Read level (1 byte, unsigned char '=B')
+            level = struct.unpack('=B', buffer.read(1))[0]
         
-        # Read severity (1 byte, unsigned char '=B')
-        severity = struct.unpack('=B', buffer.read(1))[0]
+            # Read severity (1 byte, unsigned char '=B')
+            severity = struct.unpack('=B', buffer.read(1))[0]
         
-        # Read x (3 bytes, big-endian, unsigned)
-        x_bytes = buffer.read(3)
+            # Read x (3 bytes, big-endian, unsigned)
+            x_bytes = buffer.read(3)
         
-        # The stored integer represents 100 * actual float value.
-        x_scaled = int.from_bytes(x_bytes, byteorder='big', signed=False)
-        x = x_scaled / 100.0 # Rescale back to float
+            # The stored integer represents 100 * actual float value.
+            x_scaled = int.from_bytes(x_bytes, byteorder='big', signed=False)
+            x = x_scaled / 100.0 # Rescale back to float
         
-        # Read y (3 bytes, big-endian, unsigned)
-        y_bytes = buffer.read(3)
-        # The stored integer represents 100 * actual float value.
-        y_scaled = int.from_bytes(y_bytes, byteorder='big', signed=False)
-        y = y_scaled / 100.0 # Rescale back to float
+            # Read y (3 bytes, big-endian, unsigned)
+            y_bytes = buffer.read(3)
+            # The stored integer represents 100 * actual float value.
+            y_scaled = int.from_bytes(y_bytes, byteorder='big', signed=False)
+            y = y_scaled / 100.0 # Rescale back to float
 
-        # Append the deserialized record
-        result['records'].append({
-            'level': level,
-            'severity': severity,
-            'x': x,
-            'y': y
-            })
+            # Append the deserialized record
+            result['records'].append({'level': level, 'severity': severity, 'x': x, 'y': y})
 
-         return result
+        return result
+
 
     
     def encode_dataframe(self, metadata_df: pd.DataFrame) -> pd.DataFrame:
@@ -568,7 +565,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
 
     def create_string_to_int_mapper(self, strings: list) -> callable:
-         """Creates a mapping function between strings and integers.
+        """Creates a mapping function between strings and integers.
 
         This is a factory function that generates a callable (the mapper) 
         capable of converting predefined category strings into their corresponding 
@@ -586,7 +583,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         # Create the primary dictionary {string: integer} using enumeration.
         # The integer (i) corresponds to the string's index in the list.
         mapping = {s: i for i, s in enumerate(strings)}
-    
+
         # Create the optional reverse dictionary {integer: string} for inspection/deserialization.
         reverse_mapping = {i: s for i, s in enumerate(strings)}  
 
