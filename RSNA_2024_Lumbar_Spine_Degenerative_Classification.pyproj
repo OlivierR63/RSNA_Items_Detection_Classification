@@ -26,6 +26,7 @@
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
+    <Compile Include="src\core\pipeline\transform.py" />
     <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
     <Compile Include="src\core\data_handlers\data_pipeline.py" />
     <Compile Include="src\core\data_handlers\dicom_dataset.py" />
@@ -94,6 +95,7 @@
     <Content Include="scripts\setup_environment.ps1" />
     <Content Include="src\config\brain_aneuvrysm.yaml" />
     <Content Include="src\config\lumbar_spine_config.yaml" />
+    <Content Include="src\projects\brain_aneuvrysm\__init__.py %28brain_aneuvrysm%29" />
     <Content Include="tests\requirements.txt" />
   </ItemGroup>
   <ItemGroup>
