@@ -104,4 +104,4 @@ class CSVMetadata:
         # Create the hash table. Unknown keys will return an empty string.
         return tf.lookup.StaticHashTable(
             tf.lookup.KeyValueTensorInitializer(keys, values), 
-            default_value=""
+            default_value="")
