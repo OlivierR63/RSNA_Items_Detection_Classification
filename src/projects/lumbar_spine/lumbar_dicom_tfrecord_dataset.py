@@ -1,6 +1,5 @@
 # coding: utf-8
 
-# src/core/data_handlers/dicom_tfrecord_dataset.py
 import tensorflow as tf
 from typing import Dict, Tuple, List
 from src.core.data_handlers.dicom_tfrecord_dataset import DicomTFRecordDataset
@@ -18,7 +17,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
-        self.generate_tfrecord_files()  # Generate the TFRecords if needed.
  
 
     def generate_tfrecord_files(self) -> None:
@@ -39,9 +37,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             - TFRecord files are only generated if the output directory is empty.
             - The DICOM root directory and output directory are specified in the configuration.
         """
+        print("Appel de generate_tfrecord_file")
 
         # 2. Prepare the directories
-        self._tfrecord_pattern.mkdir(parents=True, exist_ok=True)
+        self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
         # 3. Load and merge metadata
         metadata_handler = CSVMetadata(**self._config["csv_files"])
@@ -216,79 +215,79 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     def convert_dicom_to_tfrecords(self, root_dir: str, metadata_df: pd.DataFrame, output_dir: str) -> None:
         """
-    Converts DICOM files stored in a hierarchical directory structure into 
-    TensorFlow TFRecord files, generating one TFRecord file per study.
+        Converts DICOM files stored in a hierarchical directory structure into 
+        TensorFlow TFRecord files, generating one TFRecord file per study.
 
-    This function iterates through all DICOM files, reads the image data, 
-    retrieves the pre-serialized metadata, and writes both to a TFRecord file 
-    for optimized data loading during training.
+        This function iterates through all DICOM files, reads the image data, 
+        retrieves the pre-serialized metadata, and writes both to a TFRecord file 
+        for optimized data loading during training.
 
-    Args:
-        root_dir (str): The path to the root directory containing study subfolders 
-                        (e.g., /data/dicom_root/).
-        metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata 
-                                    used to retrieve the serialized bytes.
-        output_dir (str): The directory where the resulting TFRecord files will be saved.
+        Args:
+            root_dir (str): The path to the root directory containing study subfolders 
+                            (e.g., /data/dicom_root/).
+            metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata 
+                                        used to retrieve the serialized bytes.
+            output_dir (str): The directory where the resulting TFRecord files will be saved.
 
-    Returns:
-        None: The function saves files to disk but returns nothing.
-    """
+        Returns:
+            None: The function saves files to disk but returns nothing.
+        """
     
-    # Initialize the output directory, creating it if it doesn't exist.
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+        # Initialize the output directory, creating it if it doesn't exist.
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Iterate over each study folder in the root directory, using tqdm for a progress bar.
-    for study_path in tqdm(list(Path(root_dir).iterdir())):
-        if not study_path.is_dir():
-            continue
+        # Iterate over each study folder in the root directory, using tqdm for a progress bar.
+        for study_path in tqdm(list(Path(root_dir).iterdir())):
+            if not study_path.is_dir():
+                continue
 
-        study_id = study_path.name
-        # Define the output file path for the current study's TFRecord.
-        output_path = output_dir / f"{study_id}.tfrecord"
+            study_id = study_path.name
+            # Define the output file path for the current study's TFRecord.
+            output_path = output_dir / f"{study_id}.tfrecord"
 
-        # Open the TFRecord writer, ensuring all records for the study go into one file.
-        with tf.io.TFRecordWriter(str(output_path)) as writer:
-            # Iterate through series subfolders within the current study.
-            for series_path in study_path.iterdir():
-                if not series_path.is_dir():
-                    continue
+            # Open the TFRecord writer, ensuring all records for the study go into one file.
+            with tf.io.TFRecordWriter(str(output_path)) as writer:
+                # Iterate through series subfolders within the current study.
+                for series_path in study_path.iterdir():
+                    if not series_path.is_dir():
+                        continue
 
-                series_id = int(series_path.name)
-                # Iterate over all DICOM files (*.dcm) within the current series.
-                for dicom_path in series_path.glob("*.dcm"):
+                    series_id = int(series_path.name)
+                    # Iterate over all DICOM files (*.dcm) within the current series.
+                    for dicom_path in series_path.glob("*.dcm"):
                     
-                    # --- 1. Process Image Data ---
+                        # --- 1. Process Image Data ---
                     
-                    # Load the DICOM image using SimpleITK.
-                    img = sitk.ReadImage(str(dicom_path))
-                    # Convert the SimpleITK image object to a NumPy array.
-                    img_array = sitk.GetArrayFromImage(img)
+                        # Load the DICOM image using SimpleITK.
+                        img = sitk.ReadImage(str(dicom_path))
+                        # Convert the SimpleITK image object to a NumPy array.
+                        img_array = sitk.GetArrayFromImage(img)
 
-                    # Convert the NumPy array to a TensorFlow Tensor, preserving the original type (e.g., uint16).
-                    img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
-                    # Serialize the Tensor to a byte string for storage in the TFRecord.
-                    img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
+                        # Convert the NumPy array to a TensorFlow Tensor, preserving the original type (e.g., uint16).
+                        img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
+                        # Serialize the Tensor to a byte string for storage in the TFRecord.
+                        img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
 
-                    # --- 2. Process Metadata ---
+                        # --- 2. Process Metadata ---
                     
-                    # Call an assumed helper method to retrieve the pre-serialized metadata bytes 
-                    # for the specific DICOM file from the main metadata DataFrame.
-                    serialized_metadata = self.get_metadata_for_file(str(dicom_path), metadata_df)
+                        # Call an assumed helper method to retrieve the pre-serialized metadata bytes 
+                        # for the specific DICOM file from the main metadata DataFrame.
+                        serialized_metadata = self.get_metadata_for_file(str(dicom_path), metadata_df)
 
-                    # --- 3. Create and Write TFRecord Example ---
+                        # --- 3. Create and Write TFRecord Example ---
                     
-                    # Create the feature dictionary structure required by tf.train.Example.
-                    feature = {
-                        "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
-                        "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
-                    }
+                        # Create the feature dictionary structure required by tf.train.Example.
+                        feature = {
+                            "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
+                            "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
+                        }
 
-                    # Assemble the features into a single Example protocol buffer.
-                    example = tf.train.Example(features=tf.train.Features(feature=feature))
+                        # Assemble the features into a single Example protocol buffer.
+                        example = tf.train.Example(features=tf.train.Features(feature=feature))
                     
-                    # Serialize the Example and write it to the TFRecord file.
-                    writer.write(example.SerializeToString())
+                        # Serialize the Example and write it to the TFRecord file.
+                        writer.write(example.SerializeToString())
 
 
     def get_metadata_for_file(self, file_path: str, metadata_df: pd.DataFrame) -> dict:

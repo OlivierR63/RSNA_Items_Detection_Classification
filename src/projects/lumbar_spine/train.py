@@ -2,7 +2,7 @@
 
 import tensorflow as tf
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
-from src.core.data_handlers.csv_metadata import CSVMetadata
+from src.projects.lumbar_spine.csv_metadata import CSVMetadata
 from src.core.models.model_factory import ModelFactory
 from src.config.config_loader import ConfigLoader
 import os
