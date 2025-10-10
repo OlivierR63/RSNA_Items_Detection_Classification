@@ -2,9 +2,10 @@
 
 
 import tensorflow as tf
-from typing import Dict, Tuple
+from typing import Optional, Dict, Tuple
 from abc import ABC, abstractmethod # Imported ABC for class inheritance
 from pathlib import Path
+import logging
 
 class DicomTFRecordDataset(ABC):
     """
@@ -16,13 +17,14 @@ class DicomTFRecordDataset(ABC):
     """
 
 
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: dict, logger: Optional[logging.Logger] = None) -> None:
         """
         Initializes the dataset handler and sets up file paths.
 
         Args:
             config (dict): The configuration dictionary containing application settings, 
                            including "output_dir".
+            logger : Optional logger instance. If None, creates a new one
         """
         self._config = config
         
@@ -34,6 +36,8 @@ class DicomTFRecordDataset(ABC):
         
         # Automatically generate the TFRecord files upon initialization if they are missing.
         self.generate_tfrecord_files()
+
+        self.logger = logger if logger is not None and isinstance(logger, logging.Logger) else logging.getLogger(self.__class__.__name__)
 
 
     @abstractmethod
@@ -60,6 +64,7 @@ class DicomTFRecordDataset(ABC):
         pass
 
 
+    @abstractmethod
     def create_tf_dataset(self, batch_size: int = 8) -> tf.data.Dataset:
         """
         Creates an optimized TensorFlow Dataset pipeline from the TFRecord files.
@@ -74,31 +79,4 @@ class DicomTFRecordDataset(ABC):
         Returns:
             tf.data.Dataset: An optimized Dataset object.
         """
-        # 1. List all TFRecord files and shuffle the file order for better data mixing.
-        tfrecord_files = tf.data.Dataset.list_files(self._tfrecord_pattern, shuffle=True)
-
-        # 2. Use 'interleave' to read records from multiple files simultaneously and 
-        #    apply the parsing function. This prevents I/O blocking.
-        dataset = tfrecord_files.interleave(
-            # For each file path (x), create a TFRecordDataset and map the parsing function.
-            lambda x: tf.data.TFRecordDataset(x).map(
-                self._parse_tfrecord,
-                # Use AUTOTUNE to dynamically determine optimal parallelism.
-                num_parallel_calls=tf.data.AUTOTUNE
-            ),
-            # Use AUTOTUNE for setting the number of concurrent readers.
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-
-        # 3. Shuffle and optimize the dataset.
-        
-        # Shuffle the elements in the dataset using a large buffer.
-        dataset = dataset.shuffle(buffer_size=1000)
-        
-        # Combine individual elements into batches.
-        dataset = dataset.batch(batch_size)
-        
-        # Prefetch the next batch while the current batch is being processed by the model.
-        dataset = dataset.prefetch(tf.data.AUTOTUNE)
-
-        return dataset
+        pass

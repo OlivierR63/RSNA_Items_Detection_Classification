@@ -27,6 +27,7 @@
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
     <Compile Include="src\core\pipeline\transform.py" />
+    <Compile Include="src\core\utils\clean_logs.py" />
     <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
     <Compile Include="src\core\data_handlers\data_pipeline.py" />
     <Compile Include="src\core\data_handlers\dicom_dataset.py" />
@@ -42,7 +43,6 @@
     <Compile Include="src\core\pipeline\lumbar_spine_pipeline.py" />
     <Compile Include="src\core\pipeline\tfx_pipeline.py" />
     <Compile Include="src\core\pipeline\__init__.py" />
-    <Compile Include="src\core\utils\file_utils.py" />
     <Compile Include="src\core\utils\logger.py" />
     <Compile Include="src\core\utils\packing_utils.py" />
     <Compile Include="src\core\utils\visualization.py" />

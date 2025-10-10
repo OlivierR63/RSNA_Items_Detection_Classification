@@ -21,7 +21,8 @@ class ConfigLoader:
         
         # Determine the directory containing the configuration file. 
         # All relative paths in the config will be resolved based on this directory.
-        config_dir = Path(config_path).parent
+        #config_dir = Path(config_path).parent
+        config_dir = Path('C:/Users/Olivier/Desktop/Projet_Kaggle/RSNA_2024_Lumbar_Spine_Degenerative_Classification')
         
         # Open and safely load the configuration data from the YAML file.
         with open(config_path, 'r') as f:
@@ -43,7 +44,7 @@ class ConfigLoader:
                 self._config["csv_files"][csv_key] = str(config_dir / self._config["csv_files"][csv_key])
 
     
-    def get_config(self, key: str) -> Any:
+    def get_value(self, key: str, default:str) -> Any:
         """
         Retrieves a single configuration value by its key.
 
@@ -56,7 +57,7 @@ class ConfigLoader:
         Raises:
             KeyError: If the specified key is not found in the configuration.
         """
-        return self._config[key]
+        return self._config.get(key, default)
 
 
     def get(self) -> dict:

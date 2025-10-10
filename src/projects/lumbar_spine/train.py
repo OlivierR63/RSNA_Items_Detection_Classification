@@ -1,88 +1,180 @@
 # coding: utf-8
 
+from ast import Try, TryStar
+from typing import Optional, Dict, Any
+import logging
 import tensorflow as tf
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from src.projects.lumbar_spine.csv_metadata import CSVMetadata
 from src.core.models.model_factory import ModelFactory
 from src.config.config_loader import ConfigLoader
+from src.core.utils.logger import setup_logger, get_current_logger, log_method  # Import the logging system
+from src.core.utils.clean_logs import clean_old_logs  # Import the log cleaning utility
 import os
-from pathlib import Path # Required for path manipulation in callbacks and saving
+from pathlib import Path
+import signal
+import sys
 
-def main():
-    """
-    Main function to load configuration, set up the TensorFlow dataset pipeline, 
-    load and compile the 3D model, and start the training process.
-    """
-    # 1. Load the Configuration
-    # Reads settings (like paths, model parameters, batch size) from the YAML file.
-    config = ConfigLoader("src/config/lumbar_spine_config.yaml").get()
+def handle_interrupt(signum, frame):
+    """Handles interrupt signals (Ctrl+C) to ensure proper log closure."""
+    try: 
+        logger = get_current_logger()
+        logger.info("\nInterruption detected (Ctrl+C). Exiting gracefully...")
+    except RuntimeError:
+        print("\nInterruption detected (Ctrl+C). Exiting gracefully...")    
+    
+    sys.exit(0)
 
-    # 5. Build TFRecord Files (if needed) and Create the TensorFlow Dataset
-    # This calls the create_tf_dataset function, which handles reading and optimizing 
-    # the data loading pipeline from the generated TFRecords.
-    dataset = LumbarDicomTFRecordDataset(config).create_tf_dataset(
-        batch_size=config["batch_size"]
-    )
 
-    # 6. Add Data Augmentation (Optional)
-    # Define a function to apply common augmentation techniques (applied on the fly).
-    def augment_image(image, metadata):
-        # Apply random horizontal flip.
-        image = tf.image.random_flip_left_right(image)
-        # Apply random brightness changes (max 10% delta).
-        image = tf.image.random_brightness(image, max_delta=0.1)
-        # Metadata must be returned alongside the augmented image.
-        return image, metadata
+@log_method()
+def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = None) -> None:
+    """Training function with automatic logger injection and structured logging."""
+    if logger is None:
+        logger = get_current_logger()
 
-    # Apply the augmentation map function to the dataset using parallel processing.
-    dataset = dataset.map(
-        augment_image,
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
+    logger.info("Loading 3D model...", extra={"action": "load_model", "model_type": config['model_3d']['type']})
 
-    # 7. Load the 3D Model
-    # Uses a factory pattern to instantiate the specific 3D model defined in the configuration.
-    model = ModelFactory.create_model(config["model_3d"])
+    try:
+        # Create dataset with logger
+        dataset = create_tf_dataset(config, logger=logger)
 
-    # 8. Compile the Model
-    # Configure the learning process with an optimizer, loss function, and metrics.
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-        # Assuming this is a multi-class classification problem where targets are integers.
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"]
-    )
+        # Load and compile model
+        model = ModelFactory.create_model(config["model_3d"])
+        logger.info("Model loaded.", extra={"model_architecture": str(model.summary())})
 
-    # 9. Callbacks for Training
-    # Define actions to be taken during training (e.g., saving models, stopping early).
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
+        logger.info("Model compiled.", extra={"optimizer": "Adam", "learning_rate": 1e-4})
+
+        # Train the model
+        history = train_with_callbacks(model, dataset, config, logger=logger)
+
+        # Save the model
+        model.save(str(Path(config["output_dir"]) / "model"))
+        logger.info(f"Model saved to {config['output_dir']}/model",
+                   extra={"status": "success", "model_path": str(Path(config["output_dir"]) / "model")})
+
+    except Exception as e:
+        logger.error(f"Error in train_model: {str(e)}", exc_info=True,
+                     extra={"status": "failed", "error": str(e)})
+        raise
+
+
+@log_method()
+def create_tf_dataset(config: Dict[str, Any], *, logger: Optional[logging.Logger] = None):
+    """Creates TensorFlow dataset with logging."""
+    if logger is None:
+        logger = get_current_logger()
+
+    logger.info("Setting up TensorFlow dataset pipeline...",
+               extra={"action": "create_dataset", "batch_size": config["batch_size"]})
+
+    try:
+        dataset = LumbarDicomTFRecordDataset(config, logger).create_tf_dataset(
+            batch_size=config["batch_size"]
+        )
+        logger.info("Dataset created successfully.",
+                   extra={"status": "success", "batch_size": config["batch_size"]})
+        return dataset
+    except Exception as e:
+        logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
+                     extra={"status": "failed", "error": str(e)})
+        raise
+
+
+@log_method()
+def train_with_callbacks(model, dataset, config: Dict[str, Any], *, logger: Optional[logging.Logger] = None):
+    """Trains model with callbacks and logging."""
+    if logger is None:
+        logger = get_current_logger()
+
+    logger.info("Setting up training callbacks...", extra={"action": "setup_callbacks"})
+
     callbacks = [
-        # ModelCheckpoint: Saves the model based on the monitored metric.
         tf.keras.callbacks.ModelCheckpoint(
             filepath=str(Path(config["output_dir"]) / "model_checkpoint"),
             save_best_only=True,
-            monitor="val_loss" # Tracks validation loss to save the best model weights.
+            monitor="val_loss"
         ),
-        # EarlyStopping: Stops training if the monitored metric doesn't improve.
         tf.keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=5, # Number of epochs with no improvement after which training will be stopped.
-            restore_best_weights=True # Loads the weights from the epoch with the best monitored value.
+            patience=5,
+            restore_best_weights=True
+        ),
+        tf.keras.callbacks.TensorBoard(
+            log_dir=str(Path(config["output_dir"]) / "tensorboard_logs"),
+            histogram_freq=1
         )
     ]
+    logger.info("Training callbacks configured.",
+               extra={"callbacks": [c.__class__.__name__ for c in callbacks]})
 
-    # 10. Train the Model
-    # Fit the model using the optimized TensorFlow Dataset pipeline.
-    history = model.fit(
-        dataset,
-        epochs=config["epochs"],
-        steps_per_epoch=1000,  # A fixed number of steps per epoch (should be adjusted based on dataset size).
-        validation_data=None,  # Placeholder: Should be replaced with a validation dataset.
-        callbacks=callbacks
-    )
+    logger.info("Starting model training...",
+               extra={"epochs": config["epochs"], "steps_per_epoch": 1000})
 
-    # 11. Save the Final Model
-    model.save(str(Path(config["output_dir"]) / "model"))
-    print("Model saved successfully.")
+    try:
+        history = model.fit(
+            dataset,
+            epochs=config["epochs"],
+            steps_per_epoch=1000,
+            validation_data=None,
+            callbacks=callbacks
+        )
+        logger.info("Model training completed successfully.",
+                   extra={
+                       "final_loss": history.history['loss'][-1],
+                       "final_accuracy": history.history['accuracy'][-1]
+                   })
+        return history
+    except Exception as e:
+        logger.error(f"Error during training: {str(e)}", exc_info=True,
+                     extra={"status": "failed", "error": str(e)})
+        raise
+
+
+def main():
+    """
+    Main function to load configuration, set up the TensorFlow dataset pipeline,
+    load and compile the 3D model, and start the training process.
+    """
+    # Setup signal handler for graceful interruption
+    signal.signal(signal.SIGINT, handle_interrupt)
+
+    # 1. Load the Configuration
+    logger.info("Loading configuration...", extra={"action": "load_config"})
+    config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
+    config = ConfigLoader.get()
+    logger.info(f"Configuration loaded successfully. Model type: {config['model_3d']['type']}")
+
+
+    # 2. Initialize logger with process-specific context
+    config_dir = config.get_value("config_dir", "config")   #use "config" as default if not in config.
+
+    with setup_logger("train", config_dir=config_dir, use_json=True) as logger:
+        # The logger is now set up available globally via get_current_logger().
+        # It will automatically close at the end of this block.
+        logger.info("Starting training process.",
+                     extra={"status":"started", config_dir:"config_dir"})
+
+        try:
+            # Call the decorated functions(logger is automatically injected)
+            train_model()  
+           
+        except Exception as e:
+            logger.error(f"Critical error during training: {str(e)}", exc_info=True,
+                           extra = {"status": "failed", "error": str(e)})
+            raise
+        
+        finally:
+            logger.info("Training process completed. Log file will be closed automatically.",
+                         extra = {"status": "completed"})
+
+        # Remove log files older than 30 days
+        clean_old_logs(days=30) 
+
 
 if __name__ == "__main__":
     main()
