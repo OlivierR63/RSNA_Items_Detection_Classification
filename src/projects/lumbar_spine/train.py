@@ -144,24 +144,24 @@ def main():
     signal.signal(signal.SIGINT, handle_interrupt)
 
     # 1. Load the Configuration
-    logger.info("Loading configuration...", extra={"action": "load_config"})
     config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
-    config = ConfigLoader.get()
-    logger.info(f"Configuration loaded successfully. Model type: {config['model_3d']['type']}")
-
+    config:dict = config_loader.get()
+    
 
     # 2. Initialize logger with process-specific context
-    config_dir = config.get_value("config_dir", "config")   #use "config" as default if not in config.
+    log_dir = config.get("output_dir", "logs")   #use "logs" as default if not in config.
+    log_dir += "/logs"
 
-    with setup_logger("train", config_dir=config_dir, use_json=True) as logger:
+    with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
         # The logger is now set up available globally via get_current_logger().
         # It will automatically close at the end of this block.
+        logger.info(f"Configuration loaded successfully. Loaded_values: {config}")
         logger.info("Starting training process.",
-                     extra={"status":"started", config_dir:"config_dir"})
+                     extra={"status":"started", log_dir:"config_dir"})
 
         try:
             # Call the decorated functions(logger is automatically injected)
-            train_model()  
+            train_model(config = config)  
            
         except Exception as e:
             logger.error(f"Critical error during training: {str(e)}", exc_info=True,

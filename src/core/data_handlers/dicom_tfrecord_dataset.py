@@ -35,13 +35,13 @@ class DicomTFRecordDataset(ABC):
         self._tfrecord_pattern = str(Path(config["output_dir"]) / "tfrecords" / "*.tfrecord")
         
         # Automatically generate the TFRecord files upon initialization if they are missing.
-        self.generate_tfrecord_files()
+        self._generate_tfrecord_files()
 
         self.logger = logger if logger is not None and isinstance(logger, logging.Logger) else logging.getLogger(self.__class__.__name__)
 
 
     @abstractmethod
-    def generate_tfrecord_files(self) -> None:
+    def _generate_tfrecord_files(self) -> None:
         """
         Abstract method. Subclasses MUST implement the logic to convert raw data 
         (e.g., DICOM files) into TFRecord files and save them to disk.

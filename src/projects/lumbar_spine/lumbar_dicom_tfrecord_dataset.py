@@ -29,7 +29,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
  
 
     @log_method()
-    def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
+    def _generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
         """
         Generates TFRecord files from DICOM images and associated metadata.
 
@@ -56,19 +56,19 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
             # 2. Load and merge metadata
-            metadata_handler = CSVMetadata(**self._config["csv_files"], logger)
+            metadata_handler = CSVMetadata(logger=logger, **self._config["csv_files"])
             logger.info("Loaded metadata from CSV files",
                         extra={"csv_files": list(self._config["csv_files"].keys())})
 
             # 3. Encode categorical metadata
             #    Fields affected : condition, level, series_description, severity
-            encoded_metadata_df = self.encode_dataframe(metadata_handler._merged_df)
+            encoded_metadata_df = self._encode_dataframe(metadata_handler._merged_df)
             logger.info("Encoded categorical metadata", extra={"action": "encode_metadata"})
 
             # 4. Convert DICOM files to TFRecords (if needed)
             if not list(self._tfrecord_dir.glob("*.tfrecord")):
                 self.logger.info("  Creating TFRecord files...")
-                self.convert_dicom_to_tfrecords(
+                self._convert_dicom_to_tfrecords(
                     root_dir=self._config["dicom_root_dir"],
                     metadata_df=encoded_metadata_df,
                     output_dir=str(self._tfrecord_dir)
@@ -86,7 +86,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
 
     @log_method()
-    def parse_tfrecord(self, example_proto: tf.Tensor,*,
+    def _parse_tfrecord(self, example_proto: tf.Tensor,*,
                        logger: Optional[logging.Logger] = None) -> Tuple[tf.Tensor, Dict]:
         """
         Parses a single TFRecord entry, extracting and processing the image and metadata.
@@ -105,7 +105,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
 
         logger = logger or self.logger
-        logger.info("Parsing TFRecord", extra={"action": "parse_tfrecord"})
+        logger.info("Parsing TFRecord", extra={"action": "_parse_tfrecord"})
 
         try:
             # Define the structure of the features stored in the TFRecord.
@@ -132,10 +132,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # The metadata is stored as the compact byte sequence we designed earlier.
             metadata_bytes = example["metadata"]
     
-            # IMPORTANT: Since self.deserialize_metadata is a standard Python function, 
+            # IMPORTANT: Since self._deserialize_metadata is a standard Python function, 
             # we must call .numpy() on the Tensor to retrieve the raw bytes value 
             # for processing outside the TensorFlow graph context.
-            deserialized_dict = self.deserialize_metadata(metadata_bytes.numpy())
+            deserialized_dict = self._deserialize_metadata(metadata_bytes.numpy())
 
             # --- 3. Normalize the Image ---
     
@@ -161,7 +161,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
             return return_object
         
-         except Exception as e:
+        except Exception as e:
             logger.error(f"Error parsing TFRecord: {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
             raise
@@ -286,7 +286,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
 
     @log_method()
-    def convert_dicom_to_tfrecords(self, root_dir: str, metadata_df: pd.DataFrame,
+    def _convert_dicom_to_tfrecords(self, root_dir: str, metadata_df: pd.DataFrame,
                                    output_dir: str,*,
                                    logger: Optional[logging.Logger] = None) -> None:
         """
@@ -355,7 +355,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     
                             # Call an assumed helper method to retrieve the pre-serialized metadata bytes 
                             # for the specific DICOM file from the main metadata DataFrame.
-                            serialized_metadata = self.get_metadata_for_file(str(dicom_path), metadata_df)
+                            serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
 
                             # --- 4. Create and Write TFRecord Example ---
                     
@@ -381,7 +381,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
 
     @log_method()
-    def get_metadata_for_file(self, file_path: str, metadata_df: pd.DataFrame,*,
+    def _get_metadata_for_file(self, file_path: str, metadata_df: pd.DataFrame,*,
                               logger: Optional[logging.Logger] = None) -> dict:
         """
         Returns the serialized metadata extracted from a dataframe and associated with a given DICOM file.
@@ -405,7 +405,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         
         try:
             if metadata_df is None:
-                # NOTE: Returning bytes instead of a dict, as the caller (convert_dicom_to_tfrecords) 
+                # NOTE: Returning bytes instead of a dict, as the caller (_convert_dicom_to_tfrecords) 
                 # expects serialized bytes for the TFRecord.
                 return b''
 
@@ -429,7 +429,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     
             # Call the core serialization function, passing the extracted IDs and the full DataFrame.
             # This will filter the DataFrame and create the compact byte sequence.
-            serialized_metadata = self.serialize_metadata(study_id, series_id, instance_number, metadata_df)
+            serialized_metadata = self._serialize_metadata(study_id, series_id, instance_number, metadata_df)
 
             # Return the byte sequence.
             return serialized_metadata
@@ -438,12 +438,12 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                        extra={"status": "success"})
         
         except Exception as e:
-            logger.error(f"Error in function get_metadata_for_file() : {str(e)}", exc_info=True,
+            logger.error(f"Error in function _get_metadata_for_file() : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
 
 
     @log_method()
-    def serialize_metadata(self,
+    def _serialize_metadata(self,
                            study_id_str: str,
                            series_id_str: str,
                            instance_number_str: str,
@@ -475,7 +475,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
         
         logger = logger or self.logger
-        logger.info("Starting function serialize_metadata")
+        logger.info("Starting function _serialize_metadata")
 
         try:
 
@@ -486,8 +486,13 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     )
             records_df = data_df[mask]
         
-            if records_df.is_empty:
-                metadata_bytes = 0
+            if records_df.empty:
+                logger.warning(f"No metadata linked with the file {study_id_str}/{series_id_str}/{instance_number_str}.dcm")
+                logger.warning("This file will not be considered during training or evaluation.")
+                logger.warning("This may be due to missing or inconsistent records in the CSV files.")
+                logger.warning("Please check the CSV files and ensure they contain the necessary records.")
+                logger.warning("Returning an empty byte sequence for metadata")
+                metadata_bytes = b''
         
             else:
                 # Extract global properties (must be unique for the filtered records)
@@ -519,12 +524,12 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
                 for row in records_df.itertuples():
                     level = row.level
-                    severity = row.Severity
+                    severity = row.severity
 
                     # Convert float coordinates to integers by scaling (multiplication by 100) 
                     # to preserve two decimal places of precision
-                    x = int(row.x.astype(float) *100) # Conversion en int après multiplication par 100
-                    y = int(row.y.astype(float) *100)
+                    x = int(float(row.x) *100) # Conversion en int après multiplication par 100
+                    y = int(float(row.y) *100)
             
                     # Serialize level and severity as 1-byte unsigned characters
                     level_bytes = struct.pack('=B', level)  # '=B' → 1-byte formatting. Sufficient for 0, 1, 2, 3, 4
@@ -536,22 +541,22 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
                     metadata_bytes += level_bytes + severity_bytes + x_bytes + y_bytes
         
-            logger.info("function serialize_metadata completed successfully",
-                            extra={"status": "success"})    
+                logger.info("function _serialize_metadata completed successfully",
+                                extra={"status": "success"})    
             return metadata_bytes
 
-         except Exception as e:
-            logger.error(f"Error in function serialize_metadata() : {str(e)}", exc_info=True,
+        except Exception as e:
+            logger.error(f"Error in function _serialize_metadata() : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
 
 
     @log_method()
-    def deserialize_metadata(self, metadata_bytes: bytes,*,
+    def _deserialize_metadata(self, metadata_bytes: bytes,*,
                              logger: Optional[logging.Logger] = None) -> Dict:
         """
         Deserializes a compact byte sequence back into structured metadata components.
 
-        This function is the inverse of serialize_metadata. It parses the fixed-size 
+        This function is the inverse of _serialize_metadata. It parses the fixed-size 
         header and then reads a variable number of records based on the count found 
         in the header.
 
@@ -582,9 +587,23 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
 
         logger = logger or self.logger
-        logger.info("Starting function deserialize_metadata")
+        logger.info("Starting function _deserialize_metadata")
         
         try:
+            if not metadata_bytes:
+                logger.warning("Empty metadata byte sequence received.")
+                logger.warning("Returning an empty dictionary for metadata")
+                return {}
+            
+            # Ensure the input is of type bytes
+            if not isinstance(metadata_bytes, bytes):
+                raise ValueError("Input must be a byte sequence.")
+            
+            # Check that the byte sequence is at least 15 bytes long (minimum header size)
+            if len(metadata_bytes) < 15:
+                raise struct.error("Byte sequence too short to contain valid metadata.")
+
+            # --- Setup for Deserialization ---
             # Use io.BytesIO for efficient reading of the byte sequence
             buffer = io.BytesIO(metadata_bytes)
     
@@ -647,17 +666,17 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 # Append the deserialized record
                 result['records'].append({'level': level, 'severity': severity, 'x': x, 'y': y})
 
-            logger.info("function serialize_metadata completed successfully",
+            logger.info("function deserialize_metadata completed successfully",
                             extra={"status": "success"}) 
             return result
 
         except Exception as e:
-            logger.error(f"Error in function deserialize_metadata : {str(e)}", exc_info=True,
+            logger.error(f"Error in function _deserialize_metadata : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
 
     
     @log_method()
-    def encode_dataframe(self, metadata_df: pd.DataFrame,*,
+    def _encode_dataframe(self, metadata_df: pd.DataFrame,*,
                          logger: Optional[logging.Logger] = None) -> pd.DataFrame:
         """Converts categorical textual metadata fields in a DataFrame to numerical values.
 
@@ -673,7 +692,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
         
         logger = logger or self.logger
-        logger.info("Starting function encode_dataframe")
+        logger.info("Starting function _encode_dataframe")
 
         try:
             # --- 1. Create Mapping Dictionaries ---
@@ -681,20 +700,20 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     
             # 1.1 Condition
             condition_values = metadata_df["condition"].unique().tolist()
-            # Assume self.create_string_to_int_mapper returns an object with a 'mapping' attribute (dict).
-            CONDITION_MAP = self.create_string_to_int_mapper(condition_values).mapping
+            # Assume self._create_string_to_int_mapper returns an object with a 'mapping' attribute (dict).
+            CONDITION_MAP = self._create_string_to_int_mapper(condition_values).mapping
 
             # 1.2 Level
             level_values = metadata_df["level"].unique().tolist()
-            LEVEL_MAP = self.create_string_to_int_mapper(level_values).mapping
+            LEVEL_MAP = self._create_string_to_int_mapper(level_values).mapping
 
             # 1.3 Description
             description_values = metadata_df["series_description"].unique().tolist()
-            DESCRIPTION_MAP = self.create_string_to_int_mapper(description_values).mapping
+            DESCRIPTION_MAP = self._create_string_to_int_mapper(description_values).mapping
 
             # 1.4 Severity
             severity_values = metadata_df["severity"].unique().tolist()
-            SEVERITY_MAP = self.create_string_to_int_mapper(severity_values).mapping
+            SEVERITY_MAP = self._create_string_to_int_mapper(severity_values).mapping
 
             # --- 2. Apply Encoding to the Columns ---
 
@@ -704,20 +723,20 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     
             metadata_df["condition"] = metadata_df["condition"].map(CONDITION_MAP).fillna(-1).astype(int)
             metadata_df["level"] = metadata_df["level"].map(LEVEL_MAP).fillna(-1).astype(int)
-            metadata_df["description"] = metadata_df["series_description"].map(DESCRIPTION_MAP).fillna(-1).astype(int)
+            metadata_df["series_description"] = metadata_df["series_description"].map(DESCRIPTION_MAP).fillna(-1).astype(int)
             metadata_df["severity"] = metadata_df["severity"].map(SEVERITY_MAP).fillna(-1).astype(int)
 
-            logger.info("function encode_dataframe completed successfully",
+            logger.info("function _encode_dataframe completed successfully",
                             extra={"status": "success"}) 
             return metadata_df
 
         except Exception as e:
-            logger.error(f"Error in function encode_dataframe : {str(e)}", exc_info=True,
+            logger.error(f"Error in function _encode_dataframe : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
 
 
     @log_method()
-    def create_string_to_int_mapper(self, strings: list,*,
+    def _create_string_to_int_mapper(self, strings: list,*,
                                     logger: Optional[logging.Logger] = None) -> callable:
         """Creates a mapping function between strings and integers.
 
@@ -736,7 +755,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
 
         logger = logger or self.logger
-        logger.info("Starting function create_string_to_int_mapper")
+        logger.info("Starting function _create_string_to_int_mapper")
         
         try:
             # Create the primary dictionary {string: integer} using enumeration.
@@ -758,10 +777,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             mapper.reverse_mapping = reverse_mapping
 
             # Return the callable function
-            logger.info("Function create_string_to_int_mapper completed successfully",
+            logger.info("Function _create_string_to_int_mapper completed successfully",
                             extra={"status": "success"})
             return mapper
 
         except Exception as e:
-            logger.error(f"Error in function create_string_to_int_mapper : {str(e)}", exc_info=True,
+            logger.error(f"Error in function _create_string_to_int_mapper : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
