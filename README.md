@@ -6,12 +6,20 @@
 RSNA_2024_Lumbar_Spine_Degenerative_Classification/
 │
 ├── src/
+│   │
+│   ├── config/                    # Configurations globales et par défaut
+│   │   ├── __init__.py
+│   │   ├── config_loader_.py
+│   │   ├── brain_aneuvrysm_config.yaml       # Configuration par défaut
+│   │   └── lumbar_spine_config_.yaml         # Chargeur de configuration
+│   │
 │   ├── core/                     # Classes de base génériques (abstraites)
-│   │   ├── data/                 # Gestion des données (DICOM, CSV, métadonnées)
+│   │   │
+│   │   ├── data_handlers_/                 # Gestion des données (DICOM, CSV, métadonnées)
 │   │   │   ├── __init__.py
-│   │   │   ├── dicom_dataset.py  # Classe `DicomDataset` (abstraite + implémentations)
-│   │   │   ├── csv_metadata.py   # Classe `CSVMetadata` (fusion des CSV)
-│   │   │   └── data_loader.py    # Chargement des données (utilise `DicomDataset` et `CSVMetadata`)
+│   │   │   ├── data_pipeline.py
+│   │   │   ├── dicom_dataset_.py			# Classe `DicomDataset` (abstraite + implémentations)
+│   │   │   └── dicom_tfrecord_dataset.py	# Classe `DicomTFRecordDataset` (abstraite + implémentations)
 │   │   │
 │   │   ├── models/               # Modèles de deep learning (2D/3D)
 │   │   │   ├── __init__.py
@@ -28,44 +36,49 @@ RSNA_2024_Lumbar_Spine_Degenerative_Classification/
 │   │   │
 │   │   └── utils/                 # Utilitaires (logs, helpers)
 │   │       ├── __init__.py
+│   │       ├── clean_logs.py      
 │   │       ├── logger.py          # Gestion des logs
-│   │       ├── file_utils.py      # Manipulation de fichiers
+│   │       ├── packing_utils.py      
 │   │       └── visualization.py   # Visualisation des résultats
 │   │
-│   ├── projects/                  # Implémentations spécifiques par projet
-│   │   ├── lumbar_spine/          # Projet colonne vertébrale
-│   │   │   ├── __init__.py
-│   │   │   ├── config.yaml        # Configuration spécifique
-│   │   │   ├── dataset.py         # Implémentation de `DicomDataset` pour ce projet
-│   │   │   ├── pipeline.py        # Implémentation de `BasePipeline`
-│   │   │   └── train.py           # Script d'entraînement
-│   │   │
-│   │   └── brain_aneurysm/        # Projet anévrismes cérébraux
-│   │       ├── __init__.py
-│   │       ├── config.yaml
-│   │       ├── dataset.py
-│   │       ├── pipeline.py
-│   │       └── train.py
-│   │
-│   └── config/                    # Configurations globales et par défaut
-│       ├── __init__.py
-│       ├── default_config.yaml    # Configuration par défaut
-│       └── config_loader.py       # Chargeur de configuration
+│   └── projects/                  # Implémentations spécifiques par projet
+│       │
+│       ├── lumbar_spine/          # Projet colonne vertébrale
+│       │   ├── __init__.py
+│       │   ├── csv_metadata.py								# Classe `CSVMetadata` (fusion des CSV)
+│       │   ├── lumbar_dicom_tfrecord__dataset.py			# Implémentation de `DicomDataset` pour ce projet
+│       │   ├── pipeline.py									# Implémentation de `BasePipeline`
+│       │   └── train.py									# Script d'entraînement
+│       │
+│       └── brain_aneurysm/        # Projet anévrismes cérébraux
+│           └── __init__.py
 │
 ├── data/                          # Lien symbolique vers les données (non versionné)
 │
 ├── tests/                         # Tests (structure miroir de `src/`)
-│   ├── unit/
-│   │   ├── test_data/
-│   │   ├── test_models/
-│   │   └── test_utils/
+│   │
+│   ├── e2e/ 
+│   │   └── test_submission/
+│   │
+│   ├── fixtures/
+│   │   ├── csv_samples_/
+│   │   ├── dicom_samples_/
+│   │   └── expected_outputs_/
 │   │
 │   ├── integration/
 │   │   ├── test_pipeline/
 │   │   └── test_data_flow/
 │   │
-│   └── e2e/
-│       └── test_submission/
+│   └── unit/
+│       ├── test_data/
+│       │   └──test_dicom_dataset.py
+│       ├── test_models/
+│       ├── test_utils/
+│       │   └── test_logger.py
+│       ├── test_lumbar_spine_/
+│       │   ├── test_lumbar_dicom_tfrecord_dataset.py
+│       │   └── test_train.py
+│       └── conftest.py  # Fixtures partagées  
 │
 ├── logs/                          # Logs (exclus du versioning)
 │

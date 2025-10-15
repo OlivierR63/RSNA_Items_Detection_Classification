@@ -172,12 +172,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                                     and a dictionary of the deserialized metadata.
         """
 
-        logger = logger or self.logger
-        logger.info("Parsing TFRecord", extra={"action": "_parse_tfrecord"})
-
         try:
             # Define the structure of the features stored in the TFRecord.
-            # We expect two features, both stored as serialized strings.
             feature_description = {
                 "image": tf.io.FixedLenFeature([], tf.string),
                 "metadata": tf.io.FixedLenFeature([], tf.string)
@@ -186,45 +182,100 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # Parse the scalar protocol buffer string into a dictionary of Tensors.
             example = tf.io.parse_single_example(example_proto, feature_description)
 
-            # --- 1. Deserialize and Reshape the Image Tensor ---
-    
-            # The image is stored as a serialized Tensor string. Parse it back into a float32 Tensor.
-            image = tf.io.parse_tensor(example["image"], out_type=tf.float32)
-    
+            # --- 1. Deserialize and Reshape the Image Tensor (Pure TF) ---
+            image = tf.io.parse_tensor(example["image"], out_type=tf.uint16) 
+            # NOTE: Using tf.uint16, the original Dicom type. Normalization to float32 happens later.
+        
             # Reshape the 1D Tensor back into its original 4D shape (e.g., [Depth, Height, Width, Channels]).
-            # The shape [64, 64, 64, 1] suggests a 3D medical image (like a volume) with one channel.
+            # The shape is assumed to be fixed for this dataset.
             image = tf.reshape(image, [64, 64, 64, 1])  
 
-            # --- 2. Deserialize the Metadata ---
-    
-            # The metadata is stored as the compact byte sequence we designed earlier.
+            # --- 2. Deserialize the Metadata (using tf.py_function) ---
             metadata_bytes = example["metadata"]
-    
-            # IMPORTANT: Since self._deserialize_metadata is a standard Python function, 
-            # we must call .numpy() on the Tensor to retrieve the raw bytes value 
-            # for processing outside the TensorFlow graph context.
-            deserialized_dict = self._deserialize_metadata(metadata_bytes.numpy())
+        
+            # Define the output types for the metadata deserializer:
+            # [0: study_id (int), 1: series_id (int), 2: instance_number (int), 3: description (int),
+            #  4: condition (int), 5: nb_records (int), 6: records (list of tuples -> will be tf.float32/tf.int32)]
+        
+            # We call the deserializer via tf.py_function, which can execute Python code.
+            # It must return a consistent set of Tensors, not a dict.
+        
+            # The metadata will be returned as individual scalar Tensors and one combined Tensor for records.
+            # We need the inner function to return a flat list/tuple of Tensors.
+        
+            # To handle complex structures (the list of records), we must wrap the deserializer 
+            # and parse the records list inside the tf.py_function output, returning fixed-size 
+            # Tensors, which is difficult for a variable list of records.
+        
+            # The cleaner solution: Return only the most complex part (records) as one flattened tensor
+            # and re-structure it later in the TF graph.
+        
+            # Let's define a nested function to handle the output conversion within the Python context:
+            def py_deserialize_and_flatten(metadata_bytes_tensor):
+                # We MUST call .numpy() here, inside the py_function boundary.
+                deserialized_dict = self._deserialize_metadata(metadata_bytes_tensor.numpy())
+            
+                # 1. Extract header Tensors
+                header_tensors = [
+                    tf.constant(deserialized_dict.get('study_id', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('series_id', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('instance_number', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('description', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('condition', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('nb_records', 0), dtype=tf.int32)
+                ]
+            
+                # 2. Flatten records into a 1D list of values: [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
+                # If no records, create a dummy 1x4 list of zeros.
+                records_list = deserialized_dict.get('records', [])
+                flattened_records = [val for rec in records_list for val in rec] or [0.0] * 4 
+            
+                # Pad the flattened list to the MAX_RECORDS size (25 * 4 = 100 elements)
+                MAX_RECORDS = 25
+                MAX_RECORDS_FLAT = MAX_RECORDS * 4
+            
+                # Pad with a safe value (0.0)
+                padded_records = flattened_records + [0.0] * (MAX_RECORDS_FLAT - len(flattened_records))
+            
+                records_tensor = tf.constant(padded_records, dtype=tf.float32)
 
-            # --- 3. Normalize the Image ---
-    
-            # Normalize the image data (e.g., scaling pixel values to the range [0, 1]).
-            # This division by the maximum value is a simple normalization technique.
-            image = image / tf.reduce_max(image)
+                return header_tensors + [records_tensor]
+
+
+            # Define the output signature for tf.py_function
+            # 6 scalar headers (tf.int32) + 1 padded records tensor (tf.float32)
+            output_types = [tf.int32] * 6 + [tf.float32]
+        
+            # Call the py_function
+            deserialized_tensors = tf.py_function(
+                py_deserialize_and_flatten, 
+                inp=[metadata_bytes], 
+                Tout=output_types
+            )
+        
+            # Assign the results back to named Tensors
+            (study_id_t, series_id_t, instance_number_t, description_t, condition_t, nb_records_t, padded_records_t) = deserialized_tensors
+        
+            # Reshape the padded records tensor to (MAX_RECORDS, 4)
+            padded_records_t = tf.reshape(padded_records_t, [25, 4])
+
+
+            # --- 3. Normalize the Image (Pure TF) ---
+            # The image is currently uint16. Convert to float32 and normalize.
+            image = tf.cast(image, dtype=tf.float32)
+            # Simple normalization: scaling pixel values to the range [0, 1].
+            image = image / tf.reduce_max(image) 
 
             # --- 4. Return Processed Data ---
             return_object = (image, {
-                "study_id": deserialized_dict['study_id'],
-                "series_id": deserialized_dict['series_id'],
-                "instance_number": deserialized_dict['instance_number'],
-                "description": deserialized_dict['description'],
-                "condition": deserialized_dict['condition'],
-                "nb_records": deserialized_dict['nb_records'],
-                # Assumes self._parse_records further processes the records list 
-                # into a more usable format.
-                "records": self._parse_records(
-                                deserialized_dict['nb_records'],
-                                deserialized_dict['records']
-                                )
+                "study_id": study_id_t,
+                "series_id": series_id_t,
+                "instance_number": instance_number_t,
+                "description": description_t,
+                "condition": condition_t,
+                "nb_records": nb_records_t,
+                # The records are now a (25, 4) float32 tensor
+                "records": padded_records_t
             })
 
             return return_object
@@ -232,57 +283,19 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         except Exception as e:
             logger.error(f"Error parsing TFRecord: {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
-            raise
-
-
-    @log_method()
-    def _parse_records(self, nb_records: int, records: list,*,
-                       logger: Optional[logging.Logger] = None) -> List[Dict]:
-        """
-        Converts a list of raw record tuples into a list of structured dictionaries.
-
-        This function takes the raw output (list of tuples) from the metadata 
-        deserialization and assigns meaningful keys to each element, making the 
-        data easy to access and interpret.
-
-        Args:
-            nb_records (int): The expected number of records (although not strictly used 
-                              for looping, it confirms the count).
-            records (list): A list where each item is a tuple or list containing 
-                            (level, severity, x, y) values.
-            logger: Automatically injected logger (optional).
-
-        Returns:
-            List[Dict]: A list of dictionaries, where each dictionary represents 
-                        one structured record with keys "level", "severity", "x", 
-                        and "y".
-        """
-
-        logger = logger or self.logger
-        logger.info("Parsing records", extra={"action": "parse_records", "count": nb_records})
-
-        try:
-            result = []
-    
-            # Iterate through each raw record tuple in the input list.
-            for rec in records:
-                # Unpack the tuple into named variables for clarity.
-                # Assumes the order is (level, severity, x, y) as defined during serialization.
-                level, severity, x, y = rec
+            # Return a safe dummy structure to avoid pipeline crash
+            dummy_image = tf.zeros([64, 64, 64, 1], dtype=tf.float32)
+            dummy_records = tf.zeros([25, 4], dtype=tf.float32)
         
-                result.append({
-                    "level": level,
-                    "severity": severity,
-                    "x": x,
-                    "y": y})
-
-            logger.info("Records parsed successfully", extra={"status": "success"})
-            return result
-        
-        except Exception as e:
-            logger.error(f"Error parsing records: {str(e)}", exc_info=True,
-                            extra={"status": "failed", "error": str(e)})
-            raise
+            return dummy_image, {
+                "study_id": tf.constant(0, dtype=tf.int32),
+                "series_id": tf.constant(0, dtype=tf.int32),
+                "instance_number": tf.constant(0, dtype=tf.int32),
+                "description": tf.constant(0, dtype=tf.int32),
+                "condition": tf.constant(0, dtype=tf.int32),
+                "nb_records": tf.constant(0, dtype=tf.int32),
+                "records": dummy_records
+            }
 
 
     @log_method()
@@ -552,7 +565,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _deserialize_metadata(self, metadata_bytes: bytes,*,
-                             logger: Optional[logging.Logger] = None) -> Dict:
+                              logger: Optional[logging.Logger] = None) -> Dict:
         """
         Deserializes a compact byte sequence back into structured metadata components.
 
@@ -566,8 +579,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         Returns:
             dict: A dictionary containing the deserialized header values and a 
-                  list of dictionaries for the individual records.
-              
+                  list of tuples (level, severity, x, y) for the individual records.
+                  
                   Example:
                   {
                       'study_id': 12345, 
@@ -577,23 +590,28 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                       'condition': 3, 
                       'nb_records': 2, 
                       'records': [
-                          {'level': 0, 'severity': 1, 'x': 12.34, 'y': 56.78},
-                          {'level': 1, 'severity': 0, 'x': 90.12, 'y': 34.56}
+                          (0, 1, 12.34, 56.78), # CHANGEMENT CLÉ: Tuple au lieu de Dict
+                          (1, 0, 90.12, 34.56)
                       ]
                   }
 
         Raises:
             struct.error: If the byte sequence is shorter than expected (malformed data).
         """
-
-        logger = logger or self.logger
-        logger.info("Starting function _deserialize_metadata")
         
+        # NOTE: Suppression des logs à haute fréquence d'appel pour l'optimisation
+        # logger = logger or self.logger
+        # logger.info("Starting function _deserialize_metadata")
+
+        # La gestion de l'erreur est déplacée dans le except final.
         try:
             if not metadata_bytes:
-                logger.warning("Empty metadata byte sequence received.")
-                logger.warning("Returning an empty dictionary for metadata")
-                return {}
+                # Retourne la structure minimale pour une séquence vide
+                return {
+                    'study_id': 0, 'series_id': 0, 'instance_number': 0, 
+                    'description': 0, 'condition': 0, 'nb_records': 0, 
+                    'records': [] # Liste de tuples vide
+                }
             
             # Ensure the input is of type bytes
             if not isinstance(metadata_bytes, bytes):
@@ -604,32 +622,16 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 raise struct.error("Byte sequence too short to contain valid metadata.")
 
             # --- Setup for Deserialization ---
-            # Use io.BytesIO for efficient reading of the byte sequence
             buffer = io.BytesIO(metadata_bytes)
-    
+
             # --- Deserialize Header (15 bytes total) ---
-    
-            # Read study_id (5 bytes, big-endian, unsigned)
-            study_id_bytes = buffer.read(5)
-            study_id = int.from_bytes(study_id_bytes, byteorder='big', signed=False)
-
-            # Read series_id (5 bytes, big-endian, unsigned)
-            series_id_bytes = buffer.read(5)
-            series_id = int.from_bytes(series_id_bytes, byteorder='big', signed=False)
-
-            # Read instance_number (2 bytes, unsigned short '=H')
-            # Unpack returns a tuple, so we take the first element [0]
+            study_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
+            series_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
             instance_number = struct.unpack('=H', buffer.read(2))[0]
-
-            # Read description (1 byte, unsigned char '=B')
             description = struct.unpack('=B', buffer.read(1))[0]
-    
-            # Read condition (1 byte, unsigned char '=B')
             condition = struct.unpack('=B', buffer.read(1))[0]
-    
-            # Read nb_records (1 byte, unsigned char '=B'). This determines the loop count.
             nb_records = struct.unpack('=B', buffer.read(1))[0]
-    
+
             # Initialize the results dictionary
             result = {
                 'study_id': study_id,
@@ -639,40 +641,38 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 'condition': condition,
                 'nb_records': nb_records,
                 'records': []
-                }
-    
+            }
+
             # --- Deserialize Payload (8 bytes per record) ---
-    
             for _ in range(nb_records):
-                # Read level (1 byte, unsigned char '=B')
+                # Read level (1 byte) and severity (1 byte)
                 level = struct.unpack('=B', buffer.read(1))[0]
-        
-                # Read severity (1 byte, unsigned char '=B')
                 severity = struct.unpack('=B', buffer.read(1))[0]
-        
-                # Read x (3 bytes, big-endian, unsigned)
-                x_bytes = buffer.read(3)
-        
-                # The stored integer represents 100 * actual float value.
-                x_scaled = int.from_bytes(x_bytes, byteorder='big', signed=False)
+                
+                # Read x (3 bytes)
+                x_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
                 x = x_scaled / 100.0 # Rescale back to float
-        
-                # Read y (3 bytes, big-endian, unsigned)
-                y_bytes = buffer.read(3)
-                # The stored integer represents 100 * actual float value.
-                y_scaled = int.from_bytes(y_bytes, byteorder='big', signed=False)
+                
+                # Read y (3 bytes)
+                y_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
                 y = y_scaled / 100.0 # Rescale back to float
 
-                # Append the deserialized record
-                result['records'].append({'level': level, 'severity': severity, 'x': x, 'y': y})
+                # CHANGEMENT CLÉ: Append the deserialized record as a tuple
+                result['records'].append((level, severity, x, y))
 
-            logger.info("function deserialize_metadata completed successfully",
-                            extra={"status": "success"}) 
+            # NOTE: Suppression du log de succès.
             return result
 
         except Exception as e:
+            logger = logger or self.logger
             logger.error(f"Error in function _deserialize_metadata : {str(e)}", exc_info=True,
                         extra={"status": "failed", "error": str(e)})
+            # En cas d'erreur de parsing, retourner une structure vide et sûre
+            return {
+                'study_id': 0, 'series_id': 0, 'instance_number': 0, 
+                'description': 0, 'condition': 0, 'nb_records': 0, 
+                'records': []
+            }
 
     
     @log_method()

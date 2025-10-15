@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<ProfilingTarget xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ProjectTarget>
+    <TargetProject>18432df5-4b4c-4401-a1d7-4a91bb780257</TargetProject>
+    <FriendlyName>RSNA_2024_Lumbar_Spine_Degenerative_Classification</FriendlyName>
+  </ProjectTarget>
+  <Reports>
+    <Report>
+      <Filename>C:\Users\Olivier\AppData\Local\Temp\RSNA_2024_Lumbar_Spine_Degenerative_Classification_20251013.vsp</Filename>
+    </Report>
+  </Reports>
+  <UseVTune>false</UseVTune>
+</ProfilingTarget>
