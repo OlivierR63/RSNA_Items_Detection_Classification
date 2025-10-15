@@ -43,7 +43,6 @@ def setup_logger(process_name: str,
 
     # 3. Log file name: {process_name}_{pid}_{timestamp}.log
     log_file = log_dir / f"{process_name}_{pid}_{timestamp}.log"
-    print(f"log_dir = {log_dir} et log_file = {log_file}")
 
     # 4. Configure the logger
     logger = logging.getLogger(f"{process_name}_{pid}")

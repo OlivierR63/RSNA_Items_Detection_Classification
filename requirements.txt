@@ -1,0 +1,15 @@
+# The main project dependencies
+tensorflow>=2.10.0
+pandas>=1.5.0
+numpy>=1.23.0
+SimpleITK>=2.2.0
+tqdm>=4.64.0
+
+# Dependencies for logging
+python-json-logger>=2.0.7
+
+# Testing dependencies
+pytest>=7.0
+pytest-cov>=3.0
+pytest-mock>=3.6
+coverage>=6.0

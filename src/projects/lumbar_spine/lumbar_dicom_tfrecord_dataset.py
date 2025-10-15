@@ -29,6 +29,74 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
  
 
     @log_method()
+    def create_tf_dataset(self, batch_size: int = 8,*,
+                          logger: Optional[logging.Logger] = None) -> tf.data.Dataset:
+        """
+        Creates an optimized TensorFlow Dataset for training or evaluation by reading 
+        and processing TFRecord files asynchronously.
+
+        The pipeline is constructed to maximize I/O and processing throughput 
+        using interleave, shuffle, and prefetch mechanisms.
+
+        Args:
+            batch_size (int): The number of elements to combine into a single batch. 
+                              Defaults to 8.
+            logger: Automatically injected logger (optional).
+
+        Returns:
+            tf.data.Dataset: An optimized Dataset where each element is a tuple 
+                             (image_tensor, metadata_dict).
+        """
+
+        logger = logger or self.logger
+        logger.info(f"Creating TF Dataset with batch_size={batch_size}",
+                       extra={"action": "create_dataset", "batch_size": batch_size})
+
+        try:
+            # 1. List all TFRecord files matching the pattern (e.g., 'data/*.tfrecord').
+            # Shuffling the file names helps ensure better data mixing across epochs.
+            tfrecord_files = tf.data.Dataset.list_files(self._tfrecord_pattern, shuffle=True)
+            logger.info(f"Found {len(tfrecord_files)} TFRecord files",
+                       extra={"file_count": len(tfrecord_files)})
+
+            # 2. Use "interleave" to read data from multiple files in parallel.
+            # This prevents I/O bottlenecks by having multiple readers working concurrently.
+            dataset = tfrecord_files.interleave(
+            
+                # The map function reads a single TFRecord file and applies the parsing function.
+                lambda x: tf.data.TFRecordDataset(x).map(
+                    self._parse_tfrecord,
+                    # Use AUTOTUNE to determine the optimal number of parallel processing threads.
+                    num_parallel_calls=tf.data.AUTOTUNE
+                ),
+                # Interleave also uses AUTOTUNE for setting the number of concurrent calls (readers).
+                num_parallel_calls=tf.data.AUTOTUNE
+            )
+
+            # 3. Apply standard Dataset optimizations.
+    
+            # Shuffle the processed elements in memory using a buffer.
+            dataset = dataset.shuffle(buffer_size=1000)
+    
+            # Combine individual elements into batches for efficient model processing.
+            dataset = dataset.batch(batch_size)
+    
+            # Prefetch data: The input pipeline fetches the next batch while the model 
+            # is processing the current batch, preventing GPU/TPU starvation.
+            dataset = dataset.prefetch(tf.data.AUTOTUNE)
+
+            logger.info("Dataset pipeline created successfully",
+                       extra={"status": "success"})
+
+            return dataset
+
+        except Exception as e:
+            logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
+                        extra={"status": "failed", "error": str(e)})
+            raise
+
+
+    @log_method()
     def _generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
         """
         Generates TFRecord files from DICOM images and associated metadata.
@@ -214,74 +282,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         except Exception as e:
             logger.error(f"Error parsing records: {str(e)}", exc_info=True,
                             extra={"status": "failed", "error": str(e)})
-            raise   
-
-
-    @log_method()
-    def create_tf_dataset(self, batch_size: int = 8,*,
-                          logger: Optional[logging.Logger] = None) -> tf.data.Dataset:
-        """
-        Creates an optimized TensorFlow Dataset for training or evaluation by reading 
-        and processing TFRecord files asynchronously.
-
-        The pipeline is constructed to maximize I/O and processing throughput 
-        using interleave, shuffle, and prefetch mechanisms.
-
-        Args:
-            batch_size (int): The number of elements to combine into a single batch. 
-                              Defaults to 8.
-            logger: Automatically injected logger (optional).
-
-        Returns:
-            tf.data.Dataset: An optimized Dataset where each element is a tuple 
-                             (image_tensor, metadata_dict).
-        """
-
-        logger = logger or self.logger
-        logger.info(f"Creating TF Dataset with batch_size={batch_size}",
-                   extra={"action": "create_dataset", "batch_size": batch_size})
-
-        try:
-            # 1. List all TFRecord files matching the pattern (e.g., 'data/*.tfrecord').
-            # Shuffling the file names helps ensure better data mixing across epochs.
-            tfrecord_files = tf.data.Dataset.list_files(self._tfrecord_pattern, shuffle=True)
-            logger.info(f"Found {len(tfrecord_files)} TFRecord files",
-                       extra={"file_count": len(tfrecord_files)})
-
-            # 2. Use "interleave" to read data from multiple files in parallel.
-            # This prevents I/O bottlenecks by having multiple readers working concurrently.
-            dataset = tfrecord_files.interleave(
-            
-                # The map function reads a single TFRecord file and applies the parsing function.
-                lambda x: tf.data.TFRecordDataset(x).map(
-                    self._parse_tfrecord,
-                    # Use AUTOTUNE to determine the optimal number of parallel processing threads.
-                    num_parallel_calls=tf.data.AUTOTUNE
-                ),
-                # Interleave also uses AUTOTUNE for setting the number of concurrent calls (readers).
-                num_parallel_calls=tf.data.AUTOTUNE
-            )
-
-            # 3. Apply standard Dataset optimizations.
-    
-            # Shuffle the processed elements in memory using a buffer.
-            dataset = dataset.shuffle(buffer_size=1000)
-    
-            # Combine individual elements into batches for efficient model processing.
-            dataset = dataset.batch(batch_size)
-    
-            # Prefetch data: The input pipeline fetches the next batch while the model 
-            # is processing the current batch, preventing GPU/TPU starvation.
-            dataset = dataset.prefetch(tf.data.AUTOTUNE)
-
-            logger.info("Dataset pipeline created successfully",
-                       extra={"status": "success"})
-
-            return dataset
-
-        except Exception as e:
-            logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
             raise
 
 
