@@ -5,6 +5,7 @@ from src.RSNA_2024_Lumbar_Spine_Degenerative_Classification import main
 from tests import conftest
 import pytest
 
+
 @patch("src.projects.lumbar_spine.train.setup_logger")
 @patch("src.projects.lumbar_spine.train.ConfigLoader")
 @patch("src.projects.lumbar_spine.train.train_model")

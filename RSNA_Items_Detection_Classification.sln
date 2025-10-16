@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36518.9
+VisualStudioVersion = 17.14.36603.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "RSNA_Items_Detection_Classification", "RSNA_Items_Detection_Classification.pyproj", "{18432DF5-4B4C-4401-A1D7-4A91BB780257}"
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "RSNA_Items_Detection_Classification", "RSNA_Items_Detection_Classification.pyproj", "{11083CAA-51F2-463A-A9AD-3059495E3BE4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,13 +11,13 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{18432DF5-4B4C-4401-A1D7-4A91BB780257}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{18432DF5-4B4C-4401-A1D7-4A91BB780257}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11083CAA-51F2-463A-A9AD-3059495E3BE4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11083CAA-51F2-463A-A9AD-3059495E3BE4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {8FBAA0B7-2ACA-4F45-BE40-9D36484C8820}
+		SolutionGuid = {064E15B2-8181-494E-A584-2FF44E74DFDD}
 	EndGlobalSection
 EndGlobal

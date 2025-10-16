@@ -22,7 +22,7 @@ class ConfigLoader:
         # Determine the directory containing the configuration file. 
         # All relative paths in the config will be resolved based on this directory.
         #config_dir = Path(config_path).parent
-        config_dir = Path('C:/Users/Olivier/Desktop/Projet_Kaggle/RSNA_2024_Lumbar_Spine_Degenerative_Classification')
+        config_dir = Path('C:/Users/Olivier/Desktop/Projet_Kaggle/RSNA_Items_Detection_Classification')
         
         # Open and safely load the configuration data from the YAML file.
         with open(config_path, 'r') as f:

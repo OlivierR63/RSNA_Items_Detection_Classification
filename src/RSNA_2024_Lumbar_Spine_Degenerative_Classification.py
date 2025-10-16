@@ -1,6 +1,6 @@
 import signal
 from src.core.utils.logger import setup_logger, get_current_logger, log_method
-import src.core.utils.clean_logs
+from src.core.utils.clean_logs import clean_old_logs
 from src.projects.lumbar_spine.train import train_model
 from src.config.config_loader import ConfigLoader
 import sys

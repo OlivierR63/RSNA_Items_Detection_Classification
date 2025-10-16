@@ -1,35 +1,37 @@
-<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>18432df5-4b4c-4401-a1d7-4a91bb780257</ProjectGuid>
-    <ProjectHome>
-    </ProjectHome>
+    <ProjectGuid>{11083caa-51f2-463a-a9ad-3059495e3be4}</ProjectGuid>
+    <ProjectHome />
     <StartupFile>src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py</StartupFile>
-    <SearchPath>
-    </SearchPath>
+    <SearchPath />
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
-    <Name>RSNA_Items_Detection_Classification</Name>
-    <RootNamespace>RSNA_Items_Detection_Classification</RootNamespace>
+    <ProjectTypeGuids>{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
+    <LaunchProvider>Standard Python launcher</LaunchProvider>
     <InterpreterId>CondaEnv|CondaEnv|airflow_env</InterpreterId>
     <TestFramework>Pytest</TestFramework>
     <SuppressEnvironmentCreationPrompt>True</SuppressEnvironmentCreationPrompt>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DebugSymbols>true</DebugSymbols>
-    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'" />
+  <PropertyGroup>
+    <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <DebugSymbols>true</DebugSymbols>
-    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
-  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="pytest.ini" />
+    <Content Include="requirements.txt" />
+    <Content Include="scripts\create_symlink.ps1" />
+    <Content Include="scripts\run_pipeline.ps1" />
+    <Content Include="scripts\setup_environment.ps1" />
+    <Content Include="src\config\brain_aneuvrysm_config.yaml" />
+    <Content Include="src\config\lumbar_spine_config.yaml" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
-    <Compile Include="src\core\pipeline\transform.py" />
-    <Compile Include="src\core\utils\clean_logs.py" />
-    <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
     <Compile Include="src\core\data_handlers\data_pipeline.py" />
     <Compile Include="src\core\data_handlers\dicom_dataset.py" />
     <Compile Include="src\core\data_handlers\dicom_tfrecord_dataset.py" />
@@ -43,365 +45,48 @@
     <Compile Include="src\core\pipeline\base_pipeline.py" />
     <Compile Include="src\core\pipeline\lumbar_spine_pipeline.py" />
     <Compile Include="src\core\pipeline\tfx_pipeline.py" />
+    <Compile Include="src\core\pipeline\transform.py" />
     <Compile Include="src\core\pipeline\__init__.py" />
+    <Compile Include="src\core\utils\clean_logs.py" />
     <Compile Include="src\core\utils\logger.py" />
     <Compile Include="src\core\utils\packing_utils.py" />
     <Compile Include="src\core\utils\visualization.py" />
     <Compile Include="src\core\utils\__init__.py" />
+    <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
     <Compile Include="src\projects\lumbar_spine\lumbar_dicom_tfrecord_dataset.py" />
     <Compile Include="src\projects\lumbar_spine\pipeline.py" />
     <Compile Include="src\projects\lumbar_spine\train.py" />
     <Compile Include="src\projects\lumbar_spine\__init__.py" />
     <Compile Include="src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py" />
+    <Compile Include="src\RSNA_Intracranial_Aneurysm_Detection.py" />
     <Compile Include="tests\conftest.py" />
     <Compile Include="tests\test_rsna_lumbar_spine_degenerative_classification.py" />
-    <Compile Include="tests\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
     <Compile Include="tests\unit\test_data_handlers\test_dicom_dataset.py" />
-    <Compile Include="tests\unit\test_utils\test_logger.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_train.py" />
+    <Compile Include="tests\unit\test_utils\test_logger.py" />
+    <Compile Include="tests\__init__.py" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include=".github\workflows\" />
-    <Folder Include="logs\" />
-    <Folder Include=".github\" />
     <Folder Include="scripts\" />
+    <Folder Include="src" />
+    <Folder Include="src\config" />
     <Folder Include="src\core\" />
-    <Folder Include="src\core\models\" />
-    <Folder Include="src\core\data_handlers\" />
-    <Folder Include="src\core\pipeline\" />
-    <Folder Include="src\core\utils\" />
-    <Folder Include="src\config\" />
+    <Folder Include="src\core\data_handlers" />
+    <Folder Include="src\core\models" />
+    <Folder Include="src\core\pipeline" />
+    <Folder Include="src\core\utils" />
     <Folder Include="src\projects\" />
-    <Folder Include="src\projects\lumbar_spine\" />
-    <Folder Include="src\projects\intracranial_aneurysm\" />
-    <Folder Include="tests\" />
-    <Folder Include="src\" />
-    <Folder Include="tests\e2e\test_submission\" />
-    <Folder Include="tests\fixtures\dicom_samples\" />
-    <Folder Include="tests\fixtures\csv_samples\" />
-    <Folder Include="tests\fixtures\dicom_samples\4003253\" />
-    <Folder Include="tests\fixtures\dicom_samples\4003253\1054713880\" />
-    <Folder Include="tests\fixtures\dicom_samples\4003253\2448190387\" />
-    <Folder Include="tests\fixtures\dicom_samples\4003253\702807833\" />
-    <Folder Include="tests\fixtures\dicom_samples\4646740\" />
-    <Folder Include="tests\fixtures\dicom_samples\4646740\3201256954\" />
-    <Folder Include="tests\fixtures\dicom_samples\4646740\3486248476\" />
-    <Folder Include="tests\fixtures\dicom_samples\4646740\3666319702\" />
-    <Folder Include="tests\fixtures\dicom_samples\7143189\" />
-    <Folder Include="tests\fixtures\dicom_samples\7143189\132939515\" />
-    <Folder Include="tests\fixtures\dicom_samples\7143189\1951927562\" />
-    <Folder Include="tests\fixtures\dicom_samples\7143189\3219733239\" />
-    <Folder Include="tests\fixtures\dicom_samples\8785691\" />
-    <Folder Include="tests\fixtures\dicom_samples\8785691\1570286759\" />
-    <Folder Include="tests\fixtures\dicom_samples\8785691\2406919186\" />
-    <Folder Include="tests\fixtures\dicom_samples\8785691\481125819\" />
-    <Folder Include="tests\fixtures\expected_outputs\" />
-    <Folder Include="tests\integration\" />
-    <Folder Include="tests\e2e\" />
-    <Folder Include="tests\fixtures\" />
-    <Folder Include="tests\integration\test_data_flow\" />
-    <Folder Include="tests\integration\test_pipeline\" />
+    <Folder Include="src\projects\lumbar_spine" />
+    <Folder Include="tests" />
     <Folder Include="tests\unit\" />
-    <Folder Include="tests\unit\test_lumbar_spine\" />
-    <Folder Include="tests\unit\test_utils\" />
-    <Folder Include="tests\unit\test_models\" />
-    <Folder Include="tests\unit\test_data_handlers\" />
+    <Folder Include="tests\unit\test_data_handlers" />
+    <Folder Include="tests\unit\test_lumbar_spine" />
+    <Folder Include="tests\unit\test_utils" />
     <Folder Include="data\" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include=".github\workflows\main.yml" />
-    <Content Include="README.md" />
-    <Content Include="scripts\create_symlink.ps1" />
-    <Content Include="scripts\run_pipeline.ps1" />
-    <Content Include="scripts\setup_environment.ps1" />
-    <Content Include="src\config\brain_aneuvrysm_config.yaml" />
-    <Content Include="src\config\lumbar_spine_config.yaml" />
-    <Content Include="src\projects\intracranial_aneurysm\__init__.py %28brain_aneuvrysm%29" />
-    <Content Include="src\RSNA_Intracranial_Aneurysm_Detection.py" />
-    <Content Include="tests\fixtures\csv_samples\train.csv" />
-    <Content Include="tests\fixtures\csv_samples\train_label_coordinates.csv" />
-    <Content Include="tests\fixtures\csv_samples\train_series_descriptions.csv" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\1054713880\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\18.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\19.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\20.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\21.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\22.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\23.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\24.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\25.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\26.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\27.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\28.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\29.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\30.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\31.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\32.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\33.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\34.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\35.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\36.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\37.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\38.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\39.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\40.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\41.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\42.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\43.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\2448190387\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4003253\702807833\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\18.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\19.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\20.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\21.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\22.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\23.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\24.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\25.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\26.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\27.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\28.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\29.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\30.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\31.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\32.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\33.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\34.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\35.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\36.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\37.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\38.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\39.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\40.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\41.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\42.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\43.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\44.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\45.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\46.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\47.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\48.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\49.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\50.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\51.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\52.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\53.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\54.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3201256954\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3486248476\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\4646740\3666319702\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\132939515\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\18.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\19.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\20.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\21.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\22.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\23.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\1951927562\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\7143189\3219733239\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\1570286759\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\16.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\17.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\18.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\19.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\20.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\21.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\2406919186\9.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\1.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\10.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\11.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\12.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\13.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\14.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\15.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\2.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\3.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\4.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\5.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\6.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\7.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\8.dcm" />
-    <Content Include="tests\fixtures\dicom_samples\8785691\481125819\9.dcm" />
-    <Content Include="tests\requirements.txt" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="CondaEnv|CondaEnv|airflow_env" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
-  <!-- Uncomment the CoreCompile target to enable the Build command in
-       Visual Studio and specify your pre- and post-build commands in
-       the BeforeBuild and AfterBuild targets below. -->
-  <!--<Target Name="CoreCompile" />-->
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
 </Project>
