@@ -5,13 +5,13 @@
     <ProjectGuid>18432df5-4b4c-4401-a1d7-4a91bb780257</ProjectGuid>
     <ProjectHome>
     </ProjectHome>
-    <StartupFile>src\projects\lumbar_spine\train.py</StartupFile>
+    <StartupFile>src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
-    <Name>RSNA_2024_Lumbar_Spine_Degenerative_Classification</Name>
-    <RootNamespace>2024_RSNA_Lumbar_Spine_Degenerative_Classification</RootNamespace>
+    <Name>RSNA_Items_Detection_Classification</Name>
+    <RootNamespace>RSNA_Items_Detection_Classification</RootNamespace>
     <InterpreterId>CondaEnv|CondaEnv|airflow_env</InterpreterId>
     <TestFramework>Pytest</TestFramework>
     <SuppressEnvironmentCreationPrompt>True</SuppressEnvironmentCreationPrompt>
@@ -54,8 +54,9 @@
     <Compile Include="src\projects\lumbar_spine\__init__.py" />
     <Compile Include="src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py" />
     <Compile Include="tests\conftest.py" />
+    <Compile Include="tests\test_rsna_lumbar_spine_degenerative_classification.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
-    <Compile Include="tests\unit\test_data\test_dicom_dataset.py" />
+    <Compile Include="tests\unit\test_data_handlers\test_dicom_dataset.py" />
     <Compile Include="tests\unit\test_utils\test_logger.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_train.py" />
   </ItemGroup>
@@ -72,7 +73,7 @@
     <Folder Include="src\config\" />
     <Folder Include="src\projects\" />
     <Folder Include="src\projects\lumbar_spine\" />
-    <Folder Include="src\projects\brain_aneuvrysm\" />
+    <Folder Include="src\projects\intracranial_aneurysm\" />
     <Folder Include="tests\" />
     <Folder Include="src\" />
     <Folder Include="tests\e2e\test_submission\" />
@@ -104,7 +105,7 @@
     <Folder Include="tests\unit\test_lumbar_spine\" />
     <Folder Include="tests\unit\test_utils\" />
     <Folder Include="tests\unit\test_models\" />
-    <Folder Include="tests\unit\test_data\" />
+    <Folder Include="tests\unit\test_data_handlers\" />
     <Folder Include="data\" />
   </ItemGroup>
   <ItemGroup>
@@ -115,7 +116,8 @@
     <Content Include="scripts\setup_environment.ps1" />
     <Content Include="src\config\brain_aneuvrysm_config.yaml" />
     <Content Include="src\config\lumbar_spine_config.yaml" />
-    <Content Include="src\projects\brain_aneuvrysm\__init__.py %28brain_aneuvrysm%29" />
+    <Content Include="src\projects\intracranial_aneurysm\__init__.py %28brain_aneuvrysm%29" />
+    <Content Include="src\RSNA_Intracranial_Aneurysm_Detection.py" />
     <Content Include="tests\fixtures\csv_samples\train.csv" />
     <Content Include="tests\fixtures\csv_samples\train_label_coordinates.csv" />
     <Content Include="tests\fixtures\csv_samples\train_series_descriptions.csv" />

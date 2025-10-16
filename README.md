@@ -3,7 +3,7 @@
  The project is organized into several key directories and files to facilitate development, testing, and deployment. Below is an overview of the main components:
 
  ```
-RSNA_2024_Lumbar_Spine_Degenerative_Classification/
+RSNA_Items_Detection_Classification/
 │
 ├── src/
 │   │
@@ -41,17 +41,20 @@ RSNA_2024_Lumbar_Spine_Degenerative_Classification/
 │   │       ├── packing_utils.py      
 │   │       └── visualization.py   # Visualisation des résultats
 │   │
-│   └── projects/                  # Implémentations spécifiques par projet
-│       │
-│       ├── lumbar_spine/          # Projet colonne vertébrale
-│       │   ├── __init__.py
-│       │   ├── csv_metadata.py								# Classe `CSVMetadata` (fusion des CSV)
-│       │   ├── lumbar_dicom_tfrecord__dataset.py			# Implémentation de `DicomDataset` pour ce projet
-│       │   ├── pipeline.py									# Implémentation de `BasePipeline`
-│       │   └── train.py									# Script d'entraînement
-│       │
-│       └── brain_aneurysm/        # Projet anévrismes cérébraux
-│           └── __init__.py
+│   ├── projects/                  # Implémentations spécifiques par projet
+│   │    │
+│   │    ├── lumbar_spine/          # Projet colonne vertébrale
+│   │    │   ├── __init__.py
+│   │    │   ├── csv_metadata.py								# Classe `CSVMetadata` (fusion des CSV)
+│   │    │   ├── lumbar_dicom_tfrecord__dataset.py			# Implémentation de `DicomDataset` pour ce projet
+│   │    │   ├── pipeline.py									# Implémentation de `BasePipeline`
+│   │    │   └── train.py									# Script d'entraînement
+│   │    │
+│   │    └── brain_aneurysm/        # Projet anévrismes cérébraux
+│   │        └── __init__.py
+│   │
+│   ├── RSNA_2024_Lumbar_Spine_Degenerative_Classification.py  # Main script  
+│	└── RSNA_Intracranial_Aneurysm_Detection.py
 │
 ├── data/                          # Lien symbolique vers les données (non versionné)
 │
@@ -69,16 +72,17 @@ RSNA_2024_Lumbar_Spine_Degenerative_Classification/
 │   │   ├── test_pipeline/
 │   │   └── test_data_flow/
 │   │
-│   └── unit/
-│       ├── test_data/
-│       │   └──test_dicom_dataset.py
-│       ├── test_models/
-│       ├── test_utils/
-│       │   └── test_logger.py
-│       ├── test_lumbar_spine_/
-│       │   ├── test_lumbar_dicom_tfrecord_dataset.py
-│       │   └── test_train.py
-│       └── conftest.py  # Fixtures partagées  
+│   ├── unit/
+│   │   ├── test_data/
+│   │   │   └──test_dicom_dataset.py
+│   │   ├── test_models/
+│   │   ├── test_utils/
+│   │   │   └── test_logger.py
+│   │   └── test_lumbar_spine_/
+│   │       ├── test_lumbar_dicom_tfrecord_dataset.py
+│   │       └── test_train.py
+│   ├── test_rsna_lumbar_spine_degenerative_classification.py  # Test du script principal
+│   └── conftest.py  # Fixtures partagées  
 │
 ├── logs/                          # Logs (exclus du versioning)
 │

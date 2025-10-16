@@ -13,6 +13,7 @@ def mock_config():
     """Fixture for a mocked configuration dictionary."""
     return {
         "output_dir": "tests/tmp",
+        "tfrecord_dir": "tests/fixtures/tfrecords_samples",
         "batch_size": 8,
         "epochs": 2,
         "model_3d": {"type": "mock_model"},

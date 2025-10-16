@@ -1,5 +1,6 @@
 # Chemins
 dicom_root_dir: "data/lumbar_spine/dicom/training/"
+tfrecord_dir: "data/lumbar_spine/"
 csv_files:
   series_description: "data/lumbar_spine/csv/train_series_descriptions.csv"
   label_coordinates: "data/lumbar_spine/csv/train_label_coordinates.csv"

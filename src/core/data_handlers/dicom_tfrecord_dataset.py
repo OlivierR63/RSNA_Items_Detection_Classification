@@ -28,8 +28,8 @@ class DicomTFRecordDataset(ABC):
         """
         self._config = config
         
-        # Define the directory where TFRecord files will be stored.
-        self._tfrecord_dir = Path(config["output_dir"]) / "tfrecords"
+        # Define the directory where the TFRecord files shall be stored.
+        self._tfrecord_dir = Path(config["tfrecord_dir"]) / "tfrecords"
         
         # Define the pattern to match all TFRecord files in the directory.
         self._tfrecord_pattern = str(Path(config["output_dir"]) / "tfrecords" / "*.tfrecord")
