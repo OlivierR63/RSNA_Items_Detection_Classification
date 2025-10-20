@@ -3,7 +3,7 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>{11083caa-51f2-463a-a9ad-3059495e3be4}</ProjectGuid>
+    <ProjectGuid>{d9c29995-f9c0-4404-9807-3d26f3c2fd51}</ProjectGuid>
     <ProjectHome />
     <StartupFile>src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py</StartupFile>
     <SearchPath />
@@ -14,6 +14,7 @@
     <InterpreterId>CondaEnv|CondaEnv|airflow_env</InterpreterId>
     <TestFramework>Pytest</TestFramework>
     <SuppressEnvironmentCreationPrompt>True</SuppressEnvironmentCreationPrompt>
+    <SuppressConfigureTestFrameworkPrompt>true</SuppressConfigureTestFrameworkPrompt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
   <PropertyGroup Condition="'$(Configuration)' == 'Release'" />
@@ -21,13 +22,12 @@
     <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="logs\test_15632_2025-10-16_17-06-57.log" />
     <Content Include="pytest.ini" />
     <Content Include="requirements.txt" />
     <Content Include="scripts\create_symlink.ps1" />
     <Content Include="scripts\run_pipeline.ps1" />
     <Content Include="scripts\setup_environment.ps1" />
-    <Content Include="src\config\brain_aneuvrysm_config.yaml" />
-    <Content Include="src\config\lumbar_spine_config.yaml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
@@ -68,6 +68,7 @@
     <Compile Include="tests\__init__.py" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="logs\" />
     <Folder Include="scripts\" />
     <Folder Include="src" />
     <Folder Include="src\config" />

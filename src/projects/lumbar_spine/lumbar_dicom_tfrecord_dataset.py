@@ -18,15 +18,19 @@ import logging
 class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     """TensorFlow Dataset for loading DICOM TFRecords."""
 
-
     def __init__(self, config: dict, logger: Optional[logging.Logger] = None) -> None:
-
         # Initialize the logger first (before calling super() to log initialization)
+        self._MAX_RECORDS = 25
+        self._MAX_RECORDS_FLAT = self._MAX_RECORDS * 4
         self.logger = logger if logger is not None else logging.getLogger(self.__class__.__name__)
         self.logger.info("Initializing LumbarDicomTfRecordDataset")
 
         super().__init__(config, logger= self.logger) # Pass the logger to parent class
  
+
+    def max_records_flat(self):
+        return self._MAX_RECORDS_FLAT
+
 
     @log_method()
     def create_tf_dataset(self, batch_size: int = 8,*,
@@ -153,9 +157,102 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             raise
 
 
+    def _py_deserialize_and_flatten(self, metadata_bytes_tensor: tf.Tensor) -> List[tf.Tensor]:
+        """
+        Deserializes and flattens metadata bytes into a list of TensorFlow tensors.
+
+        This method takes a serialized metadata byte string (typically from a TFRecord)
+        and converts it into a structured list of TensorFlow tensors. The metadata is first
+        deserialized into a dictionary, then split into header tensors (scalar metadata fields)
+        and a flattened tensor for records (annotations or points of interest).
+
+        The records are padded to a fixed size (self._MAX_RECORDS_FLAT) to ensure consistent tensor shapes
+        for batch processing in TensorFlow pipelines.
+
+        Args:
+            metadata_bytes_tensor (tf.Tensor): A TensorFlow tensor containing the serialized
+                metadata as a byte string. This tensor is typically extracted from a TFRecord
+                and represents the 'metadata' field.
+
+        Returns:
+            list[tf.Tensor]: A list of 7 TensorFlow tensors:
+                - The first 6 tensors are scalar `tf.int32` tensors representing:
+                    0: study_id (int)
+                    1: series_id (int)
+                    2: instance_number (int)
+                    3: description (int, encoded category)
+                    4: condition (int, encoded category)
+                    5: nb_records (int, number of records/annotations)
+                - The 7th tensor is a 1D `tf.float32` tensor of shape (100,) representing:
+                    6: Flattened and padded records (level, severity, x, y) for up to 25 records.
+                      Each record is represented by 4 values, and the tensor is padded with zeros
+                      to ensure a fixed size of 100 elements (25 records * 4 values).
+
+        Raises:
+            ValueError: If the deserialized metadata structure is invalid or inconsistent.
+            Exception: If the deserialization process fails (e.g., due to corrupted metadata bytes).
+                      The exception will be logged and propagated to the caller.
+
+        Notes:
+            - This method is designed to be called within a `tf.py_function` context, allowing
+              the use of Python code inside a TensorFlow graph.
+            - The `.numpy()` call is required to convert the input tensor to a NumPy array for
+              deserialization, as TensorFlow operations are not available in this context.
+            - The padding ensures that the output tensor for records always has a fixed size,
+              which is necessary for batching in TensorFlow datasets.
+        """
+        try:
+            # We MUST call .numpy() here, inside the py_function boundary.
+            deserialized_dict = self._deserialize_metadata(metadata_bytes_tensor.numpy())
+
+            required_keys = ['study_id', 'series_id', 'instance_number', 'description', 'condition', 'nb_records']
+            for key in required_keys:
+                if key not in deserialized_dict:
+                    raise ValueError(f"Missing required key in deserialized metadata: {key}")
+            
+             # 1. Extract header Tensors
+            header_tensors = [
+                    tf.constant(deserialized_dict.get('study_id', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('series_id', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('instance_number', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('description', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('condition', 0), dtype=tf.int32),
+                    tf.constant(deserialized_dict.get('nb_records', 0), dtype=tf.int32)
+                ]
+            
+             # 2. Flatten records into a 1D list of values: [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
+             # If no records, create a dummy 1x4 list of zeros.
+            records_list = deserialized_dict.get('records', [])
+            flattened_records = [val for rec in records_list for val in rec] or [-1.0] * 4 
+            
+            # Pad the flattened list to the self._MAX_RECORDS_FLAT size (25 * 4 = 100 elements)          
+            # Pad with a safe value (0.0)
+            padded_records = flattened_records + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records))
+            
+            records_tensor = tf.constant(padded_records, dtype=tf.float32)
+
+            result = header_tensors + [records_tensor]
+            print(f"Nombre de tenseurs retournés par py_deserialize_and_flatten: {len(result)}")
+            print(f"Forme du dernier tenseur: {result[-1].shape}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error in _py_deserialize_and_flatten: {str(e)}", exc_info=True)
+            # Retourne une structure par défaut
+            return [
+                tf.constant(0, dtype=tf.int32),  # study_id
+                tf.constant(0, dtype=tf.int32),  # series_id
+                tf.constant(0, dtype=tf.int32),  # instance_number
+                tf.constant(0, dtype=tf.int32),  # description
+                tf.constant(0, dtype=tf.int32),  # condition
+                tf.constant(0, dtype=tf.int32),  # nb_records
+                tf.constant([0.0] * 100, dtype=tf.float32)  # records
+        ]
+
+
     @log_method()
     def _parse_tfrecord(self, example_proto: tf.Tensor,*,
-                       logger: Optional[logging.Logger] = None) -> Tuple[tf.Tensor, Dict]:
+                       logger: Optional[logging.Logger] = None) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
         """
         Parses a single TFRecord entry, extracting and processing the image and metadata.
 
@@ -209,38 +306,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         
             # The cleaner solution: Return only the most complex part (records) as one flattened tensor
             # and re-structure it later in the TF graph.
-        
-            # Let's define a nested function to handle the output conversion within the Python context:
-            def py_deserialize_and_flatten(metadata_bytes_tensor):
-                # We MUST call .numpy() here, inside the py_function boundary.
-                deserialized_dict = self._deserialize_metadata(metadata_bytes_tensor.numpy())
-            
-                # 1. Extract header Tensors
-                header_tensors = [
-                    tf.constant(deserialized_dict.get('study_id', 0), dtype=tf.int32),
-                    tf.constant(deserialized_dict.get('series_id', 0), dtype=tf.int32),
-                    tf.constant(deserialized_dict.get('instance_number', 0), dtype=tf.int32),
-                    tf.constant(deserialized_dict.get('description', 0), dtype=tf.int32),
-                    tf.constant(deserialized_dict.get('condition', 0), dtype=tf.int32),
-                    tf.constant(deserialized_dict.get('nb_records', 0), dtype=tf.int32)
-                ]
-            
-                # 2. Flatten records into a 1D list of values: [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
-                # If no records, create a dummy 1x4 list of zeros.
-                records_list = deserialized_dict.get('records', [])
-                flattened_records = [val for rec in records_list for val in rec] or [0.0] * 4 
-            
-                # Pad the flattened list to the MAX_RECORDS size (25 * 4 = 100 elements)
-                MAX_RECORDS = 25
-                MAX_RECORDS_FLAT = MAX_RECORDS * 4
-            
-                # Pad with a safe value (0.0)
-                padded_records = flattened_records + [0.0] * (MAX_RECORDS_FLAT - len(flattened_records))
-            
-                records_tensor = tf.constant(padded_records, dtype=tf.float32)
-
-                return header_tensors + [records_tensor]
-
 
             # Define the output signature for tf.py_function
             # 6 scalar headers (tf.int32) + 1 padded records tensor (tf.float32)
@@ -248,7 +313,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         
             # Call the py_function
             deserialized_tensors = tf.py_function(
-                py_deserialize_and_flatten, 
+                self._py_deserialize_and_flatten, 
                 inp=[metadata_bytes], 
                 Tout=output_types
             )
@@ -256,7 +321,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # Assign the results back to named Tensors
             (study_id_t, series_id_t, instance_number_t, description_t, condition_t, nb_records_t, padded_records_t) = deserialized_tensors
         
-            # Reshape the padded records tensor to (MAX_RECORDS, 4)
+            # Reshape the padded records tensor to (self._MAX_RECORDS, 4)
             padded_records_t = tf.reshape(padded_records_t, [25, 4])
 
 
@@ -300,97 +365,91 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _convert_dicom_to_tfrecords(self, root_dir: str, metadata_df: pd.DataFrame,
-                                   output_dir: str,*,
-                                   logger: Optional[logging.Logger] = None) -> None:
+                               output_dir: str, *,
+                               logger: Optional[logging.Logger] = None) -> None:
         """
-        Converts DICOM files stored in a hierarchical directory structure into 
+        Converts DICOM files stored in a hierarchical directory structure into
         TensorFlow TFRecord files, generating one TFRecord file per study.
 
-        This function iterates through all DICOM files, reads the image data, 
-        retrieves the pre-serialized metadata, and writes both to a TFRecord file 
-        for optimized data loading during training.
-
         Args:
-            root_dir (str): The path to the root directory containing study subfolders 
-                            (e.g., /data/dicom_root/).
-            metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata 
-                                        used to retrieve the serialized bytes.
+            root_dir (str): The path to the root directory containing study subfolders.
+            metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata.
             output_dir (str): The directory where the resulting TFRecord files will be saved.
             logger: Automatically injected logger (optional).
 
         Returns:
             None: The function saves files to disk but returns nothing.
         """
-        
         logger = logger or self.logger
         logger.info("Starting DICOM to TFRecord conversion",
                    extra={"action": "convert_dicom", "root_dir": root_dir})
 
         try:
-            # --- 1. Setup Output Directory ---
-            # Initialize the output directory, creating it if it doesn't exist.
-            output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = self._setup_output_directory(output_dir)
 
-            # Iterate over each study folder in the root directory, using tqdm for a progress bar.
             for study_path in tqdm(list(Path(root_dir).iterdir())):
                 if not study_path.is_dir():
                     continue
 
-                study_id = study_path.name
-                # Define the output file path for the current study's TFRecord.
-                output_path = output_dir / f"{study_id}.tfrecord"
+                self._process_study(study_path, metadata_df, output_dir, logger)
 
-                # Open the TFRecord writer, ensuring all records for the study go into one file.
-                with tf.io.TFRecordWriter(str(output_path)) as writer:
-                    # Iterate through series subfolders within the current study.
-                    for series_path in study_path.iterdir():
-                        if not series_path.is_dir():
-                            continue
-
-                        series_id = int(series_path.name)
-                        # Iterate over all DICOM files (*.dcm) within the current series.
-                        for dicom_path in series_path.glob("*.dcm"):
-                    
-                            # --- 2. Process Image Data ---
-                    
-                            # Load the DICOM image using SimpleITK.
-                            img = sitk.ReadImage(str(dicom_path))
-                            # Convert the SimpleITK image object to a NumPy array.
-                            img_array = sitk.GetArrayFromImage(img)
-
-                            # Convert the NumPy array to a TensorFlow Tensor, preserving the original type (e.g., uint16).
-                            img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
-                            # Serialize the Tensor to a byte string for storage in the TFRecord.
-                            img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
-
-                            # --- 3. Process Metadata ---
-                    
-                            # Call an assumed helper method to retrieve the pre-serialized metadata bytes 
-                            # for the specific DICOM file from the main metadata DataFrame.
-                            serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
-
-                            # --- 4. Create and Write TFRecord Example ---
-                    
-                            # Create the feature dictionary structure required by tf.train.Example.
-                            feature = {
-                                "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
-                                "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
-                            }
-
-                            # Assemble the features into a single Example protocol buffer.
-                            example = tf.train.Example(features=tf.train.Features(feature=feature))
-                    
-                            # Serialize the Example and write it to the TFRecord file.
-                            writer.write(example.SerializeToString())
-        
             logger.info("DICOM to TFRecord conversion completed successfully",
                        extra={"status": "success"})
-            
+
         except Exception as e:
             logger.error(f"Error during DICOM conversion: {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
             raise
+
+    def _setup_output_directory(self, output_dir: str) -> Path:
+        """Setup the output directory, creating it if it doesn't exist."""
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _process_study(self, study_path: Path, metadata_df: pd.DataFrame,
+                       output_dir: Path, logger: logging.Logger) -> None:
+        """Process all DICOM files in a study directory and write them to a TFRecord file."""
+        study_id = study_path.name
+        output_path = output_dir / f"{study_id}.tfrecord"
+
+        with tf.io.TFRecordWriter(str(output_path)) as writer:
+            for series_path in study_path.iterdir():
+                if not series_path.is_dir():
+                    continue
+
+                self._process_series(series_path, metadata_df, writer)
+
+    def _process_series(self, series_path: Path, metadata_df: pd.DataFrame,
+                        writer: tf.io.TFRecordWriter) -> None:
+        """Process all DICOM files in a series directory and write them to the TFRecord writer."""
+        series_id = int(series_path.name)
+
+        for dicom_path in series_path.glob("*.dcm"):
+            img_bytes, serialized_metadata = self._process_dicom_file(dicom_path, metadata_df)
+            self._write_tfrecord_example(img_bytes, serialized_metadata, writer)
+
+    def _process_dicom_file(self, dicom_path: Path, metadata_df: pd.DataFrame) -> Tuple[bytes, bytes]:
+        """Process a single DICOM file and return serialized image and metadata."""
+        img = sitk.ReadImage(str(dicom_path))
+        img_array = sitk.GetArrayFromImage(img)
+        img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
+        img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
+
+        serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
+
+        return img_bytes, serialized_metadata
+
+    def _write_tfrecord_example(self, img_bytes: bytes, serialized_metadata: bytes,
+                                writer: tf.io.TFRecordWriter) -> None:
+        """Write a single TFRecord example to the writer."""
+        feature = {
+            "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
+            "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
+        }
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+        writer.write(example.SerializeToString())
+
 
 
     @log_method()
@@ -657,10 +716,9 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 y_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
                 y = y_scaled / 100.0 # Rescale back to float
 
-                # CHANGEMENT CLÉ: Append the deserialized record as a tuple
+                # Append the deserialized record as a tuple
                 result['records'].append((level, severity, x, y))
 
-            # NOTE: Suppression du log de succès.
             return result
 
         except Exception as e:

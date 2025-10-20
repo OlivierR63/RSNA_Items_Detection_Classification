@@ -73,3 +73,16 @@ def dicom_samples_root(request):
         
     # Return the absolute path as a string (using str() is common for TF compatibility)
     return str(dicom_path.resolve())
+
+
+@pytest.fixture
+def mock_csv_metadata():
+    """Fixture for a mocked CSVMetadata class."""
+    mock_csv_metadata = MagicMock()
+    return mock_csv_metadata
+
+@pytest.fixture
+def mock_convert_dicom():
+    """Fixture for a mocked _convert_dicom_to_tfrecords method."""
+    mock_convert_dicom = MagicMock()
+    return mock_convert_dicom
