@@ -28,6 +28,7 @@
     <Content Include="scripts\create_symlink.ps1" />
     <Content Include="scripts\run_pipeline.ps1" />
     <Content Include="scripts\setup_environment.ps1" />
+    <Content Include="src\config\lumbar_spine_config.yaml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
@@ -62,7 +63,11 @@
     <Compile Include="tests\conftest.py" />
     <Compile Include="tests\test_rsna_lumbar_spine_degenerative_classification.py" />
     <Compile Include="tests\unit\test_data_handlers\test_dicom_dataset.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_dicom_to_tfrecord_conversion.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_encode_dataframe.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_metadata_deserialization.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_metadata_serialization.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_train.py" />
     <Compile Include="tests\unit\test_utils\test_logger.py" />
     <Compile Include="tests\__init__.py" />

@@ -65,81 +65,82 @@ class CSVMetadata:
         """Returns the raw training label DataFrame."""
         self.logger.info("Accessing raw training DataFrame", extra={"action": "get_train_df"})
         return self._train_df
-    
+
+
     def _merge_metadata(self) -> pd.DataFrame:
         """
         Merges the training DataFrame with label coordinates and series descriptions.
         Includes detailed logging for each step of the merge process.
         """
         self.logger.info("Starting metadata merge process", extra={"action": "merge_metadata"})
-
         try:
-            # 1. Melt/Unpivot the train DataFrame
-            # Convert columns representing different conditions/levels into rows.
-            tmp_train_df = self.train_df.melt(
-                id_vars="study_id", 
-                var_name="condition_level", 
-                value_name="severity"
-            )
-
-            # Remove entries where no Severity is recorded.
-            initial_count = len(tmp_train_df)
-            tmp_train_df.dropna(inplace=True)
-            final_count = len(tmp_train_df)
-            self.logger.info(f"Dropped {initial_count - final_count} NaN rows",
-                            extra={"step": 1, "initial_count": initial_count, "final_count": final_count})
-
-            # 2. Extract 'condition' and 'level' from 'condition_level'
-            # Example: 'L1_S1_level' needs to be split and cleaned.
-            tmp_train_df[['condition', 'level']] = tmp_train_df['condition_level'].apply(
-                lambda x: x[:-6] + ' ' + x[-5:]
-            ).str.split(' ', expand=True)
-        
-            # Clean up the condition string (e.g., replace underscores with spaces).
-            tmp_train_df['condition'] = tmp_train_df['condition'].str.replace('_',' ')
-            
-            # Clean up and normalize the level string (e.g., 'l1_s1' -> 'L1/S1').
-            tmp_train_df['level'] = tmp_train_df['level'].str.replace('_','/')
-
-            # The temporary column is no longer needed.
-            tmp_train_df.drop(['condition_level'], axis=1, inplace=True)
-
-            # 3. Merge with Label Coordinates
-            # Merge on three keys: study_id, condition, and level.
-            self.logger.info("Merging with label coordinates...", extra={"step": 3})
-            tmp_train_df = tmp_train_df.merge(
-                self._label_coords_df, 
-                on=["study_id", 'condition', 'level'], 
-                how='inner'
-            )
-            self.logger.info(f"Merged with label coordinates. Shape: {tmp_train_df.shape}",
-                                    extra={"step": 3, "shape": tmp_train_df.shape})
-        
-            # 4. Merge with Series Descriptions
-            # Final merge to add series-specific metadata (like series_id).
-            self.logger.info("Merging with series descriptions...", extra={"step": 4})
-            merged = tmp_train_df.merge(self._series_desc_df, on=['study_id', 'series_id'], how ='inner')
-            self.logger.info(f"Merged with series descriptions. Final shape: {merged.shape}",
-                                    extra={"step": 4, "final_shape": merged.shape})
-
-            # 5. Normalize identifier types
-            self.logger.info("Normalizing identifier types...", extra={"step": 5})
-            merged['study_id'] = merged['study_id'].astype(np.int64)
-            merged['series_id'] = merged['series_id'].astype(np.int64)
-            merged['instance_number'] = merged['instance_number'].astype(int)
-
-            # 6. Ensure column names are consistent (lowercase)
-            merged.columns = [c.lower() for c in merged.columns]
+            tmp_train_df = self._melt_and_clean_train_df()
+            tmp_train_df = self._merge_with_label_coordinates(tmp_train_df)
+            merged_df = self._merge_with_series_descriptions(tmp_train_df)
+            merged_df = self._normalize_identifier_types(merged_df)
             self.logger.info("Metadata merge completed successfully",
-                                extra={"status": "success", "final_shape": merged.shape})
-
-            return merged
-
+                             extra={"status": "success", "final_shape": merged_df.shape})
+            return merged_df
         except Exception as e:
             self.logger.error(f"Error merging metadata: {str(e)}",
                              exc_info=True,
                              extra={"status": "failed", "error": str(e)})
             raise
+
+
+    def _melt_and_clean_train_df(self) -> pd.DataFrame:
+        """Melt and clean the training DataFrame."""
+        tmp_train_df = self._train_df.melt(
+            id_vars="study_id",
+            var_name="condition_level",
+            value_name="severity"
+        )
+        initial_count = len(tmp_train_df)
+        tmp_train_df.dropna(inplace=True)
+        final_count = len(tmp_train_df)
+        self.logger.info(f"Dropped {initial_count - final_count} NaN rows",
+                         extra={"step": 1, "initial_count": initial_count, "final_count": final_count})
+
+        tmp_train_df[['condition', 'level']] = tmp_train_df['condition_level'].apply(
+            lambda x: x[:-6] + ' ' + x[-5:]
+        ).str.split(' ', expand=True)
+
+        tmp_train_df['condition'] = tmp_train_df['condition'].str.replace('_', ' ')
+        tmp_train_df['level'] = tmp_train_df['level'].str.replace('_', '/')
+        tmp_train_df.drop(['condition_level'], axis=1, inplace=True)
+        return tmp_train_df
+
+
+    def _merge_with_label_coordinates(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Merge the DataFrame with label coordinates."""
+        self.logger.info("Merging with label coordinates...", extra={"step": 3})
+        merged_df = df.merge(
+            self._label_coords_df,
+            on=["study_id", 'condition', 'level'],
+            how='inner'
+        )
+        self.logger.info(f"Merged with label coordinates. Shape: {merged_df.shape}",
+                         extra={"step": 3, "shape": merged_df.shape})
+        return merged_df
+
+
+    def _merge_with_series_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Merge the DataFrame with series descriptions."""
+        self.logger.info("Merging with series descriptions...", extra={"step": 4})
+        merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
+        self.logger.info(f"Merged with series descriptions. Final shape: {merged_df.shape}",
+                         extra={"step": 4, "final_shape": merged_df.shape})
+        return merged_df
+
+
+    def _normalize_identifier_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize identifier types."""
+        self.logger.info("Normalizing identifier types...", extra={"step": 5})
+        df['study_id'] = df['study_id'].astype(np.int64)
+        df['series_id'] = df['series_id'].astype(np.int64)
+        df['instance_number'] = df['instance_number'].astype(int)
+        df.columns = [c.lower() for c in df.columns]
+        return df
 
 
     def to_tf_lookup(self) -> tf.lookup.StaticHashTable:

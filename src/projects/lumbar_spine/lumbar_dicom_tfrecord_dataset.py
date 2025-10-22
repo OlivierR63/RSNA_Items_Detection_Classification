@@ -227,13 +227,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             
             # Pad the flattened list to the self._MAX_RECORDS_FLAT size (25 * 4 = 100 elements)          
             # Pad with a safe value (0.0)
-            padded_records = flattened_records + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records))
-            
+            padded_records = flattened_records + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records))  
             records_tensor = tf.constant(padded_records, dtype=tf.float32)
-
             result = header_tensors + [records_tensor]
-            print(f"Nombre de tenseurs retournés par py_deserialize_and_flatten: {len(result)}")
-            print(f"Forme du dernier tenseur: {result[-1].shape}")
+            
             return result
 
         except Exception as e:
@@ -524,273 +521,266 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
         Serializes specific metadata records from a DataFrame into a compact byte sequence.
 
-        The serialization format includes a fixed-size header followed by a variable 
-        number of fixed-size records (the payload). The method ensures fixed-width 
-        storage for all numerical data to optimize space and parsing consistency.
-
         Args:
-            study_id (str/int): The study identifier used to filter the DataFrame.
-            series_id (str/int): The series identifier used to filter the DataFrame.
-            instance_number (str/int): The name of the DICOM file, without its '.dcm' extension,
-                                        used to filter the DataFrame.
-            data_df (pd.DataFrame): The main DataFrame containing all metadata records.
+            study_id_str: The study identifier used to filter the DataFrame.
+            series_id_str: The series identifier used to filter the DataFrame.
+            instance_number_str: The name of the DICOM file, without its '.dcm' extension.
+            data_df: The main DataFrame containing all metadata records.
             logger: Automatically injected logger (optional).
 
         Returns:
             bytes: A compact byte sequence representing the serialized metadata.
-               
-                   Structure:
-                   [Header (15 bytes)] + [Record 1 (8 bytes)] + ... + [Record N (8 bytes)]
+                Structure: [Header (15 bytes)] + [Record 1 (8 bytes)] + ... + [Record N (8 bytes)]
 
         Raises:
             ValueError: If the number of records for the given identifiers exceeds 25.
         """
-        
         logger = logger or self.logger
         logger.info("Starting function _serialize_metadata")
 
         try:
-
-            mask = (
-                    (data_df["study_id"] == int(study_id_str)) &
-                    (data_df["series_id"] == int(series_id_str)) &
-                    (data_df["instance_number"] == int(instance_number_str))
-                    )
-            records_df = data_df[mask]
-        
+            records_df = self._filter_records(data_df, study_id_str, series_id_str, instance_number_str, logger)
             if records_df.empty:
-                logger.warning(f"No metadata linked with the file {study_id_str}/{series_id_str}/{instance_number_str}.dcm")
-                logger.warning("This file will not be considered during training or evaluation.")
-                logger.warning("This may be due to missing or inconsistent records in the CSV files.")
-                logger.warning("Please check the CSV files and ensure they contain the necessary records.")
-                logger.warning("Returning an empty byte sequence for metadata")
-                metadata_bytes = b''
-        
-            else:
-                # Extract global properties (must be unique for the filtered records)
-                condition=int(records_df['condition'].unique()[0])
-                description = int((records_df['series_description'].unique())[0])
+                return b''
 
-                # --- Header Serialization (15 bytes total) ---
+            header_bytes = self._serialize_header(records_df, study_id_str, series_id_str, instance_number_str)
+            payload_bytes = self._serialize_payload(records_df)
 
-                # Serialize study_id and series_id as 5-byte unsigned integers (big-endian)
-                study_id_bytes = int(study_id_str).to_bytes(5, byteorder='big', signed=False)
-                series_id_bytes = int(series_id_str).to_bytes(5, byteorder='big', signed=False)
+            metadata_bytes = header_bytes + payload_bytes
 
-                # Serialize instance_number as a 2-byte unsigned short (max 9999)
-                instance_number_bytes = struct.pack('=H', int(instance_number_str))
-
-                # Serialize description and condition as 1-byte unsigned characters (sufficient for small values)
-                description_bytes = struct.pack('=B', description) # '=B' → 1-byte formatting. Sufficient for 0, 1, 2
-                condition_bytes = struct.pack('=B', condition) # '=B' → 1-byte formatting. Sufficient for 0, 1, 2, 3, 4
-
-                # Serialize the number of records (max 25) as a 1-byte unsigned character
-                nb_records = len(records_df)
-                if nb_records > 25:
-                    raise ValueError("The number of records exceeds the limit of 25.")
-                nb_records_bytes = struct.pack('=B', nb_records)  # '=B' → 1-byte formatting. Sufficient for 0-255
- 
-                metadata_bytes = study_id_bytes + series_id_bytes + instance_number_bytes + description_bytes + condition_bytes + nb_records_bytes
-
-                 # --- Payload Serialization (8 bytes per record) ---
-
-                for row in records_df.itertuples():
-                    level = row.level
-                    severity = row.severity
-
-                    # Convert float coordinates to integers by scaling (multiplication by 100) 
-                    # to preserve two decimal places of precision
-                    x = int(float(row.x) *100) # Conversion en int après multiplication par 100
-                    y = int(float(row.y) *100)
-            
-                    # Serialize level and severity as 1-byte unsigned characters
-                    level_bytes = struct.pack('=B', level)  # '=B' → 1-byte formatting. Sufficient for 0, 1, 2, 3, 4
-                    severity_bytes = struct.pack('=B', severity)  # '=B' → 1-byte formatting. Sufficient for 0, 1, 2
-            
-                    # Serialize scaled x and y as 3-byte unsigned integers (big-endian)
-                    x_bytes = int(x).to_bytes(3, byteorder='big', signed=False)
-                    y_bytes = int(y).to_bytes(3, byteorder='big', signed=False)
-
-                    metadata_bytes += level_bytes + severity_bytes + x_bytes + y_bytes
-        
-                logger.info("function _serialize_metadata completed successfully",
-                                extra={"status": "success"})    
+            logger.info("Function _serialize_metadata completed successfully", extra={"status": "success"})
             return metadata_bytes
 
         except Exception as e:
-            logger.error(f"Error in function _serialize_metadata() : {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
+            logger.error(f"Error in function _serialize_metadata(): {str(e)}", exc_info=True,
+                         extra={"status": "failed", "error": str(e)})
+            raise
+
+
+    def _filter_records(self, data_df: pd.DataFrame, study_id_str: str, series_id_str: str,
+                        instance_number_str: str, logger: logging.Logger) -> pd.DataFrame:
+        """Filters the DataFrame to get records matching the given identifiers."""
+        mask = (
+            (data_df["study_id"] == int(study_id_str)) &
+            (data_df["series_id"] == int(series_id_str)) &
+            (data_df["instance_number"] == int(instance_number_str))
+        )
+        records_df = data_df[mask]
+
+        if records_df.empty:
+            logger.warning(f"No metadata linked with the file {study_id_str}/{series_id_str}/{instance_number_str}.dcm")
+            logger.warning("This file will not be considered during training or evaluation.")
+            logger.warning("This may be due to missing or inconsistent records in the CSV files.")
+            logger.warning("Please check the CSV files and ensure they contain the necessary records.")
+            logger.warning("Returning an empty byte sequence for metadata")
+
+        return records_df
+
+
+    def _serialize_header(self, records_df: pd.DataFrame, study_id_str: str,
+                          series_id_str: str, instance_number_str: str) -> bytes:
+        """Serializes the header part of the metadata."""
+        # Extract global properties (must be unique for the filtered records)
+        condition = int(records_df['condition'].unique()[0])
+        description = int(records_df['series_description'].unique()[0])
+
+        # Serialize study_id and series_id as 5-byte unsigned integers (big-endian)
+        study_id_bytes = int(study_id_str).to_bytes(5, byteorder='big', signed=False)
+        series_id_bytes = int(series_id_str).to_bytes(5, byteorder='big', signed=False)
+
+        # Serialize instance_number as a 2-byte unsigned short (max 9999)
+        instance_number_bytes = int(instance_number_str).to_bytes(2, byteorder='big', signed=False)
+
+        # Serialize description and condition as 1-byte unsigned characters
+        description_bytes = description.to_bytes(1, byteorder='big', signed=False)
+        condition_bytes = condition.to_bytes(1, byteorder='big', signed=False)
+
+        # Serialize the number of records (max 25) as a 1-byte unsigned character
+        nb_records = len(records_df)
+        if nb_records > 25:
+            raise ValueError("The number of records exceeds the limit of 25.")
+        nb_records_bytes = nb_records.to_bytes(1, byteorder='big', signed=False)
+
+        return study_id_bytes + series_id_bytes + instance_number_bytes + description_bytes + condition_bytes + nb_records_bytes
+
+
+    def _serialize_payload(self, records_df: pd.DataFrame) -> bytes:
+        """Serializes the payload part of the metadata."""
+        payload_bytes = b''
+
+        for row in records_df.itertuples():
+            level = row.level
+            severity = row.severity
+
+            # Convert float coordinates to integers by scaling (multiplication by 100)
+            x = round(float(row.x) * 100)
+            y = round(float(row.y) * 100)
+
+            # Serialize level and severity as 1-byte unsigned characters
+            level_bytes = struct.pack('=B', level)
+            severity_bytes = struct.pack('=B', severity)
+
+            # Serialize scaled x and y as 3-byte unsigned integers (big-endian)
+            x_bytes = x.to_bytes(3, byteorder='big', signed=False)
+            y_bytes = y.to_bytes(3, byteorder='big', signed=False)
+
+            payload_bytes += level_bytes + severity_bytes + x_bytes + y_bytes
+
+        return payload_bytes
 
 
     @log_method()
-    def _deserialize_metadata(self, metadata_bytes: bytes,*,
-                              logger: Optional[logging.Logger] = None) -> Dict:
+    def _deserialize_metadata(self, metadata_bytes: bytes, *,
+                          logger: Optional[logging.Logger] = None) -> Dict:
         """
         Deserializes a compact byte sequence back into structured metadata components.
-
-        This function is the inverse of _serialize_metadata. It parses the fixed-size 
-        header and then reads a variable number of records based on the count found 
-        in the header.
-
+        This function is the inverse of _serialize_metadata.
         Args:
-            metadata_bytes (bytes): The byte sequence containing the serialized metadata.
+            metadata_bytes: The byte sequence containing the serialized metadata.
             logger: Automatically injected logger (optional).
-
         Returns:
-            dict: A dictionary containing the deserialized header values and a 
-                  list of tuples (level, severity, x, y) for the individual records.
-                  
-                  Example:
-                  {
-                      'study_id': 12345, 
-                      'series_id': 67890, 
-                      'instance_number': 1, 
-                      'description': 1, 
-                      'condition': 3, 
-                      'nb_records': 2, 
-                      'records': [
-                          (0, 1, 12.34, 56.78), # CHANGEMENT CLÉ: Tuple au lieu de Dict
-                          (1, 0, 90.12, 34.56)
-                      ]
-                  }
-
+            dict: A dictionary containing the deserialized header values and a list of tuples
+                  (level, severity, x, y) for the individual records.
         Raises:
-            struct.error: If the byte sequence is shorter than expected (malformed data).
+            ValueError: If the input is not a byte sequence or if the buffer length is insufficient.
         """
-        
-        # NOTE: Suppression des logs à haute fréquence d'appel pour l'optimisation
-        # logger = logger or self.logger
-        # logger.info("Starting function _deserialize_metadata")
+        if not isinstance(metadata_bytes, bytes):
+            raise ValueError("Input must be a byte sequence")
 
-        # La gestion de l'erreur est déplacée dans le except final.
+        if not metadata_bytes:
+            raise ValueError("Input byte sequence is empty")
+
+        MINIMUM_BUFFER_LENGTH = 31  # Requested minimal length (header + 1 record)
+        if len(metadata_bytes) < MINIMUM_BUFFER_LENGTH:
+            raise struct.error(f"Invalid buffer length: expected at least {MINIMUM_BUFFER_LENGTH} bytes, got {len(metadata_bytes)}")
+
         try:
-            if not metadata_bytes:
-                # Retourne la structure minimale pour une séquence vide
-                return {
-                    'study_id': 0, 'series_id': 0, 'instance_number': 0, 
-                    'description': 0, 'condition': 0, 'nb_records': 0, 
-                    'records': [] # Liste de tuples vide
-                }
-            
-            # Ensure the input is of type bytes
-            if not isinstance(metadata_bytes, bytes):
-                raise ValueError("Input must be a byte sequence.")
-            
-            # Check that the byte sequence is at least 15 bytes long (minimum header size)
-            if len(metadata_bytes) < 15:
-                raise struct.error("Byte sequence too short to contain valid metadata.")
-
-            # --- Setup for Deserialization ---
             buffer = io.BytesIO(metadata_bytes)
-
-            # --- Deserialize Header (15 bytes total) ---
-            study_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
-            series_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
-            instance_number = struct.unpack('=H', buffer.read(2))[0]
-            description = struct.unpack('=B', buffer.read(1))[0]
-            condition = struct.unpack('=B', buffer.read(1))[0]
-            nb_records = struct.unpack('=B', buffer.read(1))[0]
-
-            # Initialize the results dictionary
-            result = {
-                'study_id': study_id,
-                'series_id': series_id,
-                'instance_number': instance_number,
-                'description': description,
-                'condition': condition,
-                'nb_records': nb_records,
-                'records': []
-            }
-
-            # --- Deserialize Payload (8 bytes per record) ---
-            for _ in range(nb_records):
-                # Read level (1 byte) and severity (1 byte)
-                level = struct.unpack('=B', buffer.read(1))[0]
-                severity = struct.unpack('=B', buffer.read(1))[0]
-                
-                # Read x (3 bytes)
-                x_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
-                x = x_scaled / 100.0 # Rescale back to float
-                
-                # Read y (3 bytes)
-                y_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
-                y = y_scaled / 100.0 # Rescale back to float
-
-                # Append the deserialized record as a tuple
-                result['records'].append((level, severity, x, y))
-
-            return result
-
+            header = self._deserialize_header(buffer)
+            records = self._deserialize_records(buffer, header['nb_records'])
+            return {**header, 'records': records}
+        
         except Exception as e:
             logger = logger or self.logger
-            logger.error(f"Error in function _deserialize_metadata : {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
-            # En cas d'erreur de parsing, retourner une structure vide et sûre
-            return {
-                'study_id': 0, 'series_id': 0, 'instance_number': 0, 
-                'description': 0, 'condition': 0, 'nb_records': 0, 
-                'records': []
-            }
+            logger.error(f"Error in function _deserialize_metadata: {str(e)}", exc_info=True,
+                         extra={"status": "failed", "error": str(e)})
+            
+            raise Exception(f"Error deserializing metadata: {str(e)}")
 
-    
+
+    def _deserialize_header(self, buffer: io.BytesIO) -> Dict:
+        """Deserializes the header part of the metadata."""
+        study_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
+        series_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
+        instance_number = int.from_bytes(buffer.read(2), byteorder='big', signed=False)
+        description = int.from_bytes(buffer.read(1), byteorder='big', signed=False)
+        condition = int.from_bytes(buffer.read(1), byteorder='big', signed=False)
+        nb_records = int.from_bytes(buffer.read(1), byteorder='big', signed=False)
+
+        return {
+            'study_id': study_id,
+            'series_id': series_id,
+            'instance_number': instance_number,
+            'description': description,
+            'condition': condition,
+            'nb_records': nb_records
+        }
+
+
+    def _deserialize_records(self, buffer: io.BytesIO, nb_records: int) -> List[Tuple]:
+        """Deserializes the records part of the metadata."""
+        records = []
+
+        for _ in range(nb_records):
+            level = int.from_bytes(buffer.read(1), byteorder='big', signed=False)
+            severity = int.from_bytes(buffer.read(1), byteorder='big', signed=False)
+
+            x_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
+            x = x_scaled / 100.0  # Rescale back to float
+
+            y_scaled = int.from_bytes(buffer.read(3), byteorder='big', signed=False)
+            y = y_scaled / 100.0  # Rescale back to float
+
+            records.append((level, severity, x, y))
+
+        return records
+
+
+
     @log_method()
-    def _encode_dataframe(self, metadata_df: pd.DataFrame,*,
-                         logger: Optional[logging.Logger] = None) -> pd.DataFrame:
-        """Converts categorical textual metadata fields in a DataFrame to numerical values.
-
-        This process is essential for preparing data for serialization or machine 
-        learning models, replacing descriptive strings with compact integers.
+    def _encode_dataframe(self, metadata_df: pd.DataFrame, *,
+                      logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+        """
+        Converts categorical textual metadata fields in a DataFrame to numerical values.
+        This process is essential for preparing data for serialization or machine learning models,
+        replacing descriptive strings with compact integers.
 
         Args:
-            metadata_df (pd.DataFrame): The DataFrame containing metadata to be converted.
-                                        Example column values: {"condition": "Spinal Canal Stenosis", "level": "L1-L2", ...}
+            metadata_df: The DataFrame containing metadata to be converted.
+                        Example column values: {"condition": "Spinal Canal Stenosis", "level": "L1-L2", ...}
 
         Returns:
             pd.DataFrame: The DataFrame with the specified columns converted to integer values.
         """
-        
         logger = logger or self.logger
         logger.info("Starting function _encode_dataframe")
 
         try:
-            # --- 1. Create Mapping Dictionaries ---
-            # Generate unique integer mappings for each categorical column based on its unique values.
-    
-            # 1.1 Condition
-            condition_values = metadata_df["condition"].unique().tolist()
-            # Assume self._create_string_to_int_mapper returns an object with a 'mapping' attribute (dict).
-            CONDITION_MAP = self._create_string_to_int_mapper(condition_values).mapping
+            # Define columns to encode and their corresponding mapping variables
+            columns_to_encode = ["condition", "level", "series_description", "severity"]
 
-            # 1.2 Level
-            level_values = metadata_df["level"].unique().tolist()
-            LEVEL_MAP = self._create_string_to_int_mapper(level_values).mapping
+            # Create mappings for each column
+            mappings = self._create_mappings(metadata_df, columns_to_encode)
 
-            # 1.3 Description
-            description_values = metadata_df["series_description"].unique().tolist()
-            DESCRIPTION_MAP = self._create_string_to_int_mapper(description_values).mapping
+            # Apply encoding to each column
+            metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
 
-            # 1.4 Severity
-            severity_values = metadata_df["severity"].unique().tolist()
-            SEVERITY_MAP = self._create_string_to_int_mapper(severity_values).mapping
-
-            # --- 2. Apply Encoding to the Columns ---
-
-            # Use .map() to replace strings with their corresponding integer codes.
-            # .fillna(-1) assigns a sentinel value (-1) to any string not found in the map (e.g., missing data).
-            # .astype(int) converts the final result to the integer data type.
-    
-            metadata_df["condition"] = metadata_df["condition"].map(CONDITION_MAP).fillna(-1).astype(int)
-            metadata_df["level"] = metadata_df["level"].map(LEVEL_MAP).fillna(-1).astype(int)
-            metadata_df["series_description"] = metadata_df["series_description"].map(DESCRIPTION_MAP).fillna(-1).astype(int)
-            metadata_df["severity"] = metadata_df["severity"].map(SEVERITY_MAP).fillna(-1).astype(int)
-
-            logger.info("function _encode_dataframe completed successfully",
-                            extra={"status": "success"}) 
+            logger.info("Function _encode_dataframe completed successfully", extra={"status": "success"})
             return metadata_df
 
         except Exception as e:
-            logger.error(f"Error in function _encode_dataframe : {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
+            logger.error(f"Error in function _encode_dataframe: {str(e)}", exc_info=True,
+                         extra={"status": "failed", "error": str(e)})
+            raise
+
+
+    def _create_mappings(self, metadata_df: pd.DataFrame, columns_to_encode: Dict[str, str]) -> Dict[str, Dict]:
+        """
+        Creates mapping dictionaries for each categorical column.
+
+        Args:
+            metadata_df: The DataFrame containing metadata to be converted.
+            columns_to_encode: Dictionary mapping column names to their mapping variable names.
+
+        Returns:
+            Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
+        """
+        mappings = {}
+
+        for column in columns_to_encode:
+            values = metadata_df[column].unique().tolist()
+            mappings[column] = self._create_string_to_int_mapper(values).mapping
+
+        return mappings
+
+
+    def _apply_encodings(self, metadata_df: pd.DataFrame, columns_to_encode: List[str],
+                         mappings: Dict[str, Dict]) -> pd.DataFrame:
+        """
+        Applies the encoding mappings to each specified column in the DataFrame.
+
+        Args:
+            metadata_df: The DataFrame containing metadata to be converted.
+            columns_to_encode: Dictionary mapping column names to their mapping variable names.
+            mappings: Dictionary of mapping dictionaries for each column.
+
+        Returns:
+            pd.DataFrame: The DataFrame with the specified columns converted to integer values.
+        """
+        for column in columns_to_encode:
+            metadata_df[column] = metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
+
+        return metadata_df
 
 
     @log_method()

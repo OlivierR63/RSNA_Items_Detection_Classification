@@ -13,12 +13,12 @@ def mock_config():
     """Fixture for a mocked configuration dictionary."""
     return {
         "output_dir": "tests/tmp",
-        "tfrecord_dir": "tests/fixtures/tfrecords_samples",
+        "tfrecord_dir": "tmp_path/tfrecord",
         "batch_size": 8,
         "epochs": 2,
         "model_3d": {"type": "mock_model"},
         "csv_files": {
-            "series_description": "tests/fixtures/csv_samples/mock_train_series_description.csv",
+            "series_description": "tests/fixtures/csv_samples/mock_train_series_descriptions.csv",
             "label_coordinates": "tests/fixtures/csv_samples/mock_train_label_coordinates.csv",
             "train": "tests/fixtures/csv_samples/mock_train.csv"
         },
@@ -80,6 +80,7 @@ def mock_csv_metadata():
     """Fixture for a mocked CSVMetadata class."""
     mock_csv_metadata = MagicMock()
     return mock_csv_metadata
+
 
 @pytest.fixture
 def mock_convert_dicom():

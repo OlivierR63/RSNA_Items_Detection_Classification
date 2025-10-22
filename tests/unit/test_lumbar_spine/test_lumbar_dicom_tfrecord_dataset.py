@@ -17,41 +17,50 @@ class TestLumbarDicomTFRecordDataset:
         self.dataset = None  # Sera initialisé dans chaque test si nécessaire
 
 
-    def test_generate_tfrecord_files(self, mock_csv_metadata, mock_convert_dicom):
+    def test_generate_tfrecord_files(self, mock_csv_metadata, mock_convert_dicom, tmp_path):
         """
         Tests the TFRecord files generation process, which is triggered upon object initialization.
         The underlying I/O operations are mocked.
         """
         # Mock get_current_logger
         with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
+            
             # Mock the CSVMetadata class to avoid file reading
             with patch("src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata", return_value=mock_csv_metadata):
+                
                 # Configure the mock_csv_metadata to return a mock dataframe
                 mock_csv_metadata._merged_df = pd.DataFrame({
-                    "study_id": [1],
-                    "series_id": [1],
-                    "instance_number": [1]
+                    "study_id": [12345678],
+                    "series_id": [87654321],
+                    "instance_number": [1],
+                    "condition": [2],
+                    "severity": [1],
+                    "series_description":[0],
+                    "level": [3],
+                    "x": [12.34],
+                    "y": [56.78]
                 })
 
                 # Mock _convert_dicom_to_tfrecords to avoid I/O operations
                 with patch.object(LumbarDicomTFRecordDataset, '_convert_dicom_to_tfrecords', mock_convert_dicom):
-                    # Initialize the dataset
-                    self.dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
+                    
+                    # Initialize the dataset, WHICH SHOULD TRIGGER _generate_tfrecord_files
+                    dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
-                # Define the _tfrecord_dir path to simulate the expected state after initialization
-                self.dataset._tfrecord_dir = Path("tests/tmp/tfrecords")
-                self.dataset._tfrecord_dir.mkdir(parents=True, exist_ok=True)
+                    # Define the _tfrecord_dir path to simulate the expected state after initialization
+                    dataset._tfrecord_dir = Path(tmp_path/"tfrecords")
+                    dataset._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
-                # Verification checks
-                self.mock_logger.info.assert_any_call(
-                    "Starting generate_tfrecord_file",
-                    extra={"action": "generate_tf_records"}
-                )
-                self.mock_logger.info.assert_called_with(
-                    "DICOM to TFRecord conversion completed.",
-                    extra={"status": "success"}
-                )
-                mock_convert_dicom.assert_called_once()
+                    # Verification checks
+                    self.mock_logger.info.assert_any_call(
+                        "Starting generate_tfrecord_file",
+                        extra={"action": "generate_tf_records"}
+                    )
+                    self.mock_logger.info.assert_called_with(
+                        "DICOM to TFRecord conversion completed.",
+                        extra={"status": "success"}
+                    )
+                    mock_convert_dicom.assert_called_once()
 
 
     def test_create_tf_dataset(self):
@@ -182,42 +191,51 @@ class TestLumbarDicomTFRecordDataset:
             assert tuple(metadata["records"].shape) == (25, 4)
 
 
-    def test_convert_dicom_to_tfrecord(self):
-        pass
-
-
-    def test_setup_output_directory(self):
-        pass
-
-    def test_process_study(self):
-        pass
-
-    def test_process_series(self):
-        pass
-
-    def test_process_dicom_file(self):
-        pass
-
-    def test_write_tfrecord_example(self):
-        pass
-
-
     def test_get_metadata_for_file(self):
-        pass
+        """Tests the retrieval of metadata for a specific DICOM file."""           
 
+        # Create a mock file path
+        mock_file_path = "/fake/root_dir/1/2/1.dcm"
 
-    def test_serialize_metadata(self):
-        pass
+        # Create a mock metadata DataFrame
+        mock_metadata_df = pd.DataFrame({
+            "study_id": [1, 1, 2],
+            "series_id": [1, 2, 1],
+            "instance_number": [1, 2, 1],
+            "other_column": ["value1", "value2", "value3"]
+        })
 
+        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
 
-    def test_deserialize_metadata(self):
-        pass
+            # Initialize the dataset
+            dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
+            with patch.object(dataset, '_generate_tfrecord_files', return_value=None),\
+                patch.object(dataset, '_serialize_metadata') as mock_serialize_metadata:
 
-    def test_encode_dataframe(self):
-        pass
+                # Configure the mock for _serialize_metadata
+                mock_serialize_metadata.return_value = b"serialized_metadata_bytes"
 
+                # Call the method
+                result = dataset._get_metadata_for_file(mock_file_path, mock_metadata_df)
 
-    def test_create_string_to_int_mapper(self):
-        pass
+                # Verifications
+                # Check that the logger was called correctly
+                self.mock_logger.info.assert_any_call(
+                    "Starting retrieving metadata from CSV files"
+                )
+
+                # Check that _serialize_metadata was called with the correct arguments
+                mock_serialize_metadata.assert_called_once_with("1", "2", "1", mock_metadata_df)
+
+                # Check that the result is the expected serialized metadata
+                assert result == b"serialized_metadata_bytes"
+
+                # Test with None metadata_df
+                result = dataset._get_metadata_for_file(mock_file_path, None)
+                assert result == b''
+
+                # Check that the logger was called again for the second call
+                self.mock_logger.info.assert_any_call("Starting retrieving metadata from CSV files")
+
 

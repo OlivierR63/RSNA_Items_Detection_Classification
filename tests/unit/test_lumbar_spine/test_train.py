@@ -4,6 +4,7 @@ from src.projects.lumbar_spine.train import train_model, create_tf_dataset, trai
 from tests import conftest
 import pytest
 
+
 @patch("src.projects.lumbar_spine.train.LumbarDicomTFRecordDataset")
 @patch("src.projects.lumbar_spine.train.ModelFactory")
 def test_train_model(mock_model_factory, mock_dataset, mock_config, mock_logger):
@@ -24,6 +25,7 @@ def test_train_model(mock_model_factory, mock_dataset, mock_config, mock_logger)
     mock_logger.info.assert_any_call("Loading 3D model...", extra={"action": "load_model", "model_type": mock_config['model_3d']['type']})
     mock_logger.info.assert_called_with("Model saved to tests/tmp/model", extra={"status": "success", "model_path": "tests/tmp/model"})
 
+
 @patch("src.projects.lumbar_spine.train.LumbarDicomTFRecordDataset")
 def test_create_tf_dataset(mock_dataset, mock_config, mock_logger):
     """Test la fonction create_tf_dataset."""
@@ -35,6 +37,7 @@ def test_create_tf_dataset(mock_dataset, mock_config, mock_logger):
 
     assert result == "mock_dataset"
     mock_logger.info.assert_called_with("Dataset created successfully.", extra={"status": "success", "batch_size": mock_config["batch_size"]})
+
 
 @patch("tensorflow.keras.Model.fit")
 @patch("src.projects.lumbar_spine.train.tf.keras.callbacks.ModelCheckpoint")
