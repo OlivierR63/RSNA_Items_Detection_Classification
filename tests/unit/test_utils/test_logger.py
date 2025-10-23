@@ -2,15 +2,21 @@
 import logging
 import json
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from src.core.utils.logger import setup_logger, get_current_logger, log_method, JSONFormatter
+from src.core.utils.logger import (
+    setup_logger,
+    get_current_logger,
+    log_method,
+    JSONFormatter
+)
 
-def test_setup_logger(tmp_path, caplog):
+
+def test_setup_logger(caplog, tmp_path):
     """Teste la création d'un logger avec setup_logger."""
     log_dir = tmp_path / "logs"
 
-    with setup_logger("test_process", log_dir=str(log_dir), use_json=False) as logger:
+    with setup_logger("test_process",
+                      log_dir=str(log_dir),
+                      use_json=False) as logger:
         assert logger is not None
         assert isinstance(logger, logging.Logger)
         logger.info("Test message")
@@ -23,6 +29,7 @@ def test_setup_logger(tmp_path, caplog):
         with open(log_files[0], "r") as f:
             content = f.read()
             assert "Test message" in content
+
 
 def test_json_formatter():
     """Teste le formatter JSON."""
@@ -45,6 +52,7 @@ def test_json_formatter():
     assert data["message"] == "Test message"
     assert data["level"] == "INFO"
 
+
 def test_log_method_decorator(caplog, mock_logger):
     """Teste le décorateur log_method."""
 
@@ -60,6 +68,7 @@ def test_log_method_decorator(caplog, mock_logger):
     # Test avec logger explicite
     test_function(logger=mock_logger)
     mock_logger.info.assert_called_with("Test function called")
+
 
 def test_get_current_logger():
     """Teste la récupération du logger courant."""
