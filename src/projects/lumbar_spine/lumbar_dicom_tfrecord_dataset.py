@@ -764,7 +764,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         return mappings
 
 
-    def _apply_encodings(self, metadata_df: pd.DataFrame, columns_to_encode: List[str],
+    def _apply_encodings(self, metadata_df: pd.DataFrame,
+                         columns_to_encode: List[str],
                          mappings: Dict[str, Dict]) -> pd.DataFrame:
         """
         Applies the encoding mappings to each specified column in the DataFrame.

@@ -12,7 +12,7 @@ class TestLumbarDicomTFRecordDataset:
         """Fixture to initialize attributes common to all tests."""
         self.mock_config = mock_config
         self.mock_logger = mock_logger
-        self.dataset = None  # Sera initialisé dans chaque test si nécessaire
+        self.dataset = None  # Sera initialisÃ© dans chaque test si nÃ©cessaire
 
     def test_generate_tfrecord_files(self, mock_csv_metadata,
                                         mock_convert_dicom, tmp_path):

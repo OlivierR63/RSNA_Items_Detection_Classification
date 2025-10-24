@@ -49,11 +49,21 @@ class TestEncodeDataFrame:
 			"metadata": ["meta1", "meta2", "meta3"]
 		})
 
-	@pytest.fixture
+	@pytest.fixture(autouse = True)
 	def test_df(self):
-		
-		return 0
+		"""
+			Fixture to provide a test DataFrame with realistic values.
+		"""
+		global CONDITIONS, LEVELS, SERIES_DESCRIPTIONS, SEVERITIES
 
+		data_dict = {
+			"condition": CONDITIONS,
+			"level": LEVELS,
+			"series_description": SERIES_DESCRIPTIONS + [SERIES_DESCRIPTIONS[0]] + [SERIES_DESCRIPTIONS[1]],
+			"severity": SEVERITIES + [SEVERITIES[1]] + [SEVERITIES[0]],
+			"other_column": [1, 2, 3, 0, 4]
+		}
+		return pd.DataFrame(data_dict)
 
 	def create_mock_mapper(self, values):
 		# Create a mock mapping based on the input values
@@ -252,7 +262,7 @@ class TestEncodeDataFrame:
 		# Define realistic mappings
 		mappings = {
 			"condition": {condition: idx for idx, condition in enumerate(CONDITIONS[:2])},
-			"level": {level: idx for idx, level in enumerate(LEVELS[:2])}
+			"level": {level: idx for idx, level in enumerate(LEVELS[1:3])}
 		}
 
 		get_current_logger_chain = "src.core.utils.logger.get_current_logger"
@@ -266,8 +276,8 @@ class TestEncodeDataFrame:
 												 columns_to_encode, mappings)
 
 			# Assertions
-			assert list(result_df["condition"]) == [0, 1]
-			assert list(result_df["level"]) == [0, 1]
+			assert list(result_df["condition"]) == [0, 1, -1, -1, -1]
+			assert list(result_df["level"]) == [-1, 0, 1, -1, -1]
 			assert all(isinstance(x, int) for x in result_df["condition"])
 			assert all(isinstance(x, int) for x in result_df["level"])
 
