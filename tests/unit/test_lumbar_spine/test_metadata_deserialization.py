@@ -1,12 +1,12 @@
 # coding: utf-8
 
-
 import io
 import struct
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
+
 
 class TestMetadataDeserialization:
     """
@@ -85,7 +85,7 @@ class TestMetadataDeserialization:
 
     def test_deserialize_metadata_invalid_input(self):
         """Test deserialization with invalid input."""
-        
+
         logger_path = "src.core.utils.logger.get_current_logger"
         with patch(logger_path, return_value=self.mock_logger):
             # Initialize the dataset with the mock logger

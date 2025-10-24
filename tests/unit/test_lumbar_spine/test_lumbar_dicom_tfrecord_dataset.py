@@ -1,4 +1,5 @@
-# tests/test_lumbar_dicom_tfrecord_dataset.py
+# coding: utf-8
+
 from unittest.mock import patch, MagicMock
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 import pytest
@@ -77,7 +78,7 @@ class TestLumbarDicomTFRecordDataset:
         logger_path = "src.core.utils.logger.get_current_logger"
         with patch(logger_path, return_value=self.mock_logger):
 
-            # 1. Create a final mock dataset to be returned 
+            # 1. Create a final mock dataset to be returned
             final_mock_dataset = MagicMock(name='final_dataset')
 
             # 2. Use patch to mock tensorflow.data.Dataset.list_files
@@ -175,7 +176,7 @@ class TestLumbarDicomTFRecordDataset:
                 assert len(result) == 7
                 for i in range(6):
                     assert result[i].dtype == tf.int32
-                
+
                 assert result[-1].dtype == tf.float32
                 assert result[0].numpy() == 1
                 assert result[5].numpy() == 2
@@ -192,9 +193,12 @@ class TestLumbarDicomTFRecordDataset:
              patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
 
             # Mock _generate_tfrecord_files during initialization to avoid side effects
-            with patch.object(LumbarDicomTFRecordDataset,
+            with patch.object(
+                                LumbarDicomTFRecordDataset,
                                 '_generate_tfrecord_files',
-                                return_value=None):
+                                return_value=None
+                ):
+
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                             logger=self.mock_logger)
 

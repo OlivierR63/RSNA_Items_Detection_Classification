@@ -1,4 +1,4 @@
-#coding: utf-8
+# coding: utf-8
 
 import pandas as pd
 import pytest
@@ -25,6 +25,7 @@ SERIES_DESCRIPTIONS = ["Axial T2", "Sagittal T1", "Sagittal T2/STIR"]
 
 SEVERITIES = ["Normal/Mild", "Severe", "Moderate"]
 
+
 class TestEncodeDataFrame:
     """
         Unit tests for the _encode_dataframe method
@@ -49,18 +50,20 @@ class TestEncodeDataFrame:
             "metadata": ["meta1", "meta2", "meta3"]
         })
 
-    @pytest.fixture(autouse = True)
+    @pytest.fixture(autouse=True)
     def test_df(self):
         """
             Fixture to provide a test DataFrame with realistic values.
         """
-        global CONDITIONS, LEVELS, SERIES_DESCRIPTIONS, SEVERITIES
 
+        series_list = SERIES_DESCRIPTIONS + [SERIES_DESCRIPTIONS[0]] + [SERIES_DESCRIPTIONS[1]]
+        severities_list = SEVERITIES + [SEVERITIES[1]] + [SEVERITIES[0]]
+        
         data_dict = {
             "condition": CONDITIONS,
             "level": LEVELS,
-            "series_description": SERIES_DESCRIPTIONS + [SERIES_DESCRIPTIONS[0]] + [SERIES_DESCRIPTIONS[1]],
-            "severity": SEVERITIES + [SEVERITIES[1]] + [SEVERITIES[0]],
+            "series_description": series_list,
+            "severity": severities_list,
             "other_column": [1, 2, 3, 0, 4]
         }
         return pd.DataFrame(data_dict)
@@ -100,7 +103,7 @@ class TestEncodeDataFrame:
                     "src.projects.lumbar_spine."
                     "lumbar_dicom_tfrecord_dataset.CSVMetadata"
         )
-        
+
         with (
             patch.object(
                 LumbarDicomTFRecordDataset,
@@ -120,13 +123,12 @@ class TestEncodeDataFrame:
             mock_csv_metadata_instance._merged_df = test_df
 
             # Mock get_current_logger to avoid side effects
-            with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
-                
+            with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
+
                 # Initialize the dataset
                 dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                      logger=self.mock_logger)
-            
+
                 # Call the method
                 result_df = dataset._encode_dataframe(test_df)
 
@@ -234,13 +236,12 @@ class TestEncodeDataFrame:
             mock_csv_metadata_instance._merged_df = test_df
 
             # Mock _generate_tfrecord_files to avoid side effects
-            with patch.object(LumbarDicomTFRecordDataset,
-                                                '_generate_tfrecord_files'):
-                
+            with patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files'):
+
                 # Initialize the dataset
                 dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                      logger=self.mock_logger)
-            
+
                 # Call the method
                 mappings = dataset._create_mappings(test_df,
                                                     columns_to_encode)
@@ -248,7 +249,10 @@ class TestEncodeDataFrame:
                 # Assertions
                 assert "condition" in mappings
                 assert "level" in mappings
-                assert mappings["condition"] == {condition: idx for idx, condition in enumerate(CONDITIONS)}
+
+                expected_cond_map = {condition: idx for idx, condition in enumerate(CONDITIONS)}
+                assert mappings["condition"] == expected_cond_map
+
                 assert mappings["level"] == {level: idx for idx, level in enumerate(LEVELS)}
 
     def test_apply_encodings(self, test_df: dict[str, Any]):
@@ -290,10 +294,9 @@ class TestEncodeDataFrame:
         # Mock _generate_tfrecord_files to avoid side effects
         get_current_logger_chain = "src.core.utils.logger.get_current_logger"
         with (
-                patch.object(LumbarDicomTFRecordDataset,
-                                                   '_generate_tfrecord_files'),
+                patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files'),
                 patch(get_current_logger_chain, return_value=self.mock_logger)
-            ):
+        ):
 
             # Initialize the dataset
             dataset = LumbarDicomTFRecordDataset(self.mock_config,

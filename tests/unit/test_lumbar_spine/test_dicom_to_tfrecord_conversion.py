@@ -1,23 +1,20 @@
-#coding: utf-8
+# coding: utf-8
 
 import pytest
 from unittest.mock import patch, MagicMock
 import tensorflow as tf
 import pandas as pd
 from pathlib import Path
-import logging
-import SimpleITK as sitk
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 
 
 class TestDicomToTFRecordConversion:
     """Unit tests for DICOM to TFRecord conversion in Lumbar Spine project."""
 
-
     @pytest.fixture(autouse=True)
     def setup(self, mock_config, mock_logger):
         """Fixture to initialize common attributes for all tests."""
-        
+
         self.mock_config = mock_config
         self.mock_logger = mock_logger
         self.root_dir = Path(self.mock_config["dicom_root_dir"])
@@ -30,14 +27,29 @@ class TestDicomToTFRecordConversion:
             "metadata": ["meta1", "meta2", "meta3"]
         })
 
-
     def test_convert_dicom_to_tfrecords(self, tmp_path):
         """Test the main function for converting DICOM to TFRecord."""
 
-        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger), \
-            patch("src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata") as mock_csv_metadata_class, \
-            patch.object(LumbarDicomTFRecordDataset, '_encode_dataframe') as mock_encode_dataframe, \
-            patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files') as mock_generate_tfrecord_files:
+        mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
+        mock_logger_path = "src.core.utils.logger.get_current_logger"
+        with (
+                patch(
+                    mock_logger_path,
+                    return_value=self.mock_logger
+                    ),
+
+                patch(mock_csv_path) as mock_csv_metadata_class,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_encode_dataframe'
+                ) as mock_encode_dataframe,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_generate_tfrecord_files'
+                ) as mock_generate_tfrecord_files
+            ):
 
             # Configure the mock CSVMetadata class
             mock_csv_metadata_instance = MagicMock()
@@ -51,8 +63,10 @@ class TestDicomToTFRecordConversion:
             dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
         
             # Now patch methods on the instance
-            with patch.object(dataset, '_setup_output_directory') as mock_setup_output_directory, \
-                patch.object(dataset, '_process_study') as mock_process_study:
+            with (
+                    patch.object(dataset, '_setup_output_directory') as mock_setup_output_directory,
+                    patch.object(dataset, '_process_study') as mock_process_study
+                ):
 
                 mock_setup_output_directory.return_value = self.output_dir
                 mock_process_study.return_value = None
@@ -73,12 +87,62 @@ class TestDicomToTFRecordConversion:
                     extra={"status": "success"}
                 )
 
-
     def test_setup_output_directory(self, tmp_path):
         """Test the creation of the output directory."""
-        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger), \
-            patch("src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata") as mock_csv_metadata_class, \
-            patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files') as mock_generate_tfrecord_files:
+        mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
+        with (
+                patch(
+                    "src.core.utils.logger.get_current_logger",
+                    return_value=self.mock_logger
+                ),
+
+                patch(mock_csv_path) as mock_csv_metadata_class,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_generate_tfrecord_files'
+                ) as mock_generate_tfrecord_files
+            ):
+
+            # Mock _generate_tfrecord_files to avoid side effects
+            mock_generate_tfrecord_files.return_value = None
+
+            # Configure the mock CSVMetadata class
+            mock_csv_metadata_instance = MagicMock()
+            mock_csv_metadata_class.return_value = mock_csv_metadata_instance
+            mock_csv_metadata_instance._merged_df = self.metadata_df
+
+            # Initialize the dataset with the mock logger
+            dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
+
+            # Call the function
+            output_dir = dataset._setup_output_directory(str(tmp_path / "output"))
+
+            # Verifications
+            assert output_dir == tmp_path / "output"
+            assert output_dir.is_dir()
+
+    def test_process_study(self, tmp_path):
+        """Test the processing of a study."""
+        study_path = tmp_path / "123465879"
+        study_path.mkdir()
+        series_path = study_path / "1235647"
+        series_path.mkdir()
+
+        mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
+        with (
+                patch(
+                    "src.core.utils.logger.get_current_logger",
+                    return_value=self.mock_logger
+                ),
+
+                patch(mock_csv_path) as mock_csv_metadata_class,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_generate_tfrecord_files'
+                ) as mock_generate_tfrecord_files
+            ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -91,53 +155,22 @@ class TestDicomToTFRecordConversion:
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
             
-            # Call the function
-            output_dir = dataset._setup_output_directory(str(tmp_path / "output"))
+            with patch.object(dataset, '_process_series') as mock_process_series:
+                mock_process_series.return_value = None
 
-            # Verifications
-            assert output_dir == tmp_path / "output"
-            assert output_dir.is_dir()
+                # Utiliser tmp_path pour le fichier de sortie
+                output_dir = tmp_path / "tfrecords"
+                output_dir.mkdir(parents=True, exist_ok=True)
 
+                # Call the function
+                dataset._process_study(study_path, self.metadata_df, output_dir, self.mock_logger)
 
-    def test_process_study(self, tmp_path):
-        """Test the processing of a study."""
-        study_path = tmp_path / "123465879"
-        study_path.mkdir()
-        series_path = study_path / "1235647"
-        series_path.mkdir()
+                # Verify that the TFRecord file has been actually created
+                tfrecord_file = output_dir / "123465879.tfrecord"
+                assert tfrecord_file.is_file()
 
-        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger), \
-             patch("src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata") as mock_csv_metadata_class, \
-             patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files') as mock_generate_tfrecord_files:
-
-             # Mock _generate_tfrecord_files to avoid side effects
-             mock_generate_tfrecord_files.return_value = None
-
-             # Configure the mock CSVMetadata class
-             mock_csv_metadata_instance = MagicMock()
-             mock_csv_metadata_class.return_value = mock_csv_metadata_instance
-             mock_csv_metadata_instance._merged_df = self.metadata_df
-
-             # Initialize the dataset with the mock logger
-             dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
-            
-             with patch.object(dataset, '_process_series') as mock_process_series:
-                 mock_process_series.return_value = None
-
-                 # Utiliser tmp_path pour le fichier de sortie
-                 output_dir = tmp_path / "tfrecords"
-                 output_dir.mkdir(parents=True, exist_ok=True)
-
-                 # Call the function
-                 dataset._process_study(study_path, self.metadata_df, output_dir, self.mock_logger)
-
-                 # Verify that the TFRecord file has been actually created
-                 tfrecord_file = output_dir / "123465879.tfrecord"
-                 assert tfrecord_file.is_file()
-
-                 # Verifications
-                 mock_process_series.assert_called_once()
-
+                # Verifications
+                mock_process_series.assert_called_once()
 
     def test_process_series(self, tmp_path):
         """Test the processing of a series."""
@@ -145,9 +178,20 @@ class TestDicomToTFRecordConversion:
         series_path.mkdir()
         (series_path / "1.dcm").write_text("dummy")
 
-        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger), \
-            patch("src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata") as mock_csv_metadata_class, \
-            patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files') as mock_generate_tfrecord_files:
+        mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
+        with (
+                patch(
+                    "src.core.utils.logger.get_current_logger",
+                    return_value=self.mock_logger
+                ),
+
+                patch(mock_csv_path) as mock_csv_metadata_class,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_generate_tfrecord_files'
+                ) as mock_generate_tfrecord_files
+            ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -171,16 +215,30 @@ class TestDicomToTFRecordConversion:
                 mock_process_dicom_file.assert_called_once()
                 mock_writer.write.assert_called_once()
 
-
     def test_process_dicom_file(self, tmp_path):
         """Test the processing of a DICOM file."""
         dicom_path = tmp_path / "file1.dcm"
         dicom_path.write_text("dummy")
 
-        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger), \
-            patch("SimpleITK.ReadImage") as mock_read_image, \
-            patch.object(LumbarDicomTFRecordDataset, '_get_metadata_for_file') as mock_get_metadata, \
-            patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files') as mock_generate_tfrecord_files:
+        with (
+                patch(
+                    "src.core.utils.logger.get_current_logger",
+                    return_value=self.mock_logger,
+                ),
+
+                patch("SimpleITK.ReadImage") as mock_read_image,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_get_metadata_for_file',
+                ) as mock_get_metadata,
+
+                patch.object(
+                    LumbarDicomTFRecordDataset,
+                    '_generate_tfrecord_files',
+                ) as mock_generate_tfrecord_files,
+            ):
+
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -201,7 +259,9 @@ class TestDicomToTFRecordConversion:
                 mock_get_metadata.return_value = b"metadata_bytes"
 
                 # Call the function
-                img_bytes, metadata_bytes = dataset._process_dicom_file(dicom_path, self.metadata_df)
+                img_bytes, metadata_bytes = dataset._process_dicom_file(
+                                                                        dicom_path,
+                                                                        self.metadata_df)
 
                 # Verifications
                 mock_read_image.assert_called_once_with(str(dicom_path))
@@ -210,12 +270,11 @@ class TestDicomToTFRecordConversion:
                 assert isinstance(img_bytes, bytes)
                 assert metadata_bytes == b"metadata_bytes"
 
-
     def test_write_tfrecord_example(self):
         """Test the writing of a TFRecord example."""
-        
+
         with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
-            
+
             mock_writer = MagicMock(spec=tf.io.TFRecordWriter)
             img_bytes = b"img_bytes"
             metadata_bytes = b"metadata_bytes"
