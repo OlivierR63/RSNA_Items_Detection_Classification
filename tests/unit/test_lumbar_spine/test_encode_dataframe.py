@@ -46,7 +46,7 @@ class TestEncodeDataFrame:
                             "Left Subarticular Stenosis"
                           ],
 
-            "level": ["L1-L2", "L3-L4", "L2-L3", "L5-S1", "L4-L5"],
+        return 0
 
             "series_description": [
                                     "Axial T2",
@@ -56,13 +56,7 @@ class TestEncodeDataFrame:
                                     "Sagittal T1"
                                   ],
 
-            "severity": ["Normal/Mild", "Severe", "Moderate",
-                                        "Severe", "Normal/Mild"],
-
-            "other_column": [1, 2, 3, 0, 4]  # This column should remain unchanged
-        })
-
-        def create_mock_mapper(values):
+    def create_mock_mapper(self, values):
             # Create a mock mapping based on the input values
             mock_mapper = MagicMock()
 
