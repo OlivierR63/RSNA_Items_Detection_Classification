@@ -3,7 +3,7 @@
 import pytest
 import pandas as pd
 import logging
-from unittest.mock import MagicMock, patch 
+from unittest.mock import MagicMock, patch
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import (
     LumbarDicomTFRecordDataset
 )

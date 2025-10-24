@@ -1,23 +1,22 @@
 # coding: utf-8
 
+
 import io
 import struct
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
-from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import (
-    LumbarDicomTFRecordDataset
-)
+from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 
 class TestMetadataDeserialization:
     """
         Unit tests for metadata deserialization in LumbarDicomTFRecordDataset.
     """
-    
+
     @pytest.fixture(autouse=True)
     def setup(self, mock_config, mock_logger):
         """Fixture to initialize common attributes for all tests."""
-        
+
         self.mock_config = mock_config
         self.mock_logger = mock_logger
         self.root_dir = Path(self.mock_config["dicom_root_dir"])
@@ -48,15 +47,14 @@ class TestMetadataDeserialization:
         # Mock logger
         logger = MagicMock()
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Initialize the dataset with the mock logger
-            dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                 logger=self.mock_logger)
+            dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
             # Execute
-            result = dataset._deserialize_metadata(metadata_bytes,
-                                                        logger=logger)
+            result = dataset._deserialize_metadata(metadata_bytes, logger=logger)
 
             # Assert
             assert result == {
@@ -75,50 +73,47 @@ class TestMetadataDeserialization:
     def test_deserialize_metadata_empty(self):
         """Test deserialization with empty byte sequence."""
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Initialize the dataset with the mock logger
-            dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                 logger=self.mock_logger)
+            dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
             # Execute & Assert
-            with pytest.raises(ValueError,
-                               match="Input byte sequence is empty"):
+            with pytest.raises(ValueError, match="Input byte sequence is empty"):
                 dataset._deserialize_metadata(b'')
 
     def test_deserialize_metadata_invalid_input(self):
         """Test deserialization with invalid input."""
         
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                  logger=self.mock_logger)
 
             # Test with empty byte sequence
-            with pytest.raises(ValueError,
-                               match="Input byte sequence is empty"):
+            with pytest.raises(ValueError, match="Input byte sequence is empty"):
                 dataset._deserialize_metadata(b'')
 
             # Test with non-byte sequence input
-            with pytest.raises(ValueError,
-                               match="Input must be a byte sequence"):
+            with pytest.raises(ValueError, match="Input must be a byte sequence"):
                 dataset._deserialize_metadata("not a byte sequence")
 
             # Test with insufficient buffer length
             with pytest.raises(struct.error, match="Invalid buffer length"):
                 dataset._deserialize_metadata(b'\x00\x00')  # Too short buffer
 
-
     def test_deserialize_metadata_too_short(self):
         """Test deserialization with too short byte sequence."""
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                  logger=self.mock_logger)
-            
+
             # Execute & Assert
             with pytest.raises(struct.error):
                 dataset._deserialize_metadata(b'\x00\x00\x00\x00\x01',
@@ -136,8 +131,9 @@ class TestMetadataDeserialization:
             b'\x02'                 # nb_records: 2
         )
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                  logger=self.mock_logger)
@@ -169,12 +165,13 @@ class TestMetadataDeserialization:
             b'\x00\x1E\xE0'          # record 2: y: 7904 (79.04)
         )
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                  logger=self.mock_logger)
-            
+
             # Execute
             result = dataset._deserialize_records(buffer, 2)
 
@@ -190,14 +187,13 @@ class TestMetadataDeserialization:
         buffer = io.BytesIO(b'')
         nb_records = 0
 
-        with patch(
-                    "src.core.utils.logger.get_current_logger",
-                    return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
 
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                  logger=self.mock_logger)
-            
+
             # Execute
             result = dataset._deserialize_records(buffer, nb_records)
 

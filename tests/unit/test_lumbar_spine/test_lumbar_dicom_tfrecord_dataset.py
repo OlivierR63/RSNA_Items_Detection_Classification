@@ -6,6 +6,7 @@ import pandas as pd
 import tensorflow as tf
 from pathlib import Path
 
+
 class TestLumbarDicomTFRecordDataset:
     @pytest.fixture(autouse=True)
     def setup(self, mock_config, mock_logger):
@@ -14,24 +15,23 @@ class TestLumbarDicomTFRecordDataset:
         self.mock_logger = mock_logger
         self.dataset = None  # Sera initialisé dans chaque test si nécessaire
 
-    def test_generate_tfrecord_files(self, mock_csv_metadata,
-                                        mock_convert_dicom, tmp_path):
+    def test_generate_tfrecord_files(self, mock_csv_metadata, mock_convert_dicom, tmp_path):
         """
             Tests the TFRecord files generation process,
             which is triggered upon object initialization.
             The underlying I/O operations are mocked.
         """
         # Mock get_current_logger
-        with patch("src.core.utils.logger.get_current_logger",
-                                    return_value=self.mock_logger):
-            
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
             # Mock the CSVMetadata class to avoid file reading
             csv_metadata_chain = (
                             "src.projects.lumbar_spine."
                             "lumbar_dicom_tfrecord_dataset.CSVMetadata"
                             )
             with patch(csv_metadata_chain, return_value=mock_csv_metadata):
-                
+
                 # Configure the mock_csv_metadata to return a mock dataframe
                 mock_csv_metadata._merged_df = pd.DataFrame({
                     "study_id": [12345678],
@@ -39,7 +39,7 @@ class TestLumbarDicomTFRecordDataset:
                     "instance_number": [1],
                     "condition": [2],
                     "severity": [1],
-                    "series_description":[0],
+                    "series_description": [0],
                     "level": [3],
                     "x": [12.34],
                     "y": [56.78]
@@ -49,11 +49,10 @@ class TestLumbarDicomTFRecordDataset:
                 with patch.object(LumbarDicomTFRecordDataset,
                                   '_convert_dicom_to_tfrecords',
                                   mock_convert_dicom):
-                    
+
                     # Initialize the dataset,
                     # WHICH SHOULD TRIGGER _generate_tfrecord_files
-                    dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                      logger=self.mock_logger)
+                    dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
                     # Define the _tfrecord_dir path to simulate
                     # the expected state after initialization
@@ -75,14 +74,16 @@ class TestLumbarDicomTFRecordDataset:
         """
             Tests the creation of the TensorFlow Dataset pipeline.
         """
-        with patch("src.core.utils.logger.get_current_logger",
-                                    return_value=self.mock_logger):
+        logger_path = "src.core.utils.logger.get_current_logger"
+        with patch(logger_path, return_value=self.mock_logger):
+
+            # 1. Create a final mock dataset to be returned 
             final_mock_dataset = MagicMock(name='final_dataset')
 
             # 2. Use patch to mock tensorflow.data.Dataset.list_files
             tf_list_files_str = "tensorflow.data.Dataset.list_files"
             with patch(tf_list_files_str) as mock_list_files:
-                
+
                 mock_chain = (
                     "interleave.return_value."
                     "shuffle.return_value."
@@ -160,13 +161,13 @@ class TestLumbarDicomTFRecordDataset:
                                                         (0, 1, 12.34, 56.78),
                                                         (1, 0, 90.12, 34.56)
                                                     ]
-        }):
+                                        }):
             with patch.object(LumbarDicomTFRecordDataset,
                               '_generate_tfrecord_files',
                               return_value=None):
 
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                      logger=self.mock_logger)
+                                                            logger=self.mock_logger)
 
                 result = self.dataset._py_deserialize_and_flatten(
                                                         mock_metadata_bytes)
@@ -174,6 +175,7 @@ class TestLumbarDicomTFRecordDataset:
                 assert len(result) == 7
                 for i in range(6):
                     assert result[i].dtype == tf.int32
+                
                 assert result[-1].dtype == tf.float32
                 assert result[0].numpy() == 1
                 assert result[5].numpy() == 2
@@ -192,8 +194,7 @@ class TestLumbarDicomTFRecordDataset:
             # Mock _generate_tfrecord_files during initialization to avoid side effects
             with patch.object(LumbarDicomTFRecordDataset,
                                 '_generate_tfrecord_files',
-                                return_value=None
-                                ):
+                                return_value=None):
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
                                                             logger=self.mock_logger)
 
@@ -251,7 +252,7 @@ class TestLumbarDicomTFRecordDataset:
     def test_get_metadata_for_file(self):
         """
             Tests the retrieval of metadata for a specific DICOM file.
-        """           
+        """
 
         # Create a mock file path
         mock_file_path = "/fake/root_dir/1/2/1.dcm"
@@ -264,19 +265,15 @@ class TestLumbarDicomTFRecordDataset:
             "other_column": ["value1", "value2", "value3"]
         })
 
-        with patch("src.core.utils.logger.get_current_logger",
-                                            return_value=self.mock_logger):
+        with patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
 
             # Initialize the dataset
-            dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                    logger=self.mock_logger)
+            dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
 
             with (
-                      patch.object(dataset, 
-                           '_generate_tfrecord_files', return_value=None),
-                      patch.object(dataset, 
-                           '_serialize_metadata') as mock_serialize_metadata
-                    ):
+                  patch.object(dataset, '_generate_tfrecord_files', return_value=None),
+                  patch.object(dataset, '_serialize_metadata') as mock_serialize_metadata
+                  ):
 
                 # Configure the mock for _serialize_metadata
                 mock_serialize_metadata.return_value = (
