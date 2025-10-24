@@ -81,7 +81,7 @@ class TestLumbarDicomTFRecordDataset:
 
             # 2. Use patch to mock tensorflow.data.Dataset.list_files
             tf_list_files_str = "tensorflow.data.Dataset.list_files"
-            with patch(tf_listt_files_str) as mock_list_files:
+            with patch(tf_list_files_str) as mock_list_files:
                 
                 mock_chain = (
                     "interleave.return_value."
