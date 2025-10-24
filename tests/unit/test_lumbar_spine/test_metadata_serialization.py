@@ -70,13 +70,12 @@ class TestMetadataSerialization:
         # Verify logger calls
         msg_str = "Starting function _serialize_metadata"
         mock_logger.info.assert_any_call(msg_str)
-        
+
         msg_str = "Function _serialize_metadata completed successfully"
         mock_logger.info.assert_called_with(
                                             msg_str,
                                             extra={"status": "success"}
                                         )
-
 
     def test_filter_records(
                     self, setup_dataframe, dataset_instance, mock_logger):

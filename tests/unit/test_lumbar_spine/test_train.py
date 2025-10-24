@@ -75,7 +75,7 @@ def test_train_with_callbacks(
                                 mock_tensorboard,
                                 mock_earlystopping,
                                 mock_checkpoint,
-                                mock_fit, 
+                                mock_fit,
                                 mock_config,
                                 mock_logger):
     """Test the train_with_callbacks function."""
@@ -94,4 +94,5 @@ def test_train_with_callbacks(
     assert result == mock_history
     msg_str = "Model training completed successfully."
     mock_logger.info.assert_called_with(msg_str,
-                             extra={"final_loss": 0.3, "final_accuracy": 0.9})
+                                        extra={"final_loss": 0.3,
+                                               "final_accuracy": 0.9})

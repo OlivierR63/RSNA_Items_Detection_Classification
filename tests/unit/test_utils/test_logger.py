@@ -61,7 +61,7 @@ def test_log_method_decorator(caplog, mock_logger):
         logger.info("Test function called")
 
     # Test avec injection automatique
-    with setup_logger("test", use_json=False) as logger:
+    with setup_logger("test", use_json=False):
         test_function()
         assert "Test function called" in caplog.text
 
