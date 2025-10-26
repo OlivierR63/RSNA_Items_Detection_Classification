@@ -33,23 +33,23 @@ class TestDicomToTFRecordConversion:
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
         mock_logger_path = "src.core.utils.logger.get_current_logger"
         with (
-                patch(
-                    mock_logger_path,
-                    return_value=self.mock_logger
-                    ),
+                    patch(
+                        mock_logger_path,
+                        return_value=self.mock_logger
+                        ),
 
-                patch(mock_csv_path) as mock_csv_metadata_class,
+                    patch(mock_csv_path) as mock_csv_metadata_class,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_encode_dataframe'
-                ) as mock_encode_dataframe,
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_encode_dataframe'
+                    ) as mock_encode_dataframe,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_generate_tfrecord_files'
-                ) as mock_generate_tfrecord_files
-            ):
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_generate_tfrecord_files'
+                    )
+                ):
 
             # Configure the mock CSVMetadata class
             mock_csv_metadata_instance = MagicMock()
@@ -61,12 +61,13 @@ class TestDicomToTFRecordConversion:
 
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
-        
+
             # Now patch methods on the instance
             with (
-                    patch.object(dataset, '_setup_output_directory') as mock_setup_output_directory,
-                    patch.object(dataset, '_process_study') as mock_process_study
-                ):
+                        patch.object(dataset,
+                                        '_setup_output_directory') as mock_setup_output_directory,
+                        patch.object(dataset, '_process_study') as mock_process_study
+                    ):
 
                 mock_setup_output_directory.return_value = self.output_dir
                 mock_process_study.return_value = None
@@ -91,18 +92,18 @@ class TestDicomToTFRecordConversion:
         """Test the creation of the output directory."""
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
         with (
-                patch(
-                    "src.core.utils.logger.get_current_logger",
-                    return_value=self.mock_logger
-                ),
+                    patch(
+                        "src.core.utils.logger.get_current_logger",
+                        return_value=self.mock_logger
+                    ),
 
-                patch(mock_csv_path) as mock_csv_metadata_class,
+                    patch(mock_csv_path) as mock_csv_metadata_class,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_generate_tfrecord_files'
-                ) as mock_generate_tfrecord_files
-            ):
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_generate_tfrecord_files'
+                    ) as mock_generate_tfrecord_files
+                ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -131,18 +132,18 @@ class TestDicomToTFRecordConversion:
 
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
         with (
-                patch(
-                    "src.core.utils.logger.get_current_logger",
-                    return_value=self.mock_logger
-                ),
+                    patch(
+                        "src.core.utils.logger.get_current_logger",
+                        return_value=self.mock_logger
+                    ),
 
-                patch(mock_csv_path) as mock_csv_metadata_class,
+                    patch(mock_csv_path) as mock_csv_metadata_class,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_generate_tfrecord_files'
-                ) as mock_generate_tfrecord_files
-            ):
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_generate_tfrecord_files'
+                    ) as mock_generate_tfrecord_files
+                ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -154,7 +155,7 @@ class TestDicomToTFRecordConversion:
 
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(self.mock_config, logger=self.mock_logger)
-            
+
             with patch.object(dataset, '_process_series') as mock_process_series:
                 mock_process_series.return_value = None
 
@@ -180,18 +181,18 @@ class TestDicomToTFRecordConversion:
 
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
         with (
-                patch(
-                    "src.core.utils.logger.get_current_logger",
-                    return_value=self.mock_logger
-                ),
+                    patch(
+                        "src.core.utils.logger.get_current_logger",
+                        return_value=self.mock_logger
+                    ),
 
-                patch(mock_csv_path) as mock_csv_metadata_class,
+                    patch(mock_csv_path) as mock_csv_metadata_class,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_generate_tfrecord_files'
-                ) as mock_generate_tfrecord_files
-            ):
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_generate_tfrecord_files'
+                    ) as mock_generate_tfrecord_files
+                ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None
@@ -221,24 +222,23 @@ class TestDicomToTFRecordConversion:
         dicom_path.write_text("dummy")
 
         with (
-                patch(
-                    "src.core.utils.logger.get_current_logger",
-                    return_value=self.mock_logger,
-                ),
+                    patch(
+                        "src.core.utils.logger.get_current_logger",
+                        return_value=self.mock_logger,
+                    ),
 
-                patch("SimpleITK.ReadImage") as mock_read_image,
+                    patch("SimpleITK.ReadImage") as mock_read_image,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_get_metadata_for_file',
-                ) as mock_get_metadata,
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_get_metadata_for_file',
+                    ) as mock_get_metadata,
 
-                patch.object(
-                    LumbarDicomTFRecordDataset,
-                    '_generate_tfrecord_files',
-                ) as mock_generate_tfrecord_files,
-            ):
-
+                    patch.object(
+                        LumbarDicomTFRecordDataset,
+                        '_generate_tfrecord_files',
+                    ) as mock_generate_tfrecord_files,
+                ):
 
             # Mock _generate_tfrecord_files to avoid side effects
             mock_generate_tfrecord_files.return_value = None

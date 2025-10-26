@@ -58,7 +58,7 @@ def dicom_samples_root(request):
     # 1. Get the path of the conftest.py file itself
     # __file__ is always the path of the current module
     conftest_path = Path(__file__).resolve()
- 
+
     # 2. Get the root directory of the tests (the parent of conftest.py)
     tests_root = conftest_path.parent
 

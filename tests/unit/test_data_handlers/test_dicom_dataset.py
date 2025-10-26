@@ -5,7 +5,8 @@ import tensorflow as tf
 # Ensure the import path is correct for your project structure
 from src.core.data_handlers.dicom_dataset import DicomTFDataset
 
-# NOTE: The base_dir should be replaced with a path accessible in the testing environment (e.g., relative path)
+# NOTE: The base_dir should be replaced with a path accessible 
+#       in the testing environment (e.g., relative path)
 # Using 'pathlib' or 'os.path.join' is generally safer for cross-platform compatibility.
 # For this example, we keep the original structure for reference but acknowledge the risk.
 
@@ -14,7 +15,7 @@ def test_dicom_tf_dataset(dicom_samples_root):
     """
         Test the DicomTFDataset class to ensure it correctly loads DICOM files
         and handles dynamic shapes via padded_batch.
-    
+
         This test verifies that:
         - The expected directory exists and contains DICOM files.
         - The dataset is not empty and can be iterated over.
@@ -50,8 +51,11 @@ def test_dicom_tf_dataset(dicom_samples_root):
         if count >= 1:
             # 1. Check Image Batch Shape
             # Expected shape: (BATCH_SIZE, PADDED_HEIGHT, PADDED_WIDTH, PADDED_DEPTH)
-            assert len(image_batch.shape) == 4, f"Image batch expected 4D tensor, got shape {image_batch.shape}"
-            assert image_batch.shape[0] == BATCH_SIZE, f"Expected batch size {BATCH_SIZE}, got {image_batch.shape[0]}"
+            assert_msg = f"Image batch expected 4D tensor, got shape {image_batch.shape}"
+            assert len(image_batch.shape) == 4, assert_msg
+            
+            assert_msg = f"Expected batch size {BATCH_SIZE}, got {image_batch.shape[0]}"
+            assert image_batch.shape[0] == BATCH_SIZE, assert_msg
 
             # Padded dimensions (1, 2, 3) are dynamic (None in padded_shapes)
             assert_msg = "Padded image dimensions should be known after batching."
@@ -62,7 +66,10 @@ def test_dicom_tf_dataset(dicom_samples_root):
             assert_msg = f"Shape batch expected 2D tensor, got shape {shape_batch.shape}"
             assert len(shape_batch.shape) == 2, assert_msg
 
-            assert_msg = f"Shape batch expected first dimension to be batch size {BATCH_SIZE}, got {shape_batch.shape[0]}"
+            assert_msg = (
+                                f"Shape batch expected first dimension to be batch size {BATCH_SIZE}",
+                                f"got {shape_batch.shape[0]}"
+                            )
             assert shape_batch.shape[0] == BATCH_SIZE, assert_msg
 
             assert_msg = f"Shape vector expected size 3, got {shape_batch.shape[1]}"
@@ -82,4 +89,4 @@ def test_dicom_tf_dataset(dicom_samples_root):
                          )
             assert tf.abs(tf.reduce_sum(image_batch) - error_sum) > 1e-6, assert_msg
 
-            break # Stop after checking the first batch
+            break  # Stop after checking the first batch

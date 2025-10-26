@@ -709,7 +709,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _encode_dataframe(self, metadata_df: pd.DataFrame, *,
-                      logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+                            logger: Optional[logging.Logger] = None) -> pd.DataFrame:
         """
         Converts categorical textual metadata fields in a DataFrame to numerical values.
         This process is essential for preparing data for serialization or machine learning models,
@@ -717,7 +717,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         Args:
             metadata_df: The DataFrame containing metadata to be converted.
-                        Example column values: {"condition": "Spinal Canal Stenosis", "level": "L1-L2", ...}
+                        Example column values: {
+                                                    "condition": "Spinal Canal Stenosis",
+                                                    "level": "L1-L2", ...
+                                                }
 
         Returns:
             pd.DataFrame: The DataFrame with the specified columns converted to integer values.
@@ -735,7 +738,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # Apply encoding to each column
             metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
 
-            logger.info("Function _encode_dataframe completed successfully", extra={"status": "success"})
+            msg_info = "Function _encode_dataframe completed successfully"
+            logger.info(msg_info, extra={"status": "success"})
             return metadata_df
 
         except Exception as e:
@@ -743,8 +747,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                          extra={"status": "failed", "error": str(e)})
             raise
 
-
-    def _create_mappings(self, metadata_df: pd.DataFrame, columns_to_encode: Dict[str, str]) -> Dict[str, Dict]:
+    def _create_mappings(self, metadata_df: pd.DataFrame, 
+                            columns_to_encode: Dict[str, str]) -> Dict[str, Dict]:
         """
         Creates mapping dictionaries for each categorical column.
 
@@ -762,7 +766,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             mappings[column] = self._create_string_to_int_mapper(values).mapping
 
         return mappings
-
 
     def _apply_encodings(self, metadata_df: pd.DataFrame,
                          columns_to_encode: List[str],
@@ -783,42 +786,42 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         return metadata_df
 
-
     @log_method()
-    def _create_string_to_int_mapper(self, strings: list,*,
-                                    logger: Optional[logging.Logger] = None) -> callable:
+    def _create_string_to_int_mapper(self, strings: list, *,
+                                        logger: Optional[logging.Logger] = None) -> callable:
         """Creates a mapping function between strings and integers.
 
-        This is a factory function that generates a callable (the mapper) 
-        capable of converting predefined category strings into their corresponding 
+        This is a factory function that generates a callable (the mapper)
+        capable of converting predefined category strings into their corresponding
         integer indices (starting from 0).
 
         Args:
-            strings (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"]). 
+            strings (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"])
                             The order of the strings defines their integer value.
 
         Returns:
             callable: A function that maps an input string to an integer.
-                      The resulting function includes 'mapping' and 'reverse_mapping' 
+                      The resulting function includes 'mapping' and 'reverse_mapping
                       dictionaries as attributes.
         """
 
         logger = logger or self.logger
         logger.info("Starting function _create_string_to_int_mapper")
-        
+
         try:
             # Create the primary dictionary {string: integer} using enumeration.
             # The integer (i) corresponds to the string's index in the list.
             mapping = {s: i for i, s in enumerate(strings)}
 
-            # Create the optional reverse dictionary {integer: string} for inspection/deserialization.
-            reverse_mapping = {i: s for i, s in enumerate(strings)}  
+            # Create the optional reverse dictionary {integer: string}
+            # for inspection/deserialization.
+            reverse_mapping = {i: s for i, s in enumerate(strings)}
 
             def mapper(s: str) -> int:
                 """Maps an input string to its corresponding integer index."""
                 # Use .get() to return the mapped integer.
                 # Returns -1 if the input string is not found (unknown category).
-                return mapping.get(s, -1) 
+                return mapping.get(s, -1)
 
             # Attach the mapping dictionaries as attributes to the mapper function.
             # This allows users to inspect or reverse the mapping later.
@@ -831,5 +834,5 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             return mapper
 
         except Exception as e:
-            logger.error(f"Error in function _create_string_to_int_mapper : {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
+            error_msg = f"Error in function _create_string_to_int_mapper : {str(e)}"
+            logger.error(error_msg, exc_info=True, extra={"status": "failed", "error": str(e)})

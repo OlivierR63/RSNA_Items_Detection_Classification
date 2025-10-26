@@ -58,7 +58,7 @@ class TestEncodeDataFrame:
 
         series_list = SERIES_DESCRIPTIONS + [SERIES_DESCRIPTIONS[0]] + [SERIES_DESCRIPTIONS[1]]
         severities_list = SEVERITIES + [SEVERITIES[1]] + [SEVERITIES[0]]
-        
+
         data_dict = {
             "condition": CONDITIONS,
             "level": LEVELS,
@@ -312,7 +312,7 @@ class TestEncodeDataFrame:
 
             # Check that all test values are in the mapping
             assert set(mapper.mapping.keys()) == set(CONDITIONS)
-            assert(len(set(mapper.mapping.keys()))) == len(CONDITIONS)
+            assert len(set(mapper.mapping.keys())) == len(CONDITIONS)
 
             # Check that each value is an integer
             assert all(isinstance(value, int) for value in mapper.mapping.values())

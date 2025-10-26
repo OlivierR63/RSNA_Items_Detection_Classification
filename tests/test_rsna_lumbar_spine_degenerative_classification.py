@@ -2,7 +2,6 @@
 
 from unittest.mock import patch, MagicMock
 from src.RSNA_2024_Lumbar_Spine_Degenerative_Classification import main
-import pytest
 import logging
 
 

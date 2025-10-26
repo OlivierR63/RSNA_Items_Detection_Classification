@@ -168,7 +168,7 @@ class TestLumbarDicomTFRecordDataset:
                               return_value=None):
 
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                            logger=self.mock_logger)
+                                                        logger=self.mock_logger)
 
                 result = self.dataset._py_deserialize_and_flatten(
                                                         mock_metadata_bytes)
@@ -184,23 +184,25 @@ class TestLumbarDicomTFRecordDataset:
 
     def test_parse_tfrecord(self):
         """Tests the parsing of a single TFRecord entry."""
-        with patch("tensorflow.io.parse_single_example") as mock_parse_single_example, \
-             patch("tensorflow.io.parse_tensor") as mock_parse_tensor, \
-             patch("tensorflow.reshape") as mock_reshape, \
-             patch("tensorflow.py_function") as mock_py_function, \
-             patch("tensorflow.reduce_max") as mock_reduce_max, \
-             patch("tensorflow.cast") as mock_cast, \
-             patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger):
+        with (
+                patch("tensorflow.io.parse_single_example") as mock_parse_single_example,
+                patch("tensorflow.io.parse_tensor") as mock_parse_tensor,
+                patch("tensorflow.reshape") as mock_reshape,
+                patch("tensorflow.py_function") as mock_py_function,
+                patch("tensorflow.reduce_max") as mock_reduce_max,
+                patch("tensorflow.cast") as mock_cast,
+                patch("src.core.utils.logger.get_current_logger", return_value=self.mock_logger)
+                ):
 
             # Mock _generate_tfrecord_files during initialization to avoid side effects
             with patch.object(
                                 LumbarDicomTFRecordDataset,
                                 '_generate_tfrecord_files',
                                 return_value=None
-                ):
+                                ):
 
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                            logger=self.mock_logger)
+                                                        logger=self.mock_logger)
 
                 # Create a mock TFRecord example (the input to the function)
                 mock_proto = tf.constant(b"fake_proto")

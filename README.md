@@ -18,8 +18,8 @@ RSNA_Items_Detection_Classification/
 │   │   ├── data_handlers_/                 # Gestion des données (DICOM, CSV, métadonnées)
 │   │   │   ├── __init__.py
 │   │   │   ├── data_pipeline.py
-│   │   │   ├── dicom_dataset_.py			# Classe `DicomDataset` (abstraite + implémentations)
-│   │   │   └── dicom_tfrecord_dataset.py	# Classe `DicomTFRecordDataset` (abstraite + implémentations)
+│   │   │   ├── dicom_dataset_.py            # Classe `DicomDataset` (abstraite + implémentations)
+│   │   │   └── dicom_tfrecord_dataset.py    # Classe `DicomTFRecordDataset` (abstraite + implémentations)
 │   │   │
 │   │   ├── models/               # Modèles de deep learning (2D/3D)
 │   │   │   ├── __init__.py
@@ -45,16 +45,16 @@ RSNA_Items_Detection_Classification/
 │   │    │
 │   │    ├── lumbar_spine/          # Projet colonne vertébrale
 │   │    │   ├── __init__.py
-│   │    │   ├── csv_metadata.py								# Classe `CSVMetadata` (fusion des CSV)
-│   │    │   ├── lumbar_dicom_tfrecord__dataset.py			# Implémentation de `DicomDataset` pour ce projet
-│   │    │   ├── pipeline.py									# Implémentation de `BasePipeline`
-│   │    │   └── train.py									# Script d'entraînement
+│   │    │   ├── csv_metadata.py                                # Classe `CSVMetadata` (fusion des CSV)
+│   │    │   ├── lumbar_dicom_tfrecord__dataset.py            # Implémentation de `DicomDataset` pour ce projet
+│   │    │   ├── pipeline.py                                    # Implémentation de `BasePipeline`
+│   │    │   └── train.py                                    # Script d'entraînement
 │   │    │
 │   │    └── brain_aneurysm/        # Projet anévrismes cérébraux
 │   │        └── __init__.py
 │   │
 │   ├── RSNA_2024_Lumbar_Spine_Degenerative_Classification.py  # Main script  
-│	└── RSNA_Intracranial_Aneurysm_Detection.py
+│    └── RSNA_Intracranial_Aneurysm_Detection.py
 │
 ├── data/                          # Lien symbolique vers les données (non versionné)
 │
@@ -73,6 +73,7 @@ RSNA_Items_Detection_Classification/
 │   │   └── test_data_flow/
 │   │
 │   ├── unit/
+    │   ├── __init__.py
 │   │   ├── test_data/
 │   │   │   └──test_dicom_dataset.py
 │   │   ├── test_models/
@@ -94,7 +95,9 @@ RSNA_Items_Detection_Classification/
 ├── .gitignore                     # Exclut `data/`, `logs/`, `.vs/`, etc.
 ├── .vsconfig                      # Exclut `data/` de l'indexation Visual Studio
 ├── README.md                      # Documentation du projet
-└── RSNA_2024_Lumbar_Spine_Degenerative_Classification.pyproj  # Projet Visual Studio
-```
+├── RSNA_2024_Lumbar_Spine_Degenerative_Classification.pyproj  # Projet Visual Studio
+└── RSNA_2024_Lumbar_Spine_Degenerative_Classification.slnx
+
+
 ### **Description of the files and folders**
 TBD
