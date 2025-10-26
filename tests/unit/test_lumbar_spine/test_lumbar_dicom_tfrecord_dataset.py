@@ -168,7 +168,7 @@ class TestLumbarDicomTFRecordDataset:
                               return_value=None):
 
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                            logger=self.mock_logger)
+                                                          logger=self.mock_logger)
 
                 result = self.dataset._py_deserialize_and_flatten(
                                                         mock_metadata_bytes)
@@ -202,7 +202,7 @@ class TestLumbarDicomTFRecordDataset:
                                 ):
 
                 self.dataset = LumbarDicomTFRecordDataset(self.mock_config,
-                                                            logger=self.mock_logger)
+                                                          logger=self.mock_logger)
 
                 # Create a mock TFRecord example (the input to the function)
                 mock_proto = tf.constant(b"fake_proto")

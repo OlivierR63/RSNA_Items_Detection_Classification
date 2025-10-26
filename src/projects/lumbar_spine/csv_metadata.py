@@ -6,12 +6,13 @@ import tensorflow as tf
 from typing import Optional
 import logging
 
+
 class CSVMetadata:
     """
     Handles the loading, merging, and preprocessing of metadata from three
     separate CSV files (series descriptions, label coordinates, and training labels).
 
-    The primary goal is to create a single, comprehensive DataFrame used later 
+    The primary goal is to create a single, comprehensive DataFrame used later
     for serialization and data lookup.
     """
     def __init__(self,
@@ -30,13 +31,15 @@ class CSVMetadata:
         """
         self.logger = logger if logger is not None else logging.getLogger(self.__class__.__name__)
         self.logger.info("Initializing CSVMetadata handler",
-                         extra={"action": "init",
-                                "files": {
-                                          "series_description": series_description,
-                                          "label_coordinates": label_coordinates,
-                                          "train": train
-                                          }
-                        })
+                         extra={
+                                    "action": "init",
+                                    "files": {
+                                                "series_description": series_description,
+                                                "label_coordinates": label_coordinates,
+                                                "train": train
+                                              }
+                                }
+        )
 
         try:
             # Load and ensure all data is treated as string initially to prevent merging errors.
@@ -45,7 +48,7 @@ class CSVMetadata:
                                         .astype(str)
                                         .apply(lambda s: s.str.lower())
                                     )
-            
+
             self._label_coords_df = (
                                         pd.read_csv(label_coordinates)
                                         .astype(str)
@@ -57,12 +60,14 @@ class CSVMetadata:
             # Perform the initial merge and preprocessing upon instantiation.
             self._merged_df = self._merge_metadata()
             self.logger.info("Metadata merged successfully",
-                             extra={"merged_shape": self._merged_df.shape})
+                             extra={"merged_shape": self._merged_df.shape}
+            )
 
         except Exception as e:
             self.logger.error(f"Error initializing CSVMetadata: {str(e)}",
-                                 exc_info=True,
-                                 extra={"status": "failed", "error": str(e)})
+                              exc_info=True,
+                              extra={"status": "failed", "error": str(e)}
+            )
             raise
 
     @property
@@ -93,8 +98,9 @@ class CSVMetadata:
             return merged_df
         except Exception as e:
             self.logger.error(f"Error merging metadata: {str(e)}",
-                                 exc_info=True,
-                                 extra={"status": "failed", "error": str(e)})
+                              exc_info=True,
+                              extra={"status": "failed", "error": str(e)}
+            )
             raise
 
     def _melt_and_clean_train_df(self) -> pd.DataFrame:
@@ -109,11 +115,11 @@ class CSVMetadata:
         final_count = len(tmp_train_df)
         self.logger.info(f"Dropped {initial_count - final_count} NaN rows",
                          extra={
-                                "step": 1,
-                                "initial_count": initial_count,
-                                "final_count": final_count
-                                }
-                            )
+                                 "step": 1,
+                                 "initial_count": initial_count,
+                                 "final_count": final_count
+                               }
+        )
 
         tmp_train_df[['condition', 'level']] = tmp_train_df['condition_level'].apply(
             lambda x: x[:-6] + ' ' + x[-5:]
@@ -133,15 +139,20 @@ class CSVMetadata:
             how='inner'
         )
         self.logger.info(f"Merged with label coordinates. Shape: {merged_df.shape}",
-                         extra={"step": 3, "shape": merged_df.shape})
+                         extra={"step": 3, "shape": merged_df.shape}
+        )
         return merged_df
 
     def _merge_with_series_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
         """Merge the DataFrame with series descriptions."""
+        
         self.logger.info("Merging with series descriptions...", extra={"step": 4})
+        
         merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
+        
         self.logger.info(f"Merged with series descriptions. Final shape: {merged_df.shape}",
-                         extra={"step": 4, "final_shape": merged_df.shape})
+                         extra={"step": 4, "final_shape": merged_df.shape}
+        )
         return merged_df
 
     def _normalize_identifier_types(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -170,7 +181,7 @@ class CSVMetadata:
         try:
             # Create unique keys: "study_id_series_id_instance_number"
             keys = (self.merged["study_id"] + "_" + self.merged["series_id"]
-                        + "_" + self.merged["instance_number"].astype(str))
+                    + "_" + self.merged["instance_number"].astype(str))
 
             # Create values: an array of [condition, level, x, y] strings.
             values = self.merged[["condition", "level", "x", "y"]].values.astype(str)

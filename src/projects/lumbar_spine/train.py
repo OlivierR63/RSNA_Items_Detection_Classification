@@ -16,7 +16,7 @@ def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = No
         logger = get_current_logger()
 
     logger.info("Loading 3D model...",
-                    extra={"action": "load_model", "model_type": config['model_3d']['type']})
+                extra={"action": "load_model", "model_type": config['model_3d']['type']})
 
     try:
         # Create dataset with logger
@@ -39,8 +39,8 @@ def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = No
         # Save the model
         model.save(str(Path(config["output_dir"]) / "model"))
         logger.info(f"Model saved to {config['output_dir']}/model",
-                        extra={"status": "success",
-                                "model_path": str(Path(config["output_dir"]) / "model")})
+                    extra={"status": "success",
+                           "model_path": str(Path(config["output_dir"]) / "model")})
 
     except Exception as e:
         logger.error(f"Error in train_model: {str(e)}", exc_info=True,
@@ -55,14 +55,14 @@ def create_tf_dataset(config: Dict[str, Any], *, logger: Optional[logging.Logger
         logger = get_current_logger()
 
     logger.info("Setting up TensorFlow dataset pipeline...",
-                    extra={"action": "create_dataset", "batch_size": config["batch_size"]})
+                extra={"action": "create_dataset", "batch_size": config["batch_size"]})
 
     try:
         dataset = LumbarDicomTFRecordDataset(config, logger).create_tf_dataset(
             batch_size=config["batch_size"]
         )
         logger.info("Dataset created successfully.",
-                        extra={"status": "success", "batch_size": config["batch_size"]})
+                    extra={"status": "success", "batch_size": config["batch_size"]})
         return dataset
     except Exception as e:
         logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
@@ -72,7 +72,7 @@ def create_tf_dataset(config: Dict[str, Any], *, logger: Optional[logging.Logger
 
 @log_method()
 def train_with_callbacks(model, dataset, config: Dict[str, Any], *,
-                                logger: Optional[logging.Logger] = None) -> None:
+                         logger: Optional[logging.Logger] = None) -> None:
     """Trains model with callbacks and logging."""
     if logger is None:
         logger = get_current_logger()
@@ -96,10 +96,10 @@ def train_with_callbacks(model, dataset, config: Dict[str, Any], *,
         )
     ]
     logger.info("Training callbacks configured.",
-                    extra={"callbacks": [c.__class__.__name__ for c in callbacks]})
+                extra={"callbacks": [c.__class__.__name__ for c in callbacks]})
 
     logger.info("Starting model training...",
-                    extra={"epochs": config["epochs"], "steps_per_epoch": 1000})
+                extra={"epochs": config["epochs"], "steps_per_epoch": 1000})
 
     try:
         history = model.fit(
@@ -110,9 +110,9 @@ def train_with_callbacks(model, dataset, config: Dict[str, Any], *,
             callbacks=callbacks
         )
         logger.info("Model training completed successfully.",
-                       extra={
-                               "final_loss": history.history['loss'][-1],
-                               "final_accuracy": history.history['accuracy'][-1]
+                    extra={
+                           "final_loss": history.history['loss'][-1],
+                           "final_accuracy": history.history['accuracy'][-1]
                            })
         return history
     except Exception as e:

@@ -1,6 +1,7 @@
 import struct
 from typing import List, Tuple
 
+
 def pack_coordinates(coords: List[Tuple[float, float]]) -> bytes:
     """
     Encode n (x, y) pairs into 8n bytes (2n × uint32).

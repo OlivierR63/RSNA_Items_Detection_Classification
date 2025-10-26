@@ -21,7 +21,7 @@ class ConfigLoader:
         Args:
             config_path (str): The file system path to the YAML configuration file.
         """
- 
+
         # Determine the directory containing the configuration file.
         # All relative paths in the config will be resolved based on this directory.
         # config_dir = Path(config_path).parent
@@ -50,7 +50,7 @@ class ConfigLoader:
                     config_dir / self._config["csv_files"][csv_key]
                 )
 
-    def get_value(self, key: str, default:str) -> Any:
+    def get_value(self, key: str, default: str) -> Any:
         """
         Retrieves a single configuration value by its key.
 

@@ -14,11 +14,12 @@ from inspect import signature
 # Global variable to hold the current logger instance
 _CURRENT_LOGGER: Optional[logging.Logger] = None
 
+
 @contextlib.contextmanager
 def setup_logger(process_name: str,
-                 log_dir: str="logs",
-                 use_json: bool=False,
-                 console_display=False) -> Generator[logging.Logger, None, None]:
+                 log_dir: str = "logs",
+                 use_json: bool = False,
+                 console_display = False) -> Generator[logging.Logger, None, None]:
     """Configures a logger linked to the current process ID.
     Supports both text and JSON formatting.
 
@@ -83,7 +84,7 @@ def setup_logger(process_name: str,
         for handler in logger.handlers:
             handler.close()
         logger.handlers.clear()
-        _CURRENT_LOGGER = None # Reset the global variable
+        _CURRENT_LOGGER = None  # Reset the global variable
 
 
 def get_current_logger() -> logging.Logger:

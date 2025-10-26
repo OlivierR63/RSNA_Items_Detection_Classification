@@ -13,7 +13,7 @@ def handle_interrupt(signum, frame):
         logger.info("\nInterruption detected (Ctrl+C). Exiting gracefully...")
 
     except RuntimeError:
-        print("\nInterruption detected (Ctrl+C). Exiting gracefully...")  
+        print("\nInterruption detected (Ctrl+C). Exiting gracefully...")
 
     sys.exit(0)
 
@@ -31,7 +31,7 @@ def main():
     config: dict = config_loader.get()
 
     # 2. Initialize logger with process-specific context
-    log_dir = config.get("output_dir", "logs") # use "logs" as default if not in config.
+    log_dir = config.get("output_dir", "logs")  # use "logs" as default if not in config.
     log_dir += "/logs"
 
     with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
@@ -39,7 +39,7 @@ def main():
         # It will automatically close at the end of this block.
         logger.info(f"Configuration loaded successfully. Loaded_values: {config}")
         logger.info("Starting training process.",
-                     extra={"status": "started", log_dir: "config_dir"})
+                    extra={"status": "started", log_dir: "config_dir"})
 
         try:
             # Call the decorated functions(logger is automatically injected)

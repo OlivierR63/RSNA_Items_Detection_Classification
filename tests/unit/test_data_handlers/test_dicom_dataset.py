@@ -5,7 +5,7 @@ import tensorflow as tf
 # Ensure the import path is correct for your project structure
 from src.core.data_handlers.dicom_dataset import DicomTFDataset
 
-# NOTE: The base_dir should be replaced with a path accessible 
+# NOTE: The base_dir should be replaced with a path accessible
 #       in the testing environment (e.g., relative path)
 # Using 'pathlib' or 'os.path.join' is generally safer for cross-platform compatibility.
 # For this example, we keep the original structure for reference but acknowledge the risk.

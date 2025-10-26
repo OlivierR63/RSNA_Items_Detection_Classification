@@ -13,6 +13,7 @@ import io
 from src.core.utils.logger import log_method
 import logging
 
+
 class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     """TensorFlow Dataset for loading DICOM TFRecords."""
 
@@ -23,8 +24,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         self.logger = logger if logger is not None else logging.getLogger(self.__class__.__name__)
         self.logger.info("Initializing LumbarDicomTfRecordDataset")
 
-        super().__init__(config, logger= self.logger) # Pass the logger to parent class
- 
+        super().__init__(config, logger=self.logger)  # Pass the logger to parent class
+
     def max_records_flat(self):
         return self._MAX_RECORDS_FLAT
 
@@ -50,14 +51,14 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         logger = logger or self.logger
         logger.info(f"Creating TF Dataset with batch_size={batch_size}",
-                       extra={"action": "create_dataset", "batch_size": batch_size})
+                    extra={"action": "create_dataset", "batch_size": batch_size})
 
         try:
             # 1. List all TFRecord files matching the pattern (e.g., 'data/*.tfrecord').
             # Shuffling the file names helps ensure better data mixing across epochs.
             tfrecord_files = tf.data.Dataset.list_files(self._tfrecord_pattern, shuffle=True)
             logger.info(f"Found {len(tfrecord_files)} TFRecord files",
-                       extra={"file_count": len(tfrecord_files)})
+                        extra={"file_count": len(tfrecord_files)})
 
             # 2. Use "interleave" to read data from multiple files in parallel.
             # This prevents I/O bottlenecks by having multiple readers working concurrently.
@@ -94,7 +95,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         except Exception as e:
             logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
-                            extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
             raise
 
     @log_method()
@@ -144,14 +145,14 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     output_dir=str(self._tfrecord_dir)
                 )
                 logger.info("DICOM to TFRecord conversion completed.",
-                            extra={"status":"success"})
+                            extra={"status": "success"})
             else:
                 logger.info("Existing TFRecords found. Skipping conversion.",
-                           extra={"status": "skipped"})
+                            extra={"status": "skipped"})
 
         except Exception as e:
             logger.error(f"Error generating TFRecords: {str(e)}", exc_info=True,
-                        extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
             raise
 
     def _py_deserialize_and_flatten(self, metadata_bytes_tensor: tf.Tensor) -> List[tf.Tensor]:
@@ -203,7 +204,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             deserialized_dict = self._deserialize_metadata(metadata_bytes_tensor.numpy())
 
             required_keys = ['study_id', 'series_id',
-                             'instance_number','description', 'condition', 'nb_records']
+                             'instance_number', 'description', 'condition', 'nb_records']
             for key in required_keys:
                 if key not in deserialized_dict:
                     raise ValueError(f"Missing required key in deserialized metadata: {key}")
@@ -218,16 +219,16 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     tf.constant(deserialized_dict.get('nb_records', 0), dtype=tf.int32)
                 ]
 
-             # 2. Flatten records into a 1D list of values: 
-             # [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
-             # If no records, create a dummy 1x4 list of zeros.
+            # 2. Flatten records into a 1D list of values:
+            # [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
+            # If no records, create a dummy 1x4 list of zeros.
             records_list = deserialized_dict.get('records', [])
             flattened_records = [val for rec in records_list for val in rec] or [-1.0] * 4
 
             # Pad the flattened list to the self._MAX_RECORDS_FLAT size (25 * 4 = 100 elements)
             # Pad with a safe value (0.0)
             padded_records = (flattened_records
-                                + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records)))
+                              + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records)))
             records_tensor = tf.constant(padded_records, dtype=tf.float32)
             result = header_tensors + [records_tensor]
 
@@ -237,14 +238,14 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             self.logger.error(f"Error in _py_deserialize_and_flatten: {str(e)}", exc_info=True)
             # Retourne une structure par défaut
             return [
-                tf.constant(0, dtype=tf.int32),  # study_id
-                tf.constant(0, dtype=tf.int32),  # series_id
-                tf.constant(0, dtype=tf.int32),  # instance_number
-                tf.constant(0, dtype=tf.int32),  # description
-                tf.constant(0, dtype=tf.int32),  # condition
-                tf.constant(0, dtype=tf.int32),  # nb_records
-                tf.constant([0.0] * 100, dtype=tf.float32)  # records
-        ]
+                    tf.constant(0, dtype=tf.int32),  # study_id
+                    tf.constant(0, dtype=tf.int32),  # series_id
+                    tf.constant(0, dtype=tf.int32),  # instance_number
+                    tf.constant(0, dtype=tf.int32),  # description
+                    tf.constant(0, dtype=tf.int32),  # condition
+                    tf.constant(0, dtype=tf.int32),  # nb_records
+                    tf.constant([0.0] * 100, dtype=tf.float32)  # records
+                    ]
 
     @log_method()
     def _parse_tfrecord(
@@ -349,10 +350,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             })
 
             return return_object
- 
+
         except Exception as e:
             logger.error(f"Error parsing TFRecord: {str(e)}", exc_info=True,
-                            extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
             # Return a safe dummy structure to avoid pipeline crash
             dummy_image = tf.zeros([64, 64, 64, 1], dtype=tf.float32)
             dummy_records = tf.zeros([25, 4], dtype=tf.float32)
@@ -369,8 +370,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _convert_dicom_to_tfrecords(self, root_dir: str, metadata_df: pd.DataFrame,
-                                       output_dir: str, *,
-                                       logger: Optional[logging.Logger] = None) -> None:
+                                    output_dir: str, *,
+                                    logger: Optional[logging.Logger] = None) -> None:
         """
         Converts DICOM files stored in a hierarchical directory structure into
         TensorFlow TFRecord files, generating one TFRecord file per study.
@@ -456,7 +457,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _get_metadata_for_file(self, file_path: str, metadata_df: pd.DataFrame, *,
-                                logger: Optional[logging.Logger] = None) -> dict:
+                               logger: Optional[logging.Logger] = None) -> dict:
         """
         Returns the serialized metadata extracted from a dataframe and associated
         with a given DICOM file.
@@ -480,7 +481,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         try:
             if metadata_df is None:
-                # NOTE: Returning bytes instead of a dict, as the caller 
+                # NOTE: Returning bytes instead of a dict, as the caller
                 # (_convert_dicom_to_tfrecords) expects serialized bytes for the TFRecord.
                 return b''
 
@@ -506,25 +507,25 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # and the full DataFrame.
             # This will filter the DataFrame and create the compact byte sequence.
             serialized_metadata = self._serialize_metadata(study_id, series_id,
-                                                            instance_number, metadata_df)
+                                                           instance_number, metadata_df)
 
             # Return the byte sequence.
             return serialized_metadata
 
             logger.info("CSV metadata retrieval completed successfully",
-                       extra={"status": "success"})
-        
+                        extra={"status": "success"})
+
         except Exception as e:
             logger.error(f"Error in function _get_metadata_for_file() : {str(e)}", exc_info=True,
-                            extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
 
     @log_method()
     def _serialize_metadata(self,
-                               study_id_str: str,
-                               series_id_str: str,
-                               instance_number_str: str,
-                               data_df: pd.DataFrame, *,
-                               logger: Optional[logging.Logger] = None) -> bytes:
+                            study_id_str: str,
+                            series_id_str: str,
+                            instance_number_str: str,
+                            data_df: pd.DataFrame, *,
+                            logger: Optional[logging.Logger] = None) -> bytes:
         """
         Serializes specific metadata records from a DataFrame into a compact byte sequence.
 
@@ -547,12 +548,12 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         try:
             records_df = self._filter_records(data_df, study_id_str,
-                                                series_id_str, instance_number_str, logger)
+                                              series_id_str, instance_number_str, logger)
             if records_df.empty:
                 return b''
 
             header_bytes = self._serialize_header(records_df, study_id_str,
-                                                    series_id_str, instance_number_str)
+                                                  series_id_str, instance_number_str)
             payload_bytes = self._serialize_payload(records_df)
 
             metadata_bytes = header_bytes + payload_bytes
@@ -617,8 +618,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             raise ValueError("The number of records exceeds the limit of 25.")
         nb_records_bytes = nb_records.to_bytes(1, byteorder='big', signed=False)
 
-        return (study_id_bytes + series_id_bytes + instance_number_bytes 
-                                + description_bytes + condition_bytes + nb_records_bytes)
+        return (study_id_bytes + series_id_bytes + instance_number_bytes
+                + description_bytes + condition_bytes + nb_records_bytes)
 
     def _serialize_payload(self, records_df: pd.DataFrame) -> bytes:
         """Serializes the payload part of the metadata."""
@@ -646,7 +647,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _deserialize_metadata(self, metadata_bytes: bytes, *,
-                                logger: Optional[logging.Logger] = None) -> Dict:
+                              logger: Optional[logging.Logger] = None) -> Dict:
         """
         Deserializes a compact byte sequence back into structured metadata components.
         This function is the inverse of _serialize_metadata.
