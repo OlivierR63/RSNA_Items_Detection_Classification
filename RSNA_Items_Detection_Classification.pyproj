@@ -25,7 +25,6 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="RSNA_Items_Detection_Classification.py" />
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
     <Compile Include="src\core\data_handlers\data_pipeline.py" />

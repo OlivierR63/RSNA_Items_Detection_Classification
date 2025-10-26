@@ -53,7 +53,7 @@ def test_dicom_tf_dataset(dicom_samples_root):
             # Expected shape: (BATCH_SIZE, PADDED_HEIGHT, PADDED_WIDTH, PADDED_DEPTH)
             assert_msg = f"Image batch expected 4D tensor, got shape {image_batch.shape}"
             assert len(image_batch.shape) == 4, assert_msg
-            
+
             assert_msg = f"Expected batch size {BATCH_SIZE}, got {image_batch.shape[0]}"
             assert image_batch.shape[0] == BATCH_SIZE, assert_msg
 
@@ -67,8 +67,8 @@ def test_dicom_tf_dataset(dicom_samples_root):
             assert len(shape_batch.shape) == 2, assert_msg
 
             assert_msg = (
-                                f"Shape batch expected first dimension to be batch size {BATCH_SIZE}",
-                                f"got {shape_batch.shape[0]}"
+                                "Shape batch expected first dimension to be ",
+                                f"batch size {BATCH_SIZE}, got {shape_batch.shape[0]}"
                             )
             assert shape_batch.shape[0] == BATCH_SIZE, assert_msg
 

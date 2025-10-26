@@ -1,13 +1,12 @@
 # coding: utf-8
 
 import logging
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
 import os
 import sys
 import contextlib
-from typing import Optional, Callable, Any, Generator
+from typing import Optional, Callable, Generator
 import json
 from functools import wraps
 from inspect import signature
@@ -17,9 +16,9 @@ _CURRENT_LOGGER: Optional[logging.Logger] = None
 
 @contextlib.contextmanager
 def setup_logger(process_name: str,
-                 log_dir: str = "logs",
-                 use_json: bool = False,
-                 console_display = False) -> Generator[logging.Logger, None, None] :
+                 log_dir: str="logs",
+                 use_json: bool=False,
+                 console_display=False) -> Generator[logging.Logger, None, None]:
     """Configures a logger linked to the current process ID.
     Supports both text and JSON formatting.
 
@@ -59,9 +58,9 @@ def setup_logger(process_name: str,
         formatter = JSONFormatter()
     else:
         formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+                                      '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                                      datefmt='%Y-%m-%d %H:%M:%S'
+                                        )
 
     # 6. File handler (automatically closed at the end of the block)
     file_handler = logging.FileHandler(str(log_file), encoding='utf-8')
@@ -114,10 +113,12 @@ def log_method(logger_key: str = "logger") -> Callable:
     is performed using `inspect.signature` so the decorator is safe to apply broadly.
 
     Args:
-        logger_key: The name of the keyword parameter to inject the logger into (default: "logger").
+        logger_key: The name of the keyword parameter to inject
+        the logger into (default: "logger").
 
     Returns:
-        A decorator function that wraps the target function and injects the current logger when appropriate.
+        A decorator function that wraps the target function and injects
+        the current logger when appropriate.
     """
 
     def decorator(func: Callable) -> Callable:

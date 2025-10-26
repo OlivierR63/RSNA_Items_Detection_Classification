@@ -4,13 +4,12 @@ import tensorflow as tf
 import SimpleITK as sitk
 from pathlib import Path
 from typing import List, Tuple
-import os
 
 
 class DicomTFDataset:
-    """TensorFlow Dataset for loading DICOM files, featuring optimized Python 
+    """TensorFlow Dataset for loading DICOM files, featuring optimized Python
     enumeration and dynamic shape handling via padded_batch.
-    
+
     The dataset returns a tuple: (DICOM image tensor, original image shape tensor).
     """
 
@@ -30,17 +29,18 @@ class DicomTFDataset:
         self._file_paths_list = self._generate_file_paths_python()
 
         if not self._file_paths_list:
-             raise FileNotFoundError(f"No DICOM files found in {self._root_dir} following the structure */*/*.dcm.")
+            msg_exception = (f"No DICOM files found in {self._root_dir} ",
+                             "following the structure */*/*.dcm.")
+            raise FileNotFoundError(msg_exception)
 
         # 2. Convert the list of strings into a simple TensorFlow Dataset.
         self._file_paths_dataset = tf.data.Dataset.from_tensor_slices(self._file_paths_list)
 
-
     def _generate_file_paths_python(self) -> List[str]:
         """Recursively generates all DICOM file paths using Python's Pathlib.
-        
+
         Assumes structure: root_dir/study_id/series_id/*.dcm
-        
+
         Returns:
             List[str]: A list of absolute, POSIX-style paths to all DICOM files.
         """
@@ -51,9 +51,9 @@ class DicomTFDataset:
 
 
     def _py_load_dicom_tf(self, path: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
-        """Python function executed by tf.py_function to load the DICOM 
+        """Python function executed by tf.py_function to load the DICOM
         using SimpleITK, extracting both the image and its shape.
-        
+
         Args:
             path (tf.Tensor): The DICOM file path (tf.string/bytes).
 
@@ -63,35 +63,35 @@ class DicomTFDataset:
         try:
             # Decode the path tensor (bytes) into a Python string
             path_str = path.numpy().decode('utf-8')
-            
+
             # --- SimpleITK Loading ---
             img = sitk.ReadImage(path_str)
             img_array = sitk.GetArrayFromImage(img)
-            
+
             # Convert to tensors
             image_tensor = tf.convert_to_tensor(img_array, dtype=tf.float32)
             # The shape (H, W, D or C) is returned as an Int32 tensor
             shape_tensor = tf.constant(img_array.shape, dtype=tf.int32)
-            
+
             return image_tensor, shape_tensor
 
         except Exception as e:
             tf.print(f"Error loading DICOM file {path_str}: {e}")
-            # Return a small dummy tensor (1, 1, 1) and its shape on error 
+            # Return a small dummy tensor (1, 1, 1) and its shape on error
             # to prevent the pipeline from immediately crashing during batching.
             image_tensor_dummy = tf.fill((1, 1, 1), -1.0)
             shape_tensor_dummy = tf.constant([1, 1, 1], dtype=tf.int32)
             return image_tensor_dummy, shape_tensor_dummy
 
-
     def _load_dicom(self, file_path: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         """tf.py_function wrapper for the SimpleITK loading function."""
         return tf.py_function(
-            self._py_load_dicom_tf, 
-            [file_path], 
-            (tf.float32, tf.int32) # Specify expected output types: (Image, Shape)
-        )
+                              self._py_load_dicom_tf,
+                              [file_path],
 
+                              # Specify expected output types: (Image, Shape)
+                              (tf.float32, tf.int32)
+                             )
 
     def create_tf_dataset(self, batch_size: int = 8) -> tf.data.Dataset:
         """Create an optimized TensorFlow Dataset, loading the image and its shape.
@@ -103,9 +103,9 @@ class DicomTFDataset:
         Returns:
             tf.data.Dataset: A batched and prefetched dataset of (image, shape) tuples.
         """
-        
+
         dataset = self._file_paths_dataset
-        
+
         # 1. Mapping (parallel loading)
         # Each element becomes a tuple: (image_tensor, shape_tensor)
         dataset = dataset.map(
@@ -119,14 +119,20 @@ class DicomTFDataset:
         dataset = dataset.padded_batch(
             batch_size=batch_size,
             padded_shapes=(
-                tf.TensorShape([None, None, None]), # Image (dynamic size on all axes)
-                tf.TensorShape([3])                 # Shape vector (fixed size of 3 elements)
+                # Image (dynamic size on all axes)
+                tf.TensorShape([None, None, None]),
+
+                # Shape vector (fixed size of 3 elements)
+                tf.TensorShape([3])
             ),
             padding_values=(
-                tf.constant(0.0, dtype=tf.float32), # Padding value for the image pixels
-                tf.constant(0, dtype=tf.int32)      # Padding value for the shape vector (not used, but required)
+                # Padding value for the image pixels
+                tf.constant(0.0, dtype=tf.float32),
+                
+                # Padding value for the shape vector (not used, but required)
+                tf.constant(0, dtype=tf.int32)
             )
         )
-        
+
         # 3. Prefetching for optimized throughput
         return dataset.prefetch(tf.data.AUTOTUNE)

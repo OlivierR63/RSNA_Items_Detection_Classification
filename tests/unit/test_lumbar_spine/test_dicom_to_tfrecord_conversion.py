@@ -65,7 +65,7 @@ class TestDicomToTFRecordConversion:
             # Now patch methods on the instance
             with (
                         patch.object(dataset,
-                                        '_setup_output_directory') as mock_setup_output_directory,
+                                    '_setup_output_directory') as mock_setup_output_directory,
                         patch.object(dataset, '_process_study') as mock_process_study
                     ):
 
