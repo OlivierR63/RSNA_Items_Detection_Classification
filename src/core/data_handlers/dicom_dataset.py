@@ -49,7 +49,6 @@ class DicomTFDataset:
         # .as_posix() ensures '/' separators, compatible with TF/Linux/Windows
         return [p.resolve().as_posix() for p in root_path.glob('*/*/*.dcm')]
 
-
     def _py_load_dicom_tf(self, path: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         """Python function executed by tf.py_function to load the DICOM
         using SimpleITK, extracting both the image and its shape.
@@ -128,7 +127,7 @@ class DicomTFDataset:
             padding_values=(
                 # Padding value for the image pixels
                 tf.constant(0.0, dtype=tf.float32),
-                
+
                 # Padding value for the shape vector (not used, but required)
                 tf.constant(0, dtype=tf.int32)
             )

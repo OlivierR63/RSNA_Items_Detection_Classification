@@ -30,15 +30,16 @@ class CSVMetadata:
             logger: Optional logger instance. If None, creates a new one.
         """
         self.logger = logger if logger is not None else logging.getLogger(self.__class__.__name__)
-        self.logger.info("Initializing CSVMetadata handler",
-                         extra={
-                                    "action": "init",
-                                    "files": {
-                                                "series_description": series_description,
-                                                "label_coordinates": label_coordinates,
-                                                "train": train
-                                              }
-                                }
+        self.logger.info(
+            "Initializing CSVMetadata handler",
+             extra={
+                    "action": "init",
+                    "files": {
+                                 "series_description": series_description,
+                                 "label_coordinates": label_coordinates,
+                                 "train": train
+                             }
+                   }
         )
 
         try:
@@ -59,14 +60,16 @@ class CSVMetadata:
 
             # Perform the initial merge and preprocessing upon instantiation.
             self._merged_df = self._merge_metadata()
-            self.logger.info("Metadata merged successfully",
-                             extra={"merged_shape": self._merged_df.shape}
+            self.logger.info(
+                "Metadata merged successfully",
+                extra={"merged_shape": self._merged_df.shape}
             )
 
         except Exception as e:
-            self.logger.error(f"Error initializing CSVMetadata: {str(e)}",
-                              exc_info=True,
-                              extra={"status": "failed", "error": str(e)}
+            self.logger.error(
+                f"Error initializing CSVMetadata: {str(e)}",
+                exc_info=True,
+                extra={"status": "failed", "error": str(e)}
             )
             raise
 
@@ -97,9 +100,10 @@ class CSVMetadata:
                              extra={"status": "success", "final_shape": merged_df.shape})
             return merged_df
         except Exception as e:
-            self.logger.error(f"Error merging metadata: {str(e)}",
-                              exc_info=True,
-                              extra={"status": "failed", "error": str(e)}
+            self.logger.error(
+                f"Error merging metadata: {str(e)}",
+                exc_info=True,
+                extra={"status": "failed", "error": str(e)}
             )
             raise
 
@@ -113,12 +117,13 @@ class CSVMetadata:
         initial_count = len(tmp_train_df)
         tmp_train_df.dropna(inplace=True)
         final_count = len(tmp_train_df)
-        self.logger.info(f"Dropped {initial_count - final_count} NaN rows",
-                         extra={
-                                 "step": 1,
-                                 "initial_count": initial_count,
-                                 "final_count": final_count
-                               }
+        self.logger.info(
+            f"Dropped {initial_count - final_count} NaN rows",
+            extra={
+                    "step": 1,
+                    "initial_count": initial_count,
+                    "final_count": final_count
+                   }
         )
 
         tmp_train_df[['condition', 'level']] = tmp_train_df['condition_level'].apply(
@@ -138,20 +143,22 @@ class CSVMetadata:
             on=["study_id", 'condition', 'level'],
             how='inner'
         )
-        self.logger.info(f"Merged with label coordinates. Shape: {merged_df.shape}",
-                         extra={"step": 3, "shape": merged_df.shape}
+        self.logger.info(
+            f"Merged with label coordinates. Shape: {merged_df.shape}",
+            extra={"step": 3, "shape": merged_df.shape}
         )
         return merged_df
 
     def _merge_with_series_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
         """Merge the DataFrame with series descriptions."""
-        
+
         self.logger.info("Merging with series descriptions...", extra={"step": 4})
-        
+
         merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
-        
-        self.logger.info(f"Merged with series descriptions. Final shape: {merged_df.shape}",
-                         extra={"step": 4, "final_shape": merged_df.shape}
+
+        self.logger.info(
+            f"Merged with series descriptions. Final shape: {merged_df.shape}",
+            extra={"step": 4, "final_shape": merged_df.shape}
         )
         return merged_df
 

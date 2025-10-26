@@ -19,7 +19,7 @@ _CURRENT_LOGGER: Optional[logging.Logger] = None
 def setup_logger(process_name: str,
                  log_dir: str = "logs",
                  use_json: bool = False,
-                 console_display = False) -> Generator[logging.Logger, None, None]:
+                 console_display=False) -> Generator[logging.Logger, None, None]:
     """Configures a logger linked to the current process ID.
     Supports both text and JSON formatting.
 
