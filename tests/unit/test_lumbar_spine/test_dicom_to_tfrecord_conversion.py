@@ -54,16 +54,16 @@ class TestDicomToTFRecordConversion:
     """
 
     def test_convert_dicom_to_tfrecords(
-                                            self,
-                                            mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                                            tmp_path: Path
-                                        ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
+        tmp_path: Path
+    ) -> None:
         """
             Test the main function for converting DICOM to TFRecord.
         """
 
         mock_config, mock_logger, dicom_study_dir, tfrecord_dir, metadata_df = mock_setup
-        
+
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
 
         with (
@@ -100,7 +100,7 @@ class TestDicomToTFRecordConversion:
             # Now patch methods on the instance
             with (
                     patch.object(dataset,
-                                '_setup_tfrecord_directory') as mock_setup_tfrecord_directory,
+                                 '_setup_tfrecord_directory') as mock_setup_tfrecord_directory,
                     patch.object(dataset, '_process_study') as mock_process_study
                   ):
 
@@ -114,7 +114,7 @@ class TestDicomToTFRecordConversion:
                 # Verifications
                 mock_setup_tfrecord_directory.assert_called_once_with(str(tfrecord_dir))
                 mock_process_study.assert_called()
-                
+
                 mock_logger.info.assert_any_call(
                     "Starting DICOM to TFRecord conversion",
                     extra={"action": "convert_dicom", "dicom_study_dir": str_study_dir}
@@ -127,20 +127,25 @@ class TestDicomToTFRecordConversion:
 
                 # Check that the expected TFRecord file has been created
                 expected_tfrecord_file = tfrecord_dir / "4003253.TFRecord"
-                assert expected_tfrecord_file.exists(), f"Expected TFRecord file {expected_tfrecord_file} was not created"
+                assert (
+                    expected_tfrecord_file.exists()
+                ), f"Expected TFRecord file {expected_tfrecord_file} was not created"
 
                 # Check that the TFRecord file is not empty
-                assert expected_tfrecord_file.stat().st_size > 0, f"TFRecord file {expected_tfrecord_file} is empty"
+                assert (
+                    expected_tfrecord_file.stat().st_size > 0
+                ), f"TFRecord file {expected_tfrecord_file} is empty"
 
     def test_setup_tfrecord_directory(
-                                        self,
-                                        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                                        tmp_path: Path
-                                      ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
+        tmp_path: Path
+    ) -> None:
+
         """
             Test the creation of the tfrecord directory.
         """
-        
+
         mock_config, mock_logger, _, tfrecord_dir, metadata_df = mock_setup
 
         mock_csv_path = "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.CSVMetadata"
@@ -173,10 +178,11 @@ class TestDicomToTFRecordConversion:
             assert test_dir.is_dir()
 
     def test_process_study(
-                            self,
-                            mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                            tmp_path: Path
-                           ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
+        tmp_path: Path
+    ) -> None:
+
         """
             Test the processing of a study.
         """
@@ -225,15 +231,15 @@ class TestDicomToTFRecordConversion:
                 mock_process_series.assert_called_once()
 
     def test_process_series(
-                                self,
-                                mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                                tmp_path: Path
-                           ) -> None:
-        
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
+        tmp_path: Path
+    ) -> None:
+
         """
             Test the processing of a series.
         """
-        
+
         mock_config, mock_logger, _, _, metadata_df = mock_setup
 
         series_path = tmp_path / "123456789"
@@ -273,10 +279,10 @@ class TestDicomToTFRecordConversion:
                 mock_writer.write.assert_called_once()
 
     def test_process_dicom_file(
-                                    self,
-                                    mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                                    tmp_path: Path
-                                ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
+        tmp_path: Path
+    ) -> None:
 
         mock_config, mock_logger, _, _, metadata_df = mock_setup
 
@@ -329,10 +335,11 @@ class TestDicomToTFRecordConversion:
                 assert metadata_bytes == b"metadata_bytes"
 
     def test_write_tfrecord_example(
-                                        self,
-                                        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
-                                        tmp_path: Path
-                                    ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],        
+        tmp_path: Path
+    ) -> None:
+
         """
             Test the writing of a TFRecord example.
         """

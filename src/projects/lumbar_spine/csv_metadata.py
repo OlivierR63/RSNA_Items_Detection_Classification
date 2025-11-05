@@ -2,7 +2,6 @@
 
 import pandas as pd
 import numpy as np
-import tensorflow as tf
 from typing import Optional
 import logging
 from pathlib import Path
@@ -128,7 +127,7 @@ class CSVMetadata:
         Melt and clean the training DataFrame.
         """
 
-        try: 
+        try:
             tmp_train_df = self._train_df.melt(
                 id_vars="study_id",
                 var_name="condition_level",
@@ -167,7 +166,7 @@ class CSVMetadata:
         """
         Merge the DataFrame with label coordinates.
         """
-        
+
         self.logger.info("Merging with label coordinates...", extra={"step": 3})
         merged_df = df.merge(
             self._label_coords_df,
@@ -210,40 +209,3 @@ class CSVMetadata:
         df.columns = [c.lower() for c in df.columns]
 
         return df
-
-    # def to_tf_lookup(self) -> tf.lookup.StaticHashTable:
-    #     """
-    #     Converts the merged metadata into a TensorFlow StaticHashTable for
-    #     efficient lookup within the TensorFlow graph.
-
-    #     The key is a concatenated string of identifiers, and the value is
-    #     an array of key metadata fields.
-
-    #     Returns:
-    #         tf.lookup.StaticHashTable: A lookup table ready for use in a tf.data pipeline.
-    #     """
-
-    #     self.logger.info("Creating TensorFlow lookup table", extra={"action": "create_lookup"})
-
-    #     try:
-    #         # Create unique keys: "study_id_series_id_instance_number"
-    #         keys = (self.merged["study_id"] + "_" + self.merged["series_id"]
-    #                 + "_" + self.merged["instance_number"].astype(str))
-
-    #         # Create values: an array of [condition, level, x, y] strings.
-    #         values = self.merged[["condition", "level", "x", "y"]].values.astype(str)
-
-    #         # Create the hash table. Unknown keys will return an empty string.
-    #         lookup_table = tf.lookup.StaticHashTable(
-    #             tf.lookup.KeyValueTensorInitializer(keys, values),
-    #             default_value="")
-
-    #         self.logger.info("TensorFlow lookup table created successfully",
-    #                          extra={"status": "success", "num_entries": len(keys)})
-    #         return lookup_table
-
-    #     except Exception as e:
-    #         self.logger.error(f"Error creating lookup table: {str(e)}",
-    #                           exc_info=True,
-    #                           extra={"status": "failed", "error": str(e)})
-    #         raise

@@ -4,20 +4,20 @@
 import logging
 import json
 import pytest
-from pathlib import Path
 from unittest.mock import MagicMock
 from src.core.utils.logger import (
-    setup_logger,
-    get_current_logger,
-    log_method,
-    JSONFormatter,
-    _CURRENT_LOGGER
-)
+                                        setup_logger,
+                                        get_current_logger,
+                                        log_method,
+                                        JSONFormatter
+                                    )
 
 
 def test_setup_logger(caplog, tmp_path):
-    """Test the creation of a logger with setup_logger."""
-    
+    """
+        Test the creation of a logger with setup_logger.
+    """
+
     log_dir = tmp_path / "logs"
 
     with setup_logger("test_process",
@@ -39,7 +39,9 @@ def test_setup_logger(caplog, tmp_path):
 
 
 def test_json_formatter():
-    """Teste le formatter JSON."""
+    """
+        Teste le formatter JSON.
+    """
     formatter = JSONFormatter()
     record = logging.LogRecord(
         name="test",
@@ -61,7 +63,9 @@ def test_json_formatter():
 
 
 def test_log_method_decorator(caplog, tmp_path):
-    """Test the log_method decorator."""
+    """
+        Test the log_method decorator.
+    """
 
     log_dir = tmp_path / "logs"
 
@@ -84,7 +88,9 @@ def test_log_method_decorator(caplog, tmp_path):
 
 
 def test_get_current_logger(tmp_path):
-    """Test retrieving the current logger."""
+    """
+        Test retrieving the current logger.
+    """
     log_dir = tmp_path / "logs"
     with setup_logger("test", log_dir=str(log_dir), use_json=False) as logger:
         current_logger = get_current_logger()
@@ -97,7 +103,7 @@ def test_get_current_logger(tmp_path):
 
 def test_setup_logger_with_existing_handlers(caplog, tmp_path):
     """
-    Test that setup_logger clears existing handlers when a logger is already set up.
+        Test that setup_logger clears existing handlers when a logger is already set up.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)  # exist_ok = True to avoid error if log_dir already exists
@@ -115,7 +121,7 @@ def test_setup_logger_with_existing_handlers(caplog, tmp_path):
 
 def test_setup_logger_with_console_display(caplog, tmp_path):
     """
-    Test that setup_logger adds a console handler when console_display=True.
+        Test that setup_logger adds a console handler when console_display=True.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)  # exist_ok = True to avoid error if log_dir already exists
@@ -127,7 +133,7 @@ def test_setup_logger_with_console_display(caplog, tmp_path):
 
 def test_setup_logger_handlers_closed(tmp_path):
     """
-    Test that setup_logger closes all handlers when exiting the context.
+        Test that setup_logger closes all handlers when exiting the context.
     """
     log_dir = tmp_path / "logs"
 
@@ -144,7 +150,8 @@ def test_setup_logger_handlers_closed(tmp_path):
 
 def test_log_method_decorator_without_logger_param(tmp_path):
     """
-    Test that the log_method decorator does not inject a logger if the function does not accept it.
+        Test that the log_method decorator does not inject a logger
+        if the function does not accept it.
     """
     log_dir = tmp_path / "logs"
 
@@ -159,7 +166,7 @@ def test_log_method_decorator_without_logger_param(tmp_path):
 
 def test_log_method_decorator_with_logger_param(tmp_path):
     """
-    Test that the log_method decorator injects the logger if the function accepts it.
+        Test that the log_method decorator injects the logger if the function accepts it.
     """
     log_dir = tmp_path / "logs"
 
@@ -179,7 +186,7 @@ def test_log_method_decorator_with_logger_param(tmp_path):
 
 def test_setup_logger_with_json_formatter(tmp_path):
     """
-    Test that setup_logger uses JSONFormatter when use_json=True.
+        Test that setup_logger uses JSONFormatter when use_json=True.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)
@@ -192,7 +199,7 @@ def test_setup_logger_with_json_formatter(tmp_path):
 
 def test_json_formatter_with_exception(tmp_path):
     """
-    Test that JSONFormatter includes exception information when record.exc_info is set.
+        Test that JSONFormatter includes exception information when record.exc_info is set.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)
@@ -214,5 +221,3 @@ def test_json_formatter_with_exception(tmp_path):
             log_data = json.loads(content)
             assert "exception" in log_data
             assert "Test exception" in log_data["exception"]
-
-

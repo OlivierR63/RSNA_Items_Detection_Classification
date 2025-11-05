@@ -1,10 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-import tensorflow as tf
 import logging
-import os
-from pathlib import Path
 from src.projects.lumbar_spine.csv_metadata import CSVMetadata
 from unittest.mock import patch
 
@@ -89,13 +86,13 @@ def test_init_exception(setup_csv_files, logger, caplog):
     # Mock pd.read_csv to raise an exception
     with patch('pandas.read_csv', side_effect=Exception("File not found")):
         with pytest.raises(Exception):
-            csv_metadata = CSVMetadata(
-                "",
-                files["series_description"],
-                files["label_coordinates"],
-                files["train"],
-                logger
-            )
+            _ = CSVMetadata(
+                                "",
+                                files["series_description"],
+                                files["label_coordinates"],
+                                files["train"],
+                                logger
+                            )
 
     # Check that the error was logged
     assert "Error initializing CSVMetadata" in caplog.text
@@ -124,7 +121,7 @@ def test_train_df_property(setup_csv_files, logger):
     """
     files = setup_csv_files
     csv_metadata = CSVMetadata(
-                                "",     
+                                "",
                                 files["series_description"],
                                 files["label_coordinates"],
                                 files["train"],
@@ -317,43 +314,3 @@ def test_normalize_identifier_types(setup_csv_files, logger):
     assert normalized_df['study_id'].dtype == np.int64
     assert normalized_df['series_id'].dtype == np.int64
     assert normalized_df['instance_number'].dtype == int
-
-
-# def test_to_tf_lookup(setup_csv_files, logger):
-#     """
-#     test the to_tf_lookup method.
-#     """
-#     files = setup_csv_files
-#     csv_metadata = testcsvmetadata(
-#                                 files["series_description"],
-#                                 files["label_coordinates"],
-#                                 files["train"],
-#                                 logger
-#                                )
-
-#     # call the to_tf_lookup method
-#     lookup_table = csv_metadata.to_tf_lookup()
-
-#     # check that the result is a tf.lookup.statichashtable
-#     assert isinstance(lookup_table, tf.lookup.statichashtable)
-
-
-# def test_to_tf_lookup_exception(setup_csv_files, logger, caplog):
-#     """
-#     Test that exceptions in to_tf_lookup are handled and logged.
-#     """
-#     files = setup_csv_files
-#     csv_metadata = CSVMetadata(
-#                                 files["series_description"],
-#                                 files["label_coordinates"],
-#                                 files["train"],
-#                                 logger
-#                                )
-
-#     # Mock the merged property to raise an exception
-#     with patch.object(csv_metadata, 'merged', side_effect=Exception("Lookup error")):
-#         with pytest.raises(Exception):
-#             csv_metadata.to_tf_lookup()
-
-#     # Check that the error was logged
-#     assert "Error creating lookup table" in caplog.text

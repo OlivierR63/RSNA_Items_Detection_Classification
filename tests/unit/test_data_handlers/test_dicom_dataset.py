@@ -6,9 +6,6 @@ from unittest.mock import patch
 from src.core.data_handlers.dicom_dataset import DicomTFDataset
 from pathlib import Path
 
-# Ensure the import path is correct for your project structure
-from src.core.data_handlers.dicom_dataset import DicomTFDataset
-
 # NOTE: The base_dir should be replaced with a path accessible
 #       in the testing environment (e.g., relative path)
 # Using 'pathlib' or 'os.path.join' is generally safer for cross-platform compatibility.
@@ -166,6 +163,9 @@ def test_dicom_tf_dataset_without_padding(mock_config):
         assert image_batch.shape[0] == 2, f"Expected batch size 2, got {image_batch.shape[0]}"
 
         # Check that the shapes are consistent
-        assert len(image_batch.shape) == 4, f"Image batch expected 4D tensor, got shape {image_batch.shape}"
-        assert len(shape_batch.shape) == 2, f"Shape batch expected 2D tensor, got shape {shape_batch.shape}"
+        assert_msg = f"Image batch expected 4D tensor, got shape {image_batch.shape}"
+        assert len(image_batch.shape) == 4, assert_msg
+
+        assert_msg = f"Shape batch expected 2D tensor, got shape {shape_batch.shape}"
+        assert len(shape_batch.shape) == 2, assert_msg
         break  # Only check the first batch

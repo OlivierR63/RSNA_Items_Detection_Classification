@@ -132,7 +132,7 @@ def log_method(logger_key: str = "logger") -> Callable:
             if accepts_logger and logger_key not in kwargs:
                 # Inject the logger into the keyword arguments
                 kwargs[logger_key] = get_current_logger()
-            
+
             # Call the original function
             return func(*args, **kwargs)
 

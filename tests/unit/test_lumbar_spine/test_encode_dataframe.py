@@ -30,7 +30,7 @@ def mock_setup(mock_config, mock_logger):
     # Mock the get_current_logger function to return the mock_logger
     with patch("src.core.utils.logger.get_current_logger", return_value=mock_logger):
         with patch.object(LumbarDicomTFRecordDataset,
-                          '_generate_tfrecord_files', return_value = None):
+                          '_generate_tfrecord_files', return_value=None):
             yield mock_config, mock_logger
 
 
@@ -210,7 +210,7 @@ class TestEncodeDataFrame:
                                             mock_setup: Tuple[dict[str, Any], MagicMock]
                                         ) -> None:
         """
-            Tests that _encode_dataframe correctly handles exceptions raised by its dependencies 
+            Tests that _encode_dataframe correctly handles exceptions raised by its dependencies
             (e.g., _create_mappings or _apply_encodings), logs the error, and re-raises it.
         """
         mock_config, mock_logger = mock_setup
@@ -220,14 +220,14 @@ class TestEncodeDataFrame:
 
         # Créer un DataFrame d'entrée (le contenu n'a pas d'importance ici)
         input_df = pd.DataFrame({"condition": ["A"]})
-        
+
         # Définir l'erreur que nous allons simuler
         simulated_error_message = "Mocked encoding failure"
 
         # Patch _create_mappings pour lever une exception
-        with patch.object(dataset_obj, '_create_mappings', 
+        with patch.object(dataset_obj, '_create_mappings',
                           side_effect=Exception(simulated_error_message)):
-            
+
             # 1. Vérifier que la fonction lève l'exception
             with pytest.raises(Exception) as excinfo:
                 dataset_obj._encode_dataframe(input_df, logger=mock_logger)
@@ -236,14 +236,14 @@ class TestEncodeDataFrame:
             assert str(excinfo.value) == simulated_error_message
 
             # 3. Vérifier les appels de logging
-            
+
             # 3.1 Vérifier le message de début
             mock_logger.info.assert_any_call("Starting function _encode_dataframe")
-            
+
             # 3.2 Vérifier que l'erreur a été loggée correctement
             expected_error_msg = f"Error in function _encode_dataframe: {simulated_error_message}"
             mock_logger.error.assert_called_with(
-                expected_error_msg, 
+                expected_error_msg,
                 exc_info=True,
                 extra={"status": "failed", "error": simulated_error_message}
             )
@@ -270,7 +270,7 @@ class TestEncodeDataFrame:
                     side_effect=self._create_mock_mapper
                 ),
                 patch(csv_metadata_chain) as mock_csv_metadata_class
-            ):
+              ):
 
             # Configure the mock CSVMetadata class
             mock_csv_metadata_instance = MagicMock()
@@ -334,7 +334,7 @@ class TestEncodeDataFrame:
         """
             Test the creation of a string to integer mapper.
         """
-        
+
         mock_config, mock_logger = mock_setup
 
         # Test data with all expected values
@@ -368,13 +368,13 @@ class TestEncodeDataFrame:
         assert mapper.mapping.get("NonExistentValue") is None
 
     def test_create_string_to_int_mapper_exception(
-                                                        self,
-                                                        mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                        tmp_path: Path
-                                                    ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock],
+        tmp_path: Path
+    ) -> None:
         """
             Tests that _create_string_to_int_mapper correctly handles an Exception
-            (specifically a TypeError from unhashable elements) by logging the error 
+            (specifically a TypeError from unhashable elements) by logging the error
             details and re-raising the original exception.
         """
         mock_config, mock_logger = mock_setup
@@ -386,23 +386,24 @@ class TestEncodeDataFrame:
         # A list cannot be used as a dictionary key (it's unhashable).
         input_data = ['valid_key', ['unhashable_key'], 'another_valid_key']
 
-        # Use pytest.raises to assert that the function re-raises the exception (TypeError in this case).
+        # Use pytest.raises to assert that the function re-raises the exception
+        # (TypeError in this case).
         with pytest.raises(TypeError) as excinfo:
             dataset_obj._create_string_to_int_mapper(input_data, logger=mock_logger)
 
         # Retrieve the original error message from the raised exception
         error_message = str(excinfo.value)
-        
+
         # Assertions:
-        
+
         # Verify the starting info message was logged
         mock_logger.info.assert_any_call("Starting function _create_string_to_int_mapper")
-        
+
         # Verify that the error was logged correctly using the format from the except block
         expected_error_message = f"Error in function _create_string_to_int_mapper : {error_message}"
-        
+
         mock_logger.error.assert_called_with(
-                                                expected_error_message, 
+                                                expected_error_message,
                                                 exc_info=True,
                                                 # The 'error' key in extra must match the simple
                                                 # string representation of the error
@@ -413,10 +414,11 @@ class TestEncodeDataFrame:
         assert excinfo.type is TypeError
 
     def test_create_string_to_int_mapper_unknown_key(
-                                                        self,
-                                                        mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                        tmp_path: Path
-                                                     ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock],
+        tmp_path: Path
+    ) -> None:
+
         """
             Tests the case in _create_string_to_int_mapper where the mapper function
             is called with a string not present in the original list, ensuring it returns -1.
@@ -429,13 +431,13 @@ class TestEncodeDataFrame:
 
         # 1. Define input strings and call the function to get the mapper
         input_strings = ['Normal', 'Stenosis', 'Degeneration']
-    
+
         # Assuming _create_string_to_int_mapper is a method of dataset_obj
         mapper_func = dataset_obj._create_string_to_int_mapper(input_strings, logger=mock_logger)
 
         # 2. Test for an unknown key to cover the missed branch (-1)
         # The string 'UnknownCondition' should return -1.
         unknown_key_result = mapper_func('UnknownCondition')
-    
+
         # Assert that the default return value is correctly triggered.
         assert unknown_key_result == -1

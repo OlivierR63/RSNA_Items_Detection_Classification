@@ -2,11 +2,10 @@
 
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import patch
 from src.core.utils.clean_logs import clean_old_logs, main
-import importlib.util
 import os
 import sys
+
 
 def test_clean_old_logs(tmp_path):
     """
@@ -14,7 +13,7 @@ def test_clean_old_logs(tmp_path):
     and keep recent ones
     """
     log_dir = tmp_path / "logs"
-    log_dir.mkdir(parents=True, exist_ok = True)  # Use exist_ok=True to avoid FileExistsError
+    log_dir.mkdir(parents=True, exist_ok=True)  # Use exist_ok=True to avoid FileExistsError
 
     # Create a recent log file
     recent_log = log_dir / "recent.log"
@@ -63,7 +62,7 @@ def test_main_block(tmp_path, capfd):
     """
     Test that clean_old_logs is called when the script is run directly.
     """
-     # Create a log directory and an old log file
+    # Create a log directory and an old log file
     log_dir = tmp_path / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     old_log = log_dir / "old.log"
@@ -74,7 +73,6 @@ def test_main_block(tmp_path, capfd):
 
     # Path to the original script
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
-    script_path = BASE_DIR / "src" / "core" / "utils" / "clean_logs.py"
 
     # Save the original sys.argv
     original_argv = sys.argv

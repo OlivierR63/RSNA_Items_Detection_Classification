@@ -35,8 +35,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
         Wraps the _parse_tfrecord method using tf.py_function.
 
-        This is necessary to execute Python code (like Python logging and 
-        try/except blocks) reliably within the TensorFlow graph structure. 
+        This is necessary to execute Python code (like Python logging and
+        try/except blocks) reliably within the TensorFlow graph structure.
         It allows custom Python error handling during the map operation.
 
         The output types (Tout) must match the return types of _parse_tfrecord.
@@ -46,7 +46,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             func=self._parse_tfrecord,
             inp=[tfrecord_proto],
             # Tout must match the dtypes returned by _parse_tfrecord
-            Tout=[tf.float32, tf.string] 
+            Tout=[tf.float32, tf.string]
         )
 
     @log_method()
@@ -163,7 +163,9 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             if not list(self._tfrecord_dir.glob("*.tfrecord")):
                 logger.info("  Creating TFRecord files...")
 
-                str_study_dir = str(Path(self._config["root_dir"]) / self._config["dicom_study_dir"])
+                str_study_dir = str(
+                    Path(self._config["root_dir"]) / self._config["dicom_study_dir"]
+                )
                 self._convert_dicom_to_tfrecords(
                     study_dir=str_study_dir,
                     metadata_df=encoded_metadata_df,
@@ -419,7 +421,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
             for study_path in tqdm(list(Path(study_dir).iterdir())):
                 if not study_path.is_dir():
-                    msg_warning = (f"Skipping non-directory item {study_path} in study folder {study_dir}")
+                    msg_warning = (
+                                    f"Skipping non-directory item {study_path} "
+                                    f"in study folder {study_dir}"
+                                   )
                     logger.warning(msg_warning)
                     continue
 
@@ -452,7 +457,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
             for series_path in study_path.iterdir():
                 if not series_path.is_dir():
-                    msg_warning = (f"Skipping non-directory item: {series_path} in study: {study_path}")
+                    msg_warning = (
+                                    f"Skipping non-directory item: {series_path} "
+                                    f"in study: {study_path}"
+                                   )
                     logger.warning(msg_warning)
                     continue
 
@@ -576,7 +584,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
             Returns:
                 bytes: A compact byte sequence representing the serialized metadata.
-                       **Returns an empty byte sequence (b'') if no corresponding records are found.**
+                    **Returns an empty byte sequence (b'') if no corresponding records are found.**
 
             Raises:
                 ValueError: If the number of records for the given identifiers exceeds 25.
@@ -654,7 +662,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         nb_records = len(records_df)
         if nb_records > 25:
             raise ValueError("The number of records exceeds the limit of 25.")
-        
+
         nb_records_bytes = nb_records.to_bytes(1, byteorder='big', signed=False)
 
         return (study_id_bytes + series_id_bytes + instance_number_bytes

@@ -2,13 +2,10 @@
 
 import pytest
 import pandas as pd
-import logging
 from unittest.mock import MagicMock, patch
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from pathlib import Path
 from typing import Tuple, Any
-
-from tests.conftest import mock_logger
 
 
 class TestMetadataSerialization:
@@ -49,10 +46,10 @@ class TestMetadataSerialization:
     def test_serialize_metadata(
                                     self,
                                     setup_dataframe: pd.DataFrame,
-                                    dataset_instance:LumbarDicomTFRecordDataset,
+                                    dataset_instance: LumbarDicomTFRecordDataset,
                                     mock_setup: Tuple[dict[str, Any], MagicMock],
                                     tmp_path: Path
-                                )-> None:
+                                ) -> None:
         """
             Test the main serialization function.
         """
@@ -89,41 +86,49 @@ class TestMetadataSerialization:
                                         )
 
     def test_serialize_metadata_handles_exception_and_raises(
-                                                                self, 
-                                                                mock_setup: Tuple[dict, MagicMock], 
+                                                                self,
+                                                                mock_setup: Tuple[dict, MagicMock],
                                                                 tmp_path: Path
                                                               ) -> None:
         """
             Covers the 'except' block in _serialize_metadata.
-            Verifies that an exception during serialization is caught, logged 
+            Verifies that an exception during serialization is caught, logged
             with status 'failed', and then correctly re-raised.
         """
         mock_config, mock_logger = mock_setup
         exception_message = "Simulated serialization component failure"
-        
-        # Setup Data: We need a non-empty DataFrame so the function proceeds 
+
+        # Setup Data: We need a non-empty DataFrame so the function proceeds
         # past the 'if records_df.empty' check.
         mock_data_df = pd.DataFrame(
                                         {
                                             'study_id': ['123'],
                                             'series_id': ['456'],
-                                            'instance_number': [1], 
+                                            'instance_number': [1],
                                             'series_description': [0],
                                             'condition': [0],
                                             'nb_records': [1], 
                                             'records': [[]]
                                         }
                                      )
-        
+
         # Mock & Initialization
         with (
-                patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files', return_value=None),
+                patch.object(
+                                LumbarDicomTFRecordDataset,
+                                '_generate_tfrecord_files',
+                                return_value=None
+                              ),
 
                 # Mock _filter_records to return the non-empty DataFrame
-                patch.object(LumbarDicomTFRecordDataset, '_filter_records', return_value=mock_data_df),
+                patch.object(
+                                LumbarDicomTFRecordDataset,
+                                '_filter_records',
+                                return_value=mock_data_df
+                              ),
 
                 # Inject the exception during the payload serialization (inside the try block)
-                patch.object(LumbarDicomTFRecordDataset, '_serialize_payload', 
+                patch.object(LumbarDicomTFRecordDataset, '_serialize_payload',
                              side_effect=RuntimeError(exception_message))
               ):
             dataset = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
@@ -133,24 +138,24 @@ class TestMetadataSerialization:
 
                 # Call the method
                 _ = dataset._serialize_metadata(
-                                                study_id_str="123", 
-                                                series_id_str="456", 
-                                                instance_number_str="1", 
-                                                data_df=mock_data_df, 
-                                                logger=mock_logger 
+                                                study_id_str="123",
+                                                series_id_str="456",
+                                                instance_number_str="1",
+                                                data_df=mock_data_df,
+                                                logger=mock_logger
                 )
 
             # 4. Verification 1: The error was propagated with the correct message
             assert exception_message in str(excinfo.value)
-        
+
             # 5. Verification 2: The error was logged (L702-704)
             mock_logger.error.assert_called_once()
             args, kwargs = mock_logger.error.call_args
-        
+
             # Check logged message and error details
             assert "Error in function _serialize_metadata()" in args[0]
             assert exception_message in args[0]
-        
+ 
             # Check the 'extra' arguments for the required status and error info
             assert kwargs["extra"]["status"] == "failed"
             assert kwargs["extra"]["error"] == exception_message
@@ -303,8 +308,8 @@ class TestMetadataSerialization:
         mock_logger.warning.assert_called()
 
     def test_serialize_header_exceeds_limit(
-                                            self,
-                                            mock_setup: Tuple[dict[str, Any], MagicMock]
+                                                self,
+                                                mock_setup: Tuple[dict[str, Any], MagicMock]
                                             ) -> None:
         """
             Tests the limit check (Line 652: raise ValueError) in _serialize_header
@@ -314,10 +319,10 @@ class TestMetadataSerialization:
 
         # Initialize the dataset object
         dataset_obj = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
-        
+
         # Mock _generate_tfrecord_files to ensure no side effects during init
         with patch.object(dataset_obj, '_generate_tfrecord_files', return_value=None):
-            
+
             # 1. Create a mock DataFrame with 26 records (1 over the limit of 25)
             # Only the length matters, but we need to include required columns for header logic
             data = {
@@ -334,14 +339,14 @@ class TestMetadataSerialization:
             mock_study_id = "123"
             mock_series_id = "456"
             mock_instance_number = "7"
-            
+
             # 3. Assert that the ValueError is raised
             expected_error_message = "The number of records exceeds the limit of 25."
-            
+
             with pytest.raises(ValueError, match=expected_error_message):
                 dataset_obj._serialize_header(
-                                                records_dataframe, 
-                                                mock_study_id, 
-                                                mock_series_id, 
+                                                records_dataframe,
+                                                mock_study_id,
+                                                mock_series_id,
                                                 mock_instance_number
                                                 )

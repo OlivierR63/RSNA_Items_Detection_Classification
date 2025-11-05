@@ -11,38 +11,37 @@ from typing import Tuple, Any
 
 class TestLumbarDicomTFRecordDataset:
 
-
     def _bytes_feature(self, value: bytes) -> tf.train.Feature:
         """
             Helper to create a bytes Feature for a TFRecord example.
         """
         return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
-    def _mock_successful_error_handling(self, 
-                                        tfrecord_proto: tf.Tensor, 
+    def _mock_successful_error_handling(self,
+                                        tfrecord_proto: tf.Tensor,
                                         mock_logger: MagicMock) -> Tuple[tf.Tensor, tf.Tensor]:
         """
             Helper function used as a side_effect for the mocked _parse_tfrecord.
 
-            It simulates the successful execution of the error handling logic 
+            It simulates the successful execution of the error handling logic
             (the try/except block) within _parse_tfrecord by:
             1. Logging the simulated exception via the mock_logger.
-            2. Returning the default (zeroed) tensors that prevent the 
+            2. Returning the default (zeroed) tensors that prevent the
                tf.data pipeline from crashing.
-           
-            This verifies that the error management logic (logging + returning defaults) 
+
+            This verifies that the error management logic (logging + returning defaults)
             is correctly triggered by the pipeline.
         """
         # 1. Simulate the exception being caught (by logging the error)
         mock_logger.error(
-            "Error parsing record: Map error simulated", 
-            exc_info=True
-        )
+                            "Error parsing record: Map error simulated",
+                            exc_info=True
+                          )
 
         # 2. Return the dummy tensors that the error handling code would produce
         dummy_image = tf.zeros((64, 64, 64, 1), dtype=tf.float32)
-        dummy_metadata = tf.constant(b'', dtype=tf.string) 
-        
+        dummy_metadata = tf.constant(b'', dtype=tf.string)
+
         return dummy_image, dummy_metadata
 
     def generate_dummy_tfrecord_file(
@@ -69,14 +68,13 @@ class TestLumbarDicomTFRecordDataset:
 
         # Create a minimal tf.train.Example (only a single feature is needed)
         example = tf.train.Example(features=tf.train.Features(feature={
-            'tfrecord_file': self._bytes_feature(b'dummy_file_path') 
+            'tfrecord_file': self._bytes_feature(b'dummy_file_path')
         }))
 
         # Write the serialized example to the dummy file
         with tf.io.TFRecordWriter(str(dummy_tfrecord_file)) as writer:
             writer.write(example.SerializeToString())
 
-    
     # -------------------------------------------------------------------------
     # Test functions using the new helpers
     # -------------------------------------------------------------------------
@@ -90,7 +88,7 @@ class TestLumbarDicomTFRecordDataset:
             Tests the maximum number of flattened records calculation.
         """
         mock_config, mock_logger = mock_setup
-    
+
         # Initialize the dataset
         dataset = LumbarDicomTFRecordDataset(mock_config,
                                              logger=mock_logger)
@@ -117,23 +115,23 @@ class TestLumbarDicomTFRecordDataset:
         # Patch tf.py_function to intercept the call
         # Note: We patch the global function 'tensorflow.py_function'
         with patch("tensorflow.py_function") as mock_py_function:
-            
+
             # Call the method under test
             dataset_obj._py_func_map_wrapper(input_proto_tensor)
 
             # Assertions:
-            
+
             # 1. Check that tf.py_function was called exactly once
             mock_py_function.assert_called_once()
-            
+
             # 2. Check the arguments passed to tf.py_function
-            
+
             # The expected func must be the instance method self._parse_tfrecord
             expected_func = dataset_obj._parse_tfrecord
-            
+
             # The expected inp must be the list containing the input tensor
             expected_inp = [input_proto_tensor]
-            
+
             # The expected Tout must be the list of dtypes
             expected_tout = [tf.float32, tf.string]
 
@@ -148,7 +146,7 @@ class TestLumbarDicomTFRecordDataset:
                                         mock_setup: Tuple[dict[str, Any], MagicMock],
                                         mock_csv_metadata: MagicMock,
                                         mock_convert_dicom: MagicMock,
-                                        tmp_path : Path
+                                        tmp_path: Path
                                         ) -> None:
         """
             Tests the TFRecord files generation process,
@@ -191,29 +189,29 @@ class TestLumbarDicomTFRecordDataset:
                 mock_convert_dicom.assert_called_once()
 
     def test_generate_tfrecord_files_is_skipped_with_dummy_file(
-                                                        self, 
+                                                        self,
                                                         mock_setup: Tuple[dict, MagicMock],
                                                         tmp_path: Path
                                                         ) -> None:
         """
-            Verifies that the TFRecord generation is skipped and correctly logged 
+            Verifies that the TFRecord generation is skipped and correctly logged
             when a dummy TFRecord file is physically present in the output directory.
         """
         mock_config, mock_logger = mock_setup
-    
+
         # 1. Determine the expected TFRecord output directory from the mock_config
         # config['tfrecord_dir'] points to the path already created by setup_test_env
         tfrecord_dir = Path(mock_config['tfrecord_dir'])
-    
+
         # 2. Create the dummy TFRecord file to trigger the skip logic
         # Assuming the class checks for a file name like "train_000.tfrecord"
-        dummy_tfrecord_path = tfrecord_dir / "train_000.tfrecord" 
-        dummy_tfrecord_path.touch() # Create an empty file
-    
+        dummy_tfrecord_path = tfrecord_dir / "train_000.tfrecord"
+        dummy_tfrecord_path.touch()  # Create an empty file
+
         # Path to the internal conversion method (to ensure it's NOT called)
         conversion_method_path = (
             "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset."
-            "LumbarDicomTFRecordDataset._convert_dicom_to_tfrecords" # Use the correct method name
+            "LumbarDicomTFRecordDataset._convert_dicom_to_tfrecords"  # Use the correct method name
         )
 
         with (
@@ -228,57 +226,54 @@ class TestLumbarDicomTFRecordDataset:
 
             # Verification 1: The 'skipped' log must be called.
             # assert_any_call is used because other log messages precede this one.
-            mock_logger.info.assert_any_call( 
+            mock_logger.info.assert_any_call(
                 "Existing TFRecords found. Skipping conversion.",
                 extra={"status": "skipped"}
             )
-        
+
             # Verification 2: The actual conversion method must NOT be called
             mock_convert.assert_not_called()
 
     def test_generate_tfrecord_files_raises_and_logs_error(
-                                                            self, 
+                                                            self,
                                                             mock_setup: Tuple[dict, MagicMock],
-                                                            tmp_path: Path 
+                                                            tmp_path: Path
                                                            ) -> None:
         """
-            Verifies that an exception during conversion is caught, logged 
+            Verifies that an exception during conversion is caught, logged
             with status 'failed', and then correctly propagated ('raise').
         """
         mock_config, mock_logger = mock_setup
-    
+
         exception_message = "Simulated I/O or conversion failure"
-    
+
         # Path to the internal conversion method (to inject the error)
         conversion_method_path = (
             "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset."
             "LumbarDicomTFRecordDataset._convert_dicom_to_tfrecords"
         )
-    
+
         # Mock path existence check to return False (ensures conversion is NOT skipped)
         with patch("pathlib.Path.exists", return_value=False):
-        
+
             with (
                     # Mock the core conversion method to raise an error
                     patch(conversion_method_path, side_effect=RuntimeError(exception_message)),
 
-                    # Mock the parent class initialization to isolate the call
-                    #patch('src.core.data_handlers.dicom_tfrecord_dataset.DicomTFRecordDataset.__init__'),
-
                     # Assert that the exception is correctly re-raised (Line 181: raise)
                     pytest.raises(RuntimeError) as excinfo
                   ):
-                
+
                 # Initializing the dataset triggers the logic, which hits the side_effect
                 _ = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
             # Verification 1: The error was propagated with the correct message
             assert exception_message in str(excinfo.value)
-        
+
             # Verification 2: The error was logged
             mock_logger.error.assert_called_once()
             args, kwargs = mock_logger.error.call_args
-        
+
             # Check logged message and error details
             assert "Error generating TFRecords" in args[0]
             assert exception_message in args[0]
@@ -288,34 +283,47 @@ class TestLumbarDicomTFRecordDataset:
             assert kwargs["extra"]["error"] == exception_message
 
     def test_convert_dicom_to_tfrecords_handles_exception_and_raises(
-                                                                        self, 
-                                                                        mock_setup: Tuple[dict, MagicMock], 
-                                                                        tmp_path: Path
-                                                                     ) -> None:
+        self,
+        mock_setup: Tuple[dict, MagicMock],
+        tmp_path: Path
+    ) -> None:
         """
             Covers except block in _convert_dicom_to_tfrecords.
-            Verifies that an exception during the conversion loop is caught, logged 
+            Verifies that an exception during the conversion loop is caught, logged
             with status 'failed', and then correctly re-raised.
         """
         mock_config, mock_logger = mock_setup
         exception_message = "Simulated DICOM processing failure"
         
-        # Initialize the Dataset (Mocking CSVMetadata and skipping the file generation check)
+        # Initialize the Dataset
+        # (Mocking CSVMetadata and skipping the file generation check)
         with (
                 patch('src.projects.lumbar_spine.csv_metadata.CSVMetadata'),
-                patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files', return_value=None)
+                patch.object(
+                                LumbarDicomTFRecordDataset,
+                                '_generate_tfrecord_files',
+                                return_value=None
+                             )
               ):
             dataset = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
-        
+
         # Mock methods inside the try block to inject an exception
         with (
                 # Mock _process_study to raise a RuntimeError when called
-                patch.object(dataset, '_process_study', side_effect=RuntimeError(exception_message)),
+                patch.object(
+                                dataset,
+                                '_process_study',
+                                side_effect=RuntimeError(exception_message)
+                             ),
 
                 # Mock _setup_tfrecord_directory (L422) to prevent real I/O and return a dummy path
-                patch.object(dataset, '_setup_tfrecord_directory', return_value=tmp_path / "tfrecord_output_dir"),
+                patch.object(
+                                dataset,
+                                '_setup_tfrecord_directory',
+                                return_value=tmp_path / "tfrecord_output_dir"
+                             ),
 
-                # Create a dummy study directory so the outer loop (L424) finds something to iterate over
+                # Create a dummy study directory so the outer loop finds something to iterate over
                 patch('pathlib.Path.iterdir', return_value=[tmp_path / "dummy_study_1"]),
                 patch('pathlib.Path.is_dir', return_value=True),
               ):
@@ -324,39 +332,39 @@ class TestLumbarDicomTFRecordDataset:
 
                 # Call the method directly
                 dataset._convert_dicom_to_tfrecords(
-                    study_dir=str(tmp_path), 
-                    metadata_df=pd.DataFrame(), # Dummy dataframe
+                    study_dir=str(tmp_path),
+                    metadata_df=pd.DataFrame(),  # Dummy dataframe
                     tfrecord_dir=str(tmp_path / "tfrecords_output"),
-                    logger=mock_logger 
+                    logger=mock_logger
                 )
 
             # Verification 1: The error was propagated with the correct message
             assert exception_message in str(excinfo.value)
-        
+
             # Verification 2: The error was logged (L429-431)
             mock_logger.error.assert_called_once()
             args, kwargs = mock_logger.error.call_args
-        
+
             # Check logged message and error details
             assert "Error during DICOM conversion" in args[0]
             assert exception_message in args[0]
-        
+
             # Check the 'extra' arguments for the required status and error info
             assert kwargs["extra"]["status"] == "failed"
             assert kwargs["extra"]["error"] == exception_message
             assert kwargs["exc_info"] is True
 
     def test_convert_dicom_to_tfrecord_skip_non_directory(
-                                                              self,
-                                                              mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                              tmp_path: Path
-                                                           ) -> None:
+        self,
+        mock_setup: Tuple[dict[str, Any], MagicMock],
+        tmp_path: Path
+    ) -> None:
         """
-        Tests the 'if not study_path.is_dir(): continue' branch in 
+        Tests the 'if not study_path.is_dir(): continue' branch in
         _convert_dicom_to_tfrecords.
 
-        It simulates a study directory containing a file (non-directory item) 
-        and asserts that the file is skipped, a warning is logged, and 
+        It simulates a study directory containing a file (non-directory item)
+        and asserts that the file is skipped, a warning is logged, and
         _process_study is NOT called for the non-directory item.
         """
         mock_config, mock_logger = mock_setup
@@ -365,71 +373,80 @@ class TestLumbarDicomTFRecordDataset:
         dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # 1. Setup Mock Paths for iterdir()
-        
+
         # Mock Path 1: A non-directory item (should trigger 'continue')
         mock_file_path = MagicMock(spec=Path)
         mock_file_path.is_dir.return_value = False
-        mock_file_path.__str__.return_value = "mock_study_dir/readme.txt" # Used for warning message
-        
+        mock_file_path.__str__.return_value = "mock_study_dir/readme.txt"  # For warning message
+
         # Mock Path 2: A valid directory (should be processed)
         mock_valid_dir_path = MagicMock(spec=Path)
         mock_valid_dir_path.is_dir.return_value = True
         mock_valid_dir_path.__str__.return_value = "mock_study_dir/ValidStudy"
-        
+
         # Mock the iterdir() result to contain both item types
         mock_iterdir_result = [mock_file_path, mock_valid_dir_path]
-        
+
         study_directory_string = "mock_study_dir"
-        
+
         # Mock the Path object instance returned by Path(study_dir)
         mock_study_dir_instance = MagicMock(spec=Path)
         mock_study_dir_instance.iterdir.return_value = mock_iterdir_result
-        
+
         # CRITICAL FIX: Mock the Path class constructor itself.
         # This mock will be returned when Path(...) is called.
         mock_path_constructor = MagicMock(spec=Path)
         mock_path_constructor.return_value = mock_study_dir_instance
 
         # 2. Setup Mock Dependencies
-        
+
         # Mock metadata dataframe
         mock_metadata_dataframe = pd.DataFrame({'StudyUID': []})
         tfrecord_directory_string = "mock_tfrecords"
-        
+
         # Create a separate mock object for the Path return value of _setup_tfrecord_directory
         mock_tfrecord_path = MagicMock(spec=Path)
         mock_tfrecord_path.__str__.return_value = tfrecord_directory_string
 
-        with ( 
+        with (
                 # Patch the Path class as imported in the source module.
                 # This intercepts Path(study_dir) and returns mock_study_dir_instance.
                 # ASSUMPTION: module path = src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset
-                patch('src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.Path', new=mock_path_constructor),
+                patch(
+                        'src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset.Path',
+                        new=mock_path_constructor
+                      ),
 
                 # Patch tqdm
                 patch('tqdm.tqdm', side_effect=lambda iterable, *args, **kwargs: iterable),
-            
-                # Patch _setup_tfrecord_directory (returns an instance mock)
-                patch.object(dataset_object, '_setup_tfrecord_directory', 
-                             return_value=mock_tfrecord_path) as mock_setup_dir,
 
-                # Patch _process_study 
+                # Patch _setup_tfrecord_directory (returns an instance mock)
+                patch.object(
+                                dataset_object,
+                                '_setup_tfrecord_directory',
+                                return_value=mock_tfrecord_path
+                             ),
+
+                # Patch _process_study
                 patch.object(dataset_object, '_process_study') as mock_process_study,
 
                 # Patch _filter_records to return the input dataframe as-is without any filtering
                 # nor warning message
-                patch.object(dataset_object, '_filter_records', 
-                         side_effect=lambda metadata_df, *args, **kwargs: metadata_df)
+                patch.object(
+                                dataset_object,
+                                '_filter_records', 
+                                side_effect=lambda metadata_df, *args, **kwargs: metadata_df
+                             )
                ):
-            
+
             # Clear any warning calls made during object initialization
             mock_logger.warning.reset_mock()
 
             # 3. Call the method under test
             dataset_object._convert_dicom_to_tfrecords(
-                                                            study_directory_string, 
-                                                            mock_metadata_dataframe, 
-                                                            tfrecord_directory_string, 
+                                                            study_directory_string,
+                                                            mock_metadata_dataframe,
+                                                            tfrecord_directory_string,
                                                             logger=mock_logger
                                                         )
 
@@ -437,13 +454,14 @@ class TestLumbarDicomTFRecordDataset:
 
             # 4.1. Check the Warning Log (This covers the 'continue' line)
             expected_warning_message = (
-                f"Skipping non-directory item {mock_file_path} in study folder {study_directory_string}"
+                f"Skipping non-directory item {mock_file_path} "
+                f"in study folder {study_directory_string}"
             )
             mock_logger.warning.assert_called_once_with(expected_warning_message)
-            
+
             # 4.2. Check that _process_study was only called for the valid directory (once)
             mock_process_study.assert_called_once()
-            
+
             # 4.3. Check the argument used for the single call
             mock_process_study.assert_called_once_with(
                                                             mock_valid_dir_path,
@@ -459,7 +477,7 @@ class TestLumbarDicomTFRecordDataset:
         """
         Tests the 'if not series_path.is_dir(): continue' branch in _process_study.
 
-        Simulates a study directory containing a non-directory item (file) and 
+        Simulates a study directory containing a non-directory item (file) and
         asserts that it is skipped, and a warning is logged.
         """
         mock_config, mock_logger = mock_setup
@@ -470,7 +488,7 @@ class TestLumbarDicomTFRecordDataset:
         # 1. Setup Mock Paths
         study_path_str = "path/to/Study001"
         study_id = "Study001"
-        
+
         # Create a reference to the empty DataFrame to avoid ambiguous truth value error
         # in mock assertion.
         mock_metadata_df = pd.DataFrame()
@@ -479,11 +497,11 @@ class TestLumbarDicomTFRecordDataset:
         mock_study_path = MagicMock(spec=Path)
         mock_study_path.name = study_id
         mock_tfrecord_dir = MagicMock(spec=Path)
-        
+
         # Mock the resulting TFRecord path
         # Remove 'spec=Path' from the return mock to fix string assertion mismatch.
-        mock_tfrecord_path = MagicMock() 
-        
+        mock_tfrecord_path = MagicMock()
+
         # Mock the division operator (/) on mock_tfrecord_dir
         # as the path is constructed via: tfrecord_dir / f"{study_id}.tfrecord"
         mock_tfrecord_dir.__truediv__.return_value = mock_tfrecord_path
@@ -509,19 +527,19 @@ class TestLumbarDicomTFRecordDataset:
                   # Patch _process_series, which should NOT be called for the file
                   patch.object(dataset_object, '_process_series') as mock_process_series,
               ):
-            # Clear any warning calls made during object initialization 
+            # Clear any warning calls made during object initialization
             mock_logger.warning.reset_mock()
 
             # 3. Call the method under test
             dataset_object._process_study(
                 study_path=mock_study_path,
-                metadata_df=mock_metadata_df, # Use the mock reference here
+                metadata_df=mock_metadata_df,  # Use the mock reference here
                 tfrecord_dir=mock_tfrecord_dir,
                 logger=mock_logger
             )
 
             # 4. Assertions
-            
+
             # 4.1. Assert that the TFRecordWriter was initialized for the correct path
             # The function under test calls str() on the path before passing it to the Writer
             expected_tfrecord_path_str = str(mock_tfrecord_path)
@@ -535,12 +553,16 @@ class TestLumbarDicomTFRecordDataset:
 
             # 4.3. Assert that _process_series was called only for the valid directory
             mock_process_series.assert_called_once()
-            
+
             # 4.4. Assert the arguments for the single successful call
             mock_process_series.assert_called_once_with(
-                mock_valid_dir_path, 
-                mock_metadata_df, # Use the mock reference here for comparison
-                mock_tfrecord_writer_class.return_value.__enter__.return_value # The mock writer context manager
+                mock_valid_dir_path,
+
+                # Use the mock reference here for comparison
+                mock_metadata_df,
+
+                # The mock writer context manager
+                mock_tfrecord_writer_class.return_value.__enter__.return_value
             )
 
     def test_create_tf_dataset(
@@ -674,8 +696,8 @@ class TestLumbarDicomTFRecordDataset:
     def test_create_tf_dataset_map_exception(
                                                 self,
                                                 mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                tmp_path: Path  
-                                             )-> None:
+                                                tmp_path: Path
+                                             ) -> None:
         """
             Test that exceptions in map are handled and logged.
         """
@@ -692,41 +714,44 @@ class TestLumbarDicomTFRecordDataset:
                           '_generate_tfrecord_files',
                           return_value=None):
             dataset_obj = LumbarDicomTFRecordDataset(mock_config, mock_logger)
-            dataset_obj._tfrecord_pattern = str(tfrecord_dir / "*.tfrecord") # Ensure pattern matches the dummy file
 
-            # CRITICAL: Use a lambda function to wrap the helper method 
+            # Ensure pattern matches the dummy file
+            dataset_obj._tfrecord_pattern = str(tfrecord_dir / "*.tfrecord") 
+
+            # CRITICAL: Use a lambda function to wrap the helper method
             # and pass the mock_logger object, which is local to the test.
-            side_effect_func = lambda proto: self._mock_successful_error_handling(proto, mock_logger)
+            side_effect_func = (
+                lambda proto: self._mock_successful_error_handling(proto, mock_logger)
+            )
 
             # Patch _parse_tfrecord to use the helper function as side_effect
             with patch.object(dataset_obj, '_parse_tfrecord',
-                                side_effect=side_effect_func) as mock_parse:
-                
+                              side_effect=side_effect_func) as mock_parse:
+
                 # Call create_tf_dataset to get the tf.data.Dataset
                 tf_dataset = dataset_obj.create_tf_dataset(batch_size=2)
 
                 # CRITICAL: Force dataset iteration to execute the map operation
                 element = next(iter(tf_dataset))
-                
+
                 # Convert the element from Tensor to NumPy for local assertion
-                image_array = element[0].numpy()
                 # Assuming metadata is the second element (not used for shape assertion)
-                metadata_bytes = element[1].numpy() 
+                image_array = element[0].numpy()
 
                 # Check that the returned element is the dummy structure (1, 64, 64, 64, 1)
                 # Remark: the first dimension is the batch size (1 here). It is because the
-                # tensorflow batch method always inserts a dimension at axis 0 in the tensor 
+                # tensorflow batch method always inserts a dimension at axis 0 in the tensor
                 # for the batch.
                 # Since the mocked function returns the dummy_image of shape (64, 64, 64, 1)
                 # and the tf_dataset pipeline applies a batch of size 1, the resulting shape
-                # is (1, 64, 64, 64, 1). 
+                # is (1, 64, 64, 64, 1).
                 assert image_array.shape == (1, 64, 64, 64, 1)
-                assert (image_array == 0.0).all() # Dummy image is all zeros
-                
+                assert (image_array == 0.0).all()  # Dummy image is all zeros
+
                 # Check that _parse_tfrecord was called
                 mock_parse.assert_called()
-                
-                # Check that the logger was called with the error 
+
+                # Check that the logger was called with the error
                 mock_logger.error.assert_called()
 
     def test_create_tf_dataset_shuffle_exception(
@@ -814,18 +839,16 @@ class TestLumbarDicomTFRecordDataset:
                 extra={"status": "failed", "error": "Prefetch error"}
             )
 
- 
-
     def test_parse_tfrecord(
                                 self,
                                 mock_setup: Tuple[dict[str, Any], MagicMock],
                                 tmp_path: Path
-                            )->None:
+                            ) -> None:
         """
             Tests the parsing of a single TFRecord entry.
         """
-        
-        mock_config, mock_logger = mock_setup           
+
+        mock_config, mock_logger = mock_setup
         with (
                 patch("tensorflow.io.parse_single_example") as mock_parse_single_example,
                 patch("tensorflow.io.parse_tensor") as mock_parse_tensor,
@@ -897,13 +920,13 @@ class TestLumbarDicomTFRecordDataset:
                 assert tuple(metadata["records"].shape) == (25, 4)
 
     def test_parse_tfrecord_handles_exception_and_returns_defaults(
-                                                                    self, 
-                                                                    mock_setup: Tuple[dict, MagicMock], 
+                                                                    self,
+                                                                    mock_setup: Tuple[dict, MagicMock],
                                                                     tmp_path: Path
-                                                                   )->None:
+                                                                   ) -> None:
         """
             Covers the 'except' block in _parse_tfrecord.
-            Verifies that an exception during parsing is caught, logged, and 
+            Verifies that an exception during parsing is caught, logged, and
             the safe dummy structure is returned, preventing pipeline crashes.
         """
         mock_config, mock_logger = mock_setup
@@ -917,35 +940,30 @@ class TestLumbarDicomTFRecordDataset:
             dataset = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         exception_message = "Simulated parsing failure"
-        
+
         # Mock the initial parsing step (tf.io.parse_single_example) to raise an exception
-        #parse_single_example_str = (
-        #                           "src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset"
-        #                           ".tf.io.parse_single_example"
-        #                           )
         parse_single_example_str = "tensorflow.io.parse_single_example"
-        with patch(parse_single_example_str, 
-                   side_effect=Exception(exception_message)):
-            
+        with patch(parse_single_example_str, side_effect=Exception(exception_message)):
+
             mock_proto = tf.constant(b"fake_proto")
-            
+
             # Call the function (it should catch the exception and return defaults)
             image_output, metadata_dict_output = dataset._parse_tfrecord(mock_proto)
-            
+
             # 1. Verification: Check returned default image tensor
             # The dummy image is tf.zeros([64, 64, 64, 1], dtype=tf.float32)
             assert image_output.dtype == tf.float32
             assert image_output.shape == (64, 64, 64, 1)
             assert (image_output.numpy() == 0.0).all()
-            
+
             # 2. Verification: Check returned default metadata dictionary
             assert isinstance(metadata_dict_output, dict)
             assert len(metadata_dict_output) == 7
-            
+
             # Check a few key metadata fields (all should be tf.constant(0, dtype=tf.int32))
             assert metadata_dict_output["study_id"].numpy() == 0
             assert metadata_dict_output["condition"].numpy() == 0
-            
+
             # Check the dummy records tensor (tf.zeros([25, 4], dtype=tf.float32))
             dummy_records_output = metadata_dict_output["records"]
             assert dummy_records_output.dtype == tf.float32
@@ -970,7 +988,7 @@ class TestLumbarDicomTFRecordDataset:
         """
 
         mock_config, mock_logger = mock_setup
-        
+
         # Create a mock file path
         mock_file_path = "/fake/root_dir/1/2/1.dcm"
 
@@ -995,8 +1013,7 @@ class TestLumbarDicomTFRecordDataset:
             )
 
             # Call the method
-            result = dataset._get_metadata_for_file(mock_file_path,
-                                                   mock_metadata_df)
+            result = dataset._get_metadata_for_file(mock_file_path, mock_metadata_df)
 
             # Verifications
             # Check that the logger was called correctly
@@ -1020,24 +1037,24 @@ class TestLumbarDicomTFRecordDataset:
             mock_logger.info.assert_any_call(msg_str)
 
     def test_get_metadata_for_file_handles_serialization_exception(
-                                                                     self, 
-                                                                     mock_setup: Tuple[dict, MagicMock],
-                                                                     tmp_path: Path
-                                                                   ) -> None:
+        self,
+        mock_setup: Tuple[dict, MagicMock],
+        tmp_path: Path
+    ) -> None:
         """
             Covers the 'except' block in _get_metadata_for_file.
-            Verifies that an exception during the metadata processing (e.g., serialization) 
+            Verifies that an exception during the metadata processing (e.g., serialization)
             is caught, correctly logged with file details, and returns empty bytes (b'').
         """
         mock_config, mock_logger = mock_setup
-        
+
         # Setup Data
         exception_message = "Simulated internal serialization error"
         
-        # Simulate a valid file path for ID extraction (study_id=123, series_id=456, instance_number=789)
-        mock_file_path = str(tmp_path / "123/456/789.dcm") 
+        # Simulate a valid file path for ID extraction
+        mock_file_path = str(tmp_path / "123/456/789.dcm")
         mock_metadata_df = pd.DataFrame({'col': [1]}) # Dummy dataframe
-        
+
         expected_study_id = "123"
         expected_series_id = "456"
         expected_instance_number = "789"
@@ -1045,11 +1062,16 @@ class TestLumbarDicomTFRecordDataset:
         # Mock & Initialization
         with (
                 # Mock _generate_tfrecord_files during initialization
-                patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files', return_value=None),
+                patch.object(
+                                LumbarDicomTFRecordDataset,
+                                '_generate_tfrecord_files',
+                                return_value=None
+                             ),
 
-                # Inject an exception during the _serialize_metadata call (which is inside the try block)
-                patch.object(LumbarDicomTFRecordDataset, '_serialize_metadata', 
-                                side_effect=RuntimeError(exception_message))
+                # Inject an exception during the _serialize_metadata call
+                # (which is inside the try block)
+                patch.object(LumbarDicomTFRecordDataset, '_serialize_metadata',
+                             side_effect=RuntimeError(exception_message))
                ):
 
             dataset = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
@@ -1063,12 +1085,12 @@ class TestLumbarDicomTFRecordDataset:
             # Verification 2: Check logger call
             mock_logger.error.assert_called_once()
             args, kwargs = mock_logger.error.call_args
-            
+
             # Check logged message content
             logged_message = args[0]
             assert "Error in function _get_metadata_for_file()" in logged_message
             assert exception_message in logged_message
-            
+
             # Check the error logging mechanism
             assert kwargs["exc_info"] is True
             assert kwargs["extra"]["status"] == "failed"
