@@ -2,6 +2,7 @@ from core.pipeline import BasePipeline
 from core.data_handlers import LumbarSpineDicomDataset, CSVMetadata
 from core.models import YoloSegmentation2D, CNN3D
 
+
 class LumbarSpinePipeline(BasePipeline):
     """Pipeline spécifique pour la colonne vertébrale."""
 

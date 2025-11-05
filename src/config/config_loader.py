@@ -1,5 +1,6 @@
 # coding: utf-8
 
+from ast import Try
 from pathlib import Path
 from typing import Any, Dict
 import yaml
@@ -19,24 +20,37 @@ class ConfigLoader:
         Initializes the loader by reading the YAML file and resolving paths.
 
         Args:
-            config_path (str): The file system path to the YAML configuration file.
+            config_path (str): File system path to the YAML configuration file.
+
+        Raises:
+            FileNotFoundError: If the configuration file does not exist.
+            ValueError: If the YAML file is malformed.
         """
+        
+        # Check file existence
+        config_file_path = Path(config_path).resolve()
+        if not config_file_path.exists():
+            raise FileNotFoundError(f"Configuration file {config_path} not found.")
 
         # Determine the directory containing the configuration file.
         # All relative paths in the config will be resolved based on this directory.
-        # config_dir = Path(config_path).parent
-        config_dir = Path(
-            'C:/Users/Olivier/Desktop/Projet_Kaggle/RSNA_Items_Detection_Classification'
-        )
+        config_dir = config_file_path.parent
+        
+        # Load the configuration data first (Initialization of self._config)
+        try:
+            with open(config_path, 'r') as f:
+                self._config: Dict[str, Any] = yaml.safe_load(f) or {}  # Handles empty YAML files
+        
+        except yaml.YAMLError as e:
+            raise ValueError(f"Error loading YAML configuration file: {e}")
 
-        # Open and safely load the configuration data from the YAML file.
-        with open(config_path, 'r') as f:
-            self._config: Dict[str, Any] = yaml.safe_load(f)
+        # Store the determined root directory (the YAML file's location)
+        self._config["root_dir"] = str(config_dir)
 
         # --- Resolve Core Relative Paths ---
         # The paths 'dicom_root_dir' and 'output_dir' are resolved relative
         # to the configuration file's location.
-        for key in ["dicom_root_dir", "output_dir"]:
+        for key in ["dicom_study_dir", "output_dir"]:
             if key in self._config:
                 # Resolve the path and convert the resulting Path object back to a string.
                 self._config[key] = str(config_dir / self._config[key])
@@ -50,7 +64,7 @@ class ConfigLoader:
                     config_dir / self._config["csv_files"][csv_key]
                 )
 
-    def get_value(self, key: str, default: str) -> Any:
+    def get_value(self, key: str, default: str = None) -> Any:
         """
         Retrieves a single configuration value by its key.
 
@@ -59,9 +73,6 @@ class ConfigLoader:
 
         Returns:
             Any: The configuration value associated with the key.
-
-        Raises:
-            KeyError: If the specified key is not found in the configuration.
         """
         return self._config.get(key, default)
 

@@ -1,6 +1,10 @@
 # coding: utf-8
 
 import tensorflow as tf
+import pytest
+from unittest.mock import patch
+from src.core.data_handlers.dicom_dataset import DicomTFDataset
+from pathlib import Path
 
 # Ensure the import path is correct for your project structure
 from src.core.data_handlers.dicom_dataset import DicomTFDataset
@@ -11,7 +15,7 @@ from src.core.data_handlers.dicom_dataset import DicomTFDataset
 # For this example, we keep the original structure for reference but acknowledge the risk.
 
 
-def test_dicom_tf_dataset(dicom_samples_root):
+def test_dicom_tf_dataset(mock_config):
     """
         Test the DicomTFDataset class to ensure it correctly loads DICOM files
         and handles dynamic shapes via padded_batch.
@@ -26,7 +30,7 @@ def test_dicom_tf_dataset(dicom_samples_root):
 
     # --- Setup ---
     # The path is injected by the pytest fixture
-    dicom_dir = dicom_samples_root
+    dicom_dir = mock_config["root_dir"] + '/' + mock_config["dicom_study_dir"]
     BATCH_SIZE = 2
 
     # Check that the directory exists and contains DICOM files
@@ -90,3 +94,78 @@ def test_dicom_tf_dataset(dicom_samples_root):
             assert tf.abs(tf.reduce_sum(image_batch) - error_sum) > 1e-6, assert_msg
 
             break  # Stop after checking the first batch
+
+
+def test_dicom_tf_dataset_invalid_root_dir():
+    """
+    Test that DicomTFDataset raises a ValueError if the root directory does not exist.
+    """
+    with pytest.raises(ValueError):
+        DicomTFDataset(root_dir="/nonexistent/directory")
+
+
+def test_dicom_tf_dataset_empty_directory(tmp_path):
+    """
+        Test that DicomTFDataset raises a FileNotFoundError if no DICOM files are found.
+    """
+    # Create an empty directory structure
+    empty_dir = tmp_path / "empty_dir"
+    empty_dir.mkdir()
+    with pytest.raises(FileNotFoundError):
+        DicomTFDataset(root_dir=str(empty_dir))
+
+
+def test_dicom_tf_dataset_load_error(mock_config):
+    """
+        Test that DicomTFDataset handles DICOM loading errors gracefully.
+    """
+
+    dicom_samples_root = str(Path(mock_config["root_dir"]) / mock_config["dicom_study_dir"])
+
+    dataset = DicomTFDataset(root_dir=dicom_samples_root)
+
+    with patch("SimpleITK.ReadImage", side_effect=Exception("Mocked error")):
+        dummy_image, dummy_shape = dataset._py_load_dicom_tf(tf.constant(b"dummy_path"))
+        assert tf.reduce_all(tf.equal(dummy_image, -1.0)), "Dummy image should be filled with -1.0"
+        assert tf.reduce_all(tf.equal(dummy_shape, [1, 1, 1])), "Dummy shape should be [1, 1, 1]"
+
+
+def test_dicom_tf_dataset_load_dicom(mock_config):
+    """
+        Test the _load_dicom method directly.
+    """
+    dicom_samples_root = str(Path(mock_config["root_dir"]) / mock_config["dicom_study_dir"])
+    dataset = DicomTFDataset(root_dir=dicom_samples_root)
+    first_file = dataset._file_paths_list[0]
+    image_tensor, shape_tensor = dataset._load_dicom(tf.constant(first_file))
+    assert isinstance(image_tensor, tf.Tensor), "Image should be a TensorFlow tensor"
+    assert isinstance(shape_tensor, tf.Tensor), "Shape should be a TensorFlow tensor"
+
+
+def test_dicom_tf_dataset_without_padding(mock_config):
+    """
+    Test that DicomTFDataset creates a batched dataset without padding when use_padding=False.
+    This ensures the line `dataset = dataset.batch(batch_size=batch_size)` is covered.
+    """
+
+    dicom_samples_root = str(Path(mock_config["root_dir"]) / mock_config["dicom_study_dir"])
+
+    # Create the dataset
+    dataset = DicomTFDataset(root_dir=dicom_samples_root)
+
+    # Create a dataset with padding disabled
+    tf_dataset = dataset.create_tf_dataset(batch_size=2, use_padding=False)
+
+    # Verify the dataset is not None
+    assert tf_dataset is not None, "Dataset is None"
+
+    # Iterate over the dataset to ensure it works without padding
+    for image_batch, shape_batch in tf_dataset:
+
+        # Check that the batch size is correct
+        assert image_batch.shape[0] == 2, f"Expected batch size 2, got {image_batch.shape[0]}"
+
+        # Check that the shapes are consistent
+        assert len(image_batch.shape) == 4, f"Image batch expected 4D tensor, got shape {image_batch.shape}"
+        assert len(shape_batch.shape) == 2, f"Shape batch expected 2D tensor, got shape {shape_batch.shape}"
+        break  # Only check the first batch

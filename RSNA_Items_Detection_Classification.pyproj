@@ -15,6 +15,8 @@
     <TestFramework>pytest</TestFramework>
     <UnitTestPattern>test*.py</UnitTestPattern>
     <UnitTestRootDirectory>.</UnitTestRootDirectory>
+    <LaunchProvider>Standard Python launcher</LaunchProvider>
+    <EnableNativeCodeDebugging>True</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -56,8 +58,11 @@
     <Compile Include="src\RSNA_Intracranial_Aneurysm_Detection.py" />
     <Compile Include="tests\conftest.py" />
     <Compile Include="tests\test_rsna_lumbar_spine_degenerative_classification.py" />
+    <Compile Include="tests\unit\test_config\test_config_loader.py" />
+    <Compile Include="tests\unit\test_config\__init__.py" />
     <Compile Include="tests\unit\test_data_handlers\test_dicom_dataset.py" />
     <Compile Include="tests\unit\test_data_handlers\__init__.py" />
+    <Compile Include="tests\unit\test_lumbar_spine\test_csv_metadata.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_dicom_to_tfrecord_conversion.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_encode_dataframe.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
@@ -65,6 +70,7 @@
     <Compile Include="tests\unit\test_lumbar_spine\test_metadata_serialization.py" />
     <Compile Include="tests\unit\test_lumbar_spine\test_train.py" />
     <Compile Include="tests\unit\test_lumbar_spine\__init__.py" />
+    <Compile Include="tests\unit\test_utils\test_clean_logs.py" />
     <Compile Include="tests\unit\test_utils\test_logger.py" />
     <Compile Include="tests\unit\test_utils\__init__.py" />
     <Compile Include="tests\unit\__init__.py" />
@@ -111,6 +117,7 @@
     <Folder Include="tests\fixtures\dicom_samples\8785691\481125819\" />
     <Folder Include="tests\tmp\" />
     <Folder Include="tests\unit\" />
+    <Folder Include="tests\unit\test_config\" />
     <Folder Include="tests\unit\test_data_handlers\" />
     <Folder Include="tests\unit\test_lumbar_spine\" />
     <Folder Include="tests\unit\test_utils\" />

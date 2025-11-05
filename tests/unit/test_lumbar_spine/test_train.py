@@ -24,10 +24,9 @@ def test_train_model(
     mock_dataset.return_value = mock_dataset_instance
     mock_dataset_instance.create_tf_dataset.return_value = "mock_dataset"
 
-    # Appel de la fonction
     train_model(config=mock_config, logger=mock_logger)
 
-    # Vérifications
+    # Checkings
     mock_model_3d = mock_config["model_3d"]
     mock_model_factory.create_model.assert_called_once_with(mock_model_3d)
 

@@ -92,12 +92,14 @@ class DicomTFDataset:
                               (tf.float32, tf.int32)
                              )
 
-    def create_tf_dataset(self, batch_size: int = 8) -> tf.data.Dataset:
+    def create_tf_dataset(self, batch_size: int = 8, use_padding: bool = True) -> tf.data.Dataset:
         """Create an optimized TensorFlow Dataset, loading the image and its shape.
         Uses padded_batch to handle variable image sizes within a batch.
 
         Args:
             batch_size (int, optional): Number of DICOM files per batch. Defaults to 8.
+            use_padding (bool, optional): Whether to use padded_batch for variable-sized images.
+                                          Defaults to True.
 
         Returns:
             tf.data.Dataset: A batched and prefetched dataset of (image, shape) tuples.
@@ -115,23 +117,28 @@ class DicomTFDataset:
         # 2. Dynamic Batching (padded_batch)
         # This is necessary because the Image tensor has variable sizes ([None, None, None]).
         # padded_batch pads the image to the largest size in the current batch.
-        dataset = dataset.padded_batch(
-            batch_size=batch_size,
-            padded_shapes=(
-                # Image (dynamic size on all axes)
-                tf.TensorShape([None, None, None]),
+        if use_padding:
+            dataset = dataset.padded_batch(
+                batch_size=batch_size,
+                padded_shapes=(
+                    # Image (dynamic size on all axes)
+                    tf.TensorShape([None, None, None]),
 
-                # Shape vector (fixed size of 3 elements)
-                tf.TensorShape([3])
-            ),
-            padding_values=(
-                # Padding value for the image pixels
-                tf.constant(0.0, dtype=tf.float32),
+                    # Shape vector (fixed size of 3 elements)
+                    tf.TensorShape([3])
+                ),
+                padding_values=(
+                    # Padding value for the image pixels
+                    tf.constant(0.0, dtype=tf.float32),
 
-                # Padding value for the shape vector (not used, but required)
-                tf.constant(0, dtype=tf.int32)
+                    # Padding value for the shape vector (not used, but required)
+                    tf.constant(0, dtype=tf.int32)
+                )
             )
-        )
+        else:
+            dataset = dataset.batch(batch_size=batch_size)
 
         # 3. Prefetching for optimized throughput
         return dataset.prefetch(tf.data.AUTOTUNE)
+
+# --- End of DicomTFDataset class ---

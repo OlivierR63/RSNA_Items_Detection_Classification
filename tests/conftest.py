@@ -3,24 +3,28 @@
 import pytest
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
+import pandas as pd
 
 
 @pytest.fixture
-def mock_config():
+def mock_config(tmp_path):
     """Fixture for a mocked configuration dictionary."""
     return {
-        "output_dir": "tests/tmp",
-        "tfrecord_dir": "tmp_path/tfrecord",
-        "batch_size": 8,
-        "epochs": 2,
-        "model_3d": {"type": "mock_model"},
+        "root_dir": str(Path(__file__).resolve().parent),
+        "dicom_study_dir": "fixtures/dicom_unique_sample",
+        "tfrecord_sample_dir": "fixtures/tfrecords",
+        "tfrecord_dir": str(tmp_path / "tfrecords"),
         "csv_files": {
-            "series_description": "tests/fixtures/csv_samples/mock_train_series_descriptions.csv",
-            "label_coordinates": "tests/fixtures/csv_samples/mock_train_label_coordinates.csv",
-            "train": "tests/fixtures/csv_samples/mock_train.csv"
+            "series_description": "fixtures/csv_samples/mock_train_series_descriptions.csv",
+            "label_coordinates": "fixtures/csv_samples/mock_train_label_coordinates.csv",
+            "train": "fixtures/csv_samples/mock_train.csv"
         },
-        "dicom_root_dir": "tests/fixtures/dicom_samples"
+        "output_dir": str(tmp_path),
+        "model_2d": {"type": "mock_model"},
+        "model_3d": {"type": "mock_model"},
+        "batch_size": 8,
+        "epochs": 2
     }
 
 
@@ -33,6 +37,17 @@ def mock_logger():
     logger.warning = MagicMock()
     logger.debug = MagicMock()
     return logger
+
+
+@pytest.fixture
+def mock_setup(mock_config, mock_logger):
+    """
+        Fixture to initialize attributes common to all tests.
+    """
+
+    # Mock the get_current_logger function to return the mock_logger
+    with patch("src.core.utils.logger.get_current_logger", return_value=mock_logger):
+        yield mock_config, mock_logger
 
 
 @pytest.fixture(autouse=True)
@@ -48,40 +63,25 @@ def setup_test_env(tmp_path):
     # Cleanup is implicitly handled by tmp_path
 
 
-@pytest.fixture(scope="session")
-def dicom_samples_root(request):
-    """
-    Returns the absolute, cross-platform path to the test DICOM samples directory.
-    Uses __file__ to locate the fixture directory relative to conftest.py,
-    supporting the 'session' scope.
-    """
-    # 1. Get the path of the conftest.py file itself
-    # __file__ is always the path of the current module
-    conftest_path = Path(__file__).resolve()
-
-    # 2. Get the root directory of the tests (the parent of conftest.py)
-    tests_root = conftest_path.parent
-
-    # 3. Construct the path to the fixture directory: tests/fixtures/dicom_samples
-    dicom_path = tests_root / "fixtures" / "dicom_samples"
-
-    if not dicom_path.is_dir():
-        # Skip the test if the required fixture data is missing
-        pytest.skip(f"DICOM fixture directory not found at: {dicom_path}")
-
-    # Return the absolute path as a string (using str() is common for TF compatibility)
-    return str(dicom_path.resolve())
-
-
 @pytest.fixture
 def mock_csv_metadata():
-    """Fixture for a mocked CSVMetadata class."""
+    """Fixture to provide a mock CSVMetadata instance."""
     mock_csv_metadata = MagicMock()
+    mock_csv_metadata._merged_df = pd.DataFrame({
+        "study_id": [12345678],
+        "series_id": [87654321],
+        "instance_number": [1],
+        "condition": [2],
+        "severity": [1],
+        "series_description": [0],
+        "level": [3],
+        "x": [12.34],
+        "y": [56.78]
+    })
     return mock_csv_metadata
 
 
 @pytest.fixture
 def mock_convert_dicom():
     """Fixture for a mocked _convert_dicom_to_tfrecords method."""
-    mock_convert_dicom = MagicMock()
-    return mock_convert_dicom
+    return MagicMock()
