@@ -179,7 +179,7 @@ class TestDicomToTFRecordConversion:
 
     def test_process_study(
         self,
-        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
         tmp_path: Path
     ) -> None:
 
@@ -280,7 +280,7 @@ class TestDicomToTFRecordConversion:
 
     def test_process_dicom_file(
         self,
-        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],         
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
         tmp_path: Path
     ) -> None:
 
@@ -336,7 +336,7 @@ class TestDicomToTFRecordConversion:
 
     def test_write_tfrecord_example(
         self,
-        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],        
+        mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
         tmp_path: Path
     ) -> None:
 

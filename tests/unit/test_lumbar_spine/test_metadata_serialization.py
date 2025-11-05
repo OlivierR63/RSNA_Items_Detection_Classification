@@ -107,7 +107,7 @@ class TestMetadataSerialization:
                                             'instance_number': [1],
                                             'series_description': [0],
                                             'condition': [0],
-                                            'nb_records': [1], 
+                                            'nb_records': [1],
                                             'records': [[]]
                                         }
                                      )
@@ -155,7 +155,7 @@ class TestMetadataSerialization:
             # Check logged message and error details
             assert "Error in function _serialize_metadata()" in args[0]
             assert exception_message in args[0]
- 
+
             # Check the 'extra' arguments for the required status and error info
             assert kwargs["extra"]["status"] == "failed"
             assert kwargs["extra"]["error"] == exception_message

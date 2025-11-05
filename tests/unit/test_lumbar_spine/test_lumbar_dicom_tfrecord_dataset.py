@@ -277,7 +277,7 @@ class TestLumbarDicomTFRecordDataset:
             # Check logged message and error details
             assert "Error generating TFRecords" in args[0]
             assert exception_message in args[0]
-        
+
             # Check the 'extra' arguments for the required status
             assert kwargs["extra"]["status"] == "failed"
             assert kwargs["extra"]["error"] == exception_message
@@ -294,7 +294,7 @@ class TestLumbarDicomTFRecordDataset:
         """
         mock_config, mock_logger = mock_setup
         exception_message = "Simulated DICOM processing failure"
-        
+
         # Initialize the Dataset
         # (Mocking CSVMetadata and skipping the file generation check)
         with (
@@ -434,7 +434,7 @@ class TestLumbarDicomTFRecordDataset:
                 # nor warning message
                 patch.object(
                                 dataset_object,
-                                '_filter_records', 
+                                '_filter_records',
                                 side_effect=lambda metadata_df, *args, **kwargs: metadata_df
                              )
                ):
@@ -716,7 +716,7 @@ class TestLumbarDicomTFRecordDataset:
             dataset_obj = LumbarDicomTFRecordDataset(mock_config, mock_logger)
 
             # Ensure pattern matches the dummy file
-            dataset_obj._tfrecord_pattern = str(tfrecord_dir / "*.tfrecord") 
+            dataset_obj._tfrecord_pattern = str(tfrecord_dir / "*.tfrecord")
 
             # CRITICAL: Use a lambda function to wrap the helper method
             # and pass the mock_logger object, which is local to the test.
@@ -920,10 +920,10 @@ class TestLumbarDicomTFRecordDataset:
                 assert tuple(metadata["records"].shape) == (25, 4)
 
     def test_parse_tfrecord_handles_exception_and_returns_defaults(
-                                                                    self,
-                                                                    mock_setup: Tuple[dict, MagicMock],
-                                                                    tmp_path: Path
-                                                                   ) -> None:
+        self,
+        mock_setup: Tuple[dict, MagicMock],
+        tmp_path: Path
+    ) -> None:
         """
             Covers the 'except' block in _parse_tfrecord.
             Verifies that an exception during parsing is caught, logged, and
@@ -1050,14 +1050,10 @@ class TestLumbarDicomTFRecordDataset:
 
         # Setup Data
         exception_message = "Simulated internal serialization error"
-        
+
         # Simulate a valid file path for ID extraction
         mock_file_path = str(tmp_path / "123/456/789.dcm")
-        mock_metadata_df = pd.DataFrame({'col': [1]}) # Dummy dataframe
-
-        expected_study_id = "123"
-        expected_series_id = "456"
-        expected_instance_number = "789"
+        mock_metadata_df = pd.DataFrame({'col': [1]})  # Dummy dataframe
 
         # Mock & Initialization
         with (

@@ -299,7 +299,7 @@ class TestMetadataDeserialization:
                 assert result[-1].shape == (100,)
 
     def test_py_deserialize_and_flatten_missing_key_raises_value_error(
-        self, 
+        self,
         mock_setup: Tuple[dict, MagicMock],
         tmp_path: Path
     ) -> None:

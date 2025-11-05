@@ -71,9 +71,6 @@ def test_main_block(tmp_path, capfd):
     old_log_time = old_time.timestamp()
     os.utime(old_log, (old_log_time, old_log_time))
 
-    # Path to the original script
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
-
     # Save the original sys.argv
     original_argv = sys.argv
 
