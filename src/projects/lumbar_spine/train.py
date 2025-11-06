@@ -20,7 +20,7 @@ def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = No
 
     try:
         # Create dataset with logger
-        dataset = create_tf_dataset(config, logger=logger)
+        dataset = prepare_dataset_for_training(config, logger=logger)
 
         # Load and compile model
         model = ModelFactory.create_model(config["model_3d"])
@@ -49,7 +49,7 @@ def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = No
 
 
 @log_method()
-def create_tf_dataset(config: Dict[str, Any], *, logger: Optional[logging.Logger] = None):
+def prepare_dataset_for_training(config: Dict[str, Any], *, logger: Optional[logging.Logger] = None):
     """Creates TensorFlow dataset with logging."""
     if logger is None:
         logger = get_current_logger()
@@ -58,7 +58,7 @@ def create_tf_dataset(config: Dict[str, Any], *, logger: Optional[logging.Logger
                 extra={"action": "create_dataset", "batch_size": config["batch_size"]})
 
     try:
-        dataset = LumbarDicomTFRecordDataset(config, logger).create_tf_dataset(
+        dataset = LumbarDicomTFRecordDataset(config, logger).build_tf_dataset_pipeline(
             batch_size=config["batch_size"]
         )
         logger.info("Dataset created successfully.",

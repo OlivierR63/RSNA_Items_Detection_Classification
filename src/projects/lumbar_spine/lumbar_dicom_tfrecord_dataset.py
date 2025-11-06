@@ -50,7 +50,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         )
 
     @log_method()
-    def create_tf_dataset(self, batch_size: int = 8, *,
+    def build_tf_dataset_pipeline(self, batch_size: int = 8, *,
                           logger: Optional[logging.Logger] = None) -> tf.data.Dataset:
         """
         Creates an optimized TensorFlow Dataset for training or evaluation by reading

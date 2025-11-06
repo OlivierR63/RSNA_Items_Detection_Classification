@@ -2,8 +2,9 @@
 from unittest.mock import patch, MagicMock
 from src.projects.lumbar_spine.train import (
         train_model,
-        create_tf_dataset,
-        train_with_callbacks
+        prepare_dataset_for_training,
+        train_with_callbacks,
+        prepare_dataset_for_training
     )
 
 
@@ -15,14 +16,16 @@ def test_train_model(
         mock_config,
         mock_logger,
         ):
-    """Test la fonction train_model."""
+    """
+        Test the train_model function.
+    """
     # Setup mocks
     mock_model = MagicMock()
     mock_model_factory.create_model.return_value = mock_model
 
     mock_dataset_instance = MagicMock()
     mock_dataset.return_value = mock_dataset_instance
-    mock_dataset_instance.create_tf_dataset.return_value = "mock_dataset"
+    mock_dataset_instance.prepare_dataset_for_training.return_value = "mock_dataset"
 
     train_model(config=mock_config, logger=mock_logger)
 
@@ -48,13 +51,13 @@ def test_train_model(
 
 
 @patch("src.projects.lumbar_spine.train.LumbarDicomTFRecordDataset")
-def test_create_tf_dataset(mock_dataset, mock_config, mock_logger):
-    """Test la fonction create_tf_dataset."""
+def test_prepare_dataset_for_training(mock_dataset, mock_config, mock_logger):
+    """Test la fonction prepare_dataset_for_training."""
     mock_dataset_instance = MagicMock()
     mock_dataset.return_value = mock_dataset_instance
-    mock_dataset_instance.create_tf_dataset.return_value = "mock_dataset"
+    mock_dataset_instance.build_tf_dataset_pipeline.return_value = "mock_dataset"
 
-    result = create_tf_dataset(config=mock_config, logger=mock_logger)
+    result = prepare_dataset_for_training(config=mock_config, logger=mock_logger)
 
     assert result == "mock_dataset"
     mock_logger.info.assert_called_with(

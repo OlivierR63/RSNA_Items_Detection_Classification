@@ -65,7 +65,7 @@ class DicomTFRecordDataset(ABC):
         pass
 
     @abstractmethod
-    def create_tf_dataset(self, batch_size: int = 8) -> tf.data.Dataset:
+    def build_tf_dataset_pipeline(self, batch_size: int = 8) -> tf.data.Dataset:
         """
         Creates an optimized TensorFlow Dataset pipeline from the TFRecord files.
 

@@ -565,11 +565,11 @@ class TestLumbarDicomTFRecordDataset:
                 mock_tfrecord_writer_class.return_value.__enter__.return_value
             )
 
-    def test_create_tf_dataset(
-                                self,
-                                mock_setup: Tuple[dict[str, Any], MagicMock],
-                                tmp_path: Path
-                               ) -> None:
+    def test_build_tf_dataset_pipeline(
+                                        self,
+                                        mock_setup: Tuple[dict[str, Any], MagicMock],
+                                        tmp_path: Path
+                                       ) -> None:
         """
             Tests the creation of the TensorFlow Dataset pipeline.
         """
@@ -610,7 +610,7 @@ class TestLumbarDicomTFRecordDataset:
                 dataset._tfrecord_pattern = (
                             mock_config["tfrecord_dir"] + "/*.tfrecord"
                         )
-                result = dataset.create_tf_dataset(batch_size=8)
+                result = dataset.build_tf_dataset_pipeline(batch_size=8)
 
                 # Verify that the output is the result of the entire chain (final_mock_dataset)
                 assert result == final_mock_dataset
@@ -639,13 +639,13 @@ class TestLumbarDicomTFRecordDataset:
                 mock_batch = mock_shuffle.return_value.batch
                 mock_batch.assert_called_once_with(8)
 
-    def test_create_tf_dataset_exception(
+    def test_build_tf_dataset_pipeline_exception(
                                             self,
                                             mock_setup: Tuple[dict[str, Any], MagicMock],
                                             tmp_path: Path
                                          ) -> None:
         """
-            Test that exceptions in create_tf_dataset are handled and logged.
+            Test that exceptions in build_tf_dataset_pipeline are handled and logged.
         """
 
         mock_config, mock_logger = mock_setup
@@ -655,7 +655,7 @@ class TestLumbarDicomTFRecordDataset:
         list_files_path = 'tensorflow.data.Dataset.list_files'
         with patch(list_files_path, side_effect=Exception("List files error")):
             with pytest.raises(Exception):
-                dataset.create_tf_dataset(batch_size=2)
+                dataset.build_tf_dataset_pipeline(batch_size=2)
 
         # Check that the error was logged
         mock_logger.error.assert_called_with(
@@ -664,7 +664,7 @@ class TestLumbarDicomTFRecordDataset:
             extra={"status": "failed", "error": "List files error"}
         )
 
-    def test_create_tf_dataset_tfrecord_exception(
+    def test_build_tf_dataset_pipeline_tfrecord_exception(
                                                     self,
                                                     mock_setup: Tuple[dict[str, Any], MagicMock],
                                                     tmp_path: Path
@@ -683,7 +683,7 @@ class TestLumbarDicomTFRecordDataset:
         # Mock TFRecordDataset to raise an exception
         with patch('tensorflow.data.TFRecordDataset', side_effect=Exception("TFRecord error")):
             with pytest.raises(Exception) as excinfo:
-                dataset.create_tf_dataset(batch_size=2)
+                dataset.build_tf_dataset_pipeline(batch_size=2)
 
             # Check that the raised error is the expected one
             assert "TFRecord error" in str(excinfo.value)
@@ -693,7 +693,7 @@ class TestLumbarDicomTFRecordDataset:
         assert "TFRecord error" in args[0]
         assert kwargs["extra"]["status"] == "failed"
 
-    def test_create_tf_dataset_map_exception(
+    def test_build_tf_dataset_pipeline_map_exception(
                                                 self,
                                                 mock_setup: Tuple[dict[str, Any], MagicMock],
                                                 tmp_path: Path
@@ -728,8 +728,8 @@ class TestLumbarDicomTFRecordDataset:
             with patch.object(dataset_obj, '_parse_tfrecord',
                               side_effect=side_effect_func) as mock_parse:
 
-                # Call create_tf_dataset to get the tf.data.Dataset
-                tf_dataset = dataset_obj.create_tf_dataset(batch_size=2)
+                # Call build_tf_dataset_pipeline to get the tf.data.Dataset
+                tf_dataset = dataset_obj.build_tf_dataset_pipeline(batch_size=2)
 
                 # CRITICAL: Force dataset iteration to execute the map operation
                 element = next(iter(tf_dataset))
@@ -754,7 +754,7 @@ class TestLumbarDicomTFRecordDataset:
                 # Check that the logger was called with the error
                 mock_logger.error.assert_called()
 
-    def test_create_tf_dataset_shuffle_exception(
+    def test_build_tf_dataset_pipeline_shuffle_exception(
                                                     self,
                                                     mock_setup: Tuple[dict[str, Any], MagicMock],
                                                     tmp_path: Path
@@ -773,7 +773,7 @@ class TestLumbarDicomTFRecordDataset:
             mock_interleave.shuffle.side_effect = Exception("Shuffle error")
 
             with pytest.raises(Exception):
-                dataset.create_tf_dataset(batch_size=2)
+                dataset.build_tf_dataset_pipeline(batch_size=2)
 
             mock_logger.error.assert_called_with(
                 "Error creating dataset: Shuffle error",
@@ -781,7 +781,7 @@ class TestLumbarDicomTFRecordDataset:
                 extra={"status": "failed", "error": "Shuffle error"}
             )
 
-    def test_create_tf_dataset_batch_exception(
+    def test_build_tf_dataset_pipeline_batch_exception(
                                                 self,
                                                 mock_setup: Tuple[dict[str, Any], MagicMock],
                                                 tmp_path: Path
@@ -801,7 +801,7 @@ class TestLumbarDicomTFRecordDataset:
             mock_shuffle.batch.side_effect = Exception("Batch error")
 
             with pytest.raises(Exception):
-                dataset.create_tf_dataset(batch_size=2)
+                dataset.build_tf_dataset_pipeline(batch_size=2)
 
             mock_logger.error.assert_called_with(
                 "Error creating dataset: Batch error",
@@ -809,7 +809,7 @@ class TestLumbarDicomTFRecordDataset:
                 extra={"status": "failed", "error": "Batch error"}
             )
 
-    def test_create_tf_dataset_prefetch_exception(
+    def test_build_tf_dataset_pipeline_prefetch_exception(
                                                     self,
                                                     mock_setup: Tuple[dict[str, Any], MagicMock],
                                                     tmp_path: Path
@@ -831,7 +831,7 @@ class TestLumbarDicomTFRecordDataset:
             mock_batch.prefetch.side_effect = Exception("Prefetch error")
 
             with pytest.raises(Exception):
-                dataset.create_tf_dataset(batch_size=2)
+                dataset.build_tf_dataset_pipeline(batch_size=2)
 
             mock_logger.error.assert_called_with(
                 "Error creating dataset: Prefetch error",

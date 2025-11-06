@@ -1,6 +1,5 @@
 # coding: utf-8
 
-from pathlib import Path
 from datetime import datetime, timedelta
 from src.core.utils.clean_logs import clean_old_logs, main
 import os
@@ -60,7 +59,7 @@ def test_clean_old_logs_print_message(capfd, tmp_path):
 
 def test_main_block(tmp_path, capfd):
     """
-    Test that clean_old_logs is called when the script is run directly.
+        Test that clean_old_logs is called when the script is run directly.
     """
     # Create a log directory and an old log file
     log_dir = tmp_path / "logs"
