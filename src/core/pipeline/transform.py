@@ -10,6 +10,7 @@ def Transform(
     schema: Input[standard_artifacts.Schema],
     module_file: str
 ) -> Output[standard_artifacts.TransformGraph]:
+
     """Composant Transform pour le prétraitement des features."""
     def preprocessing_fn(inputs):
         """Fonction de prétraitement."""

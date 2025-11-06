@@ -49,7 +49,8 @@ def train_model(*, config: Dict[str, Any], logger: Optional[logging.Logger] = No
 
 
 @log_method()
-def prepare_dataset_for_training(config: Dict[str, Any], *, logger: Optional[logging.Logger] = None):
+def prepare_dataset_for_training(config: Dict[str, Any], *,
+                                 logger: Optional[logging.Logger] = None):
     """Creates TensorFlow dataset with logging."""
     if logger is None:
         logger = get_current_logger()
