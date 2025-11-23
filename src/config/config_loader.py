@@ -1,6 +1,5 @@
 # coding: utf-8
 
-from ast import Try
 from pathlib import Path
 from typing import Any, Dict
 import yaml
@@ -26,7 +25,7 @@ class ConfigLoader:
             FileNotFoundError: If the configuration file does not exist.
             ValueError: If the YAML file is malformed.
         """
-        
+
         # Check file existence
         config_file_path = Path(config_path).resolve()
         if not config_file_path.exists():
@@ -35,12 +34,12 @@ class ConfigLoader:
         # Determine the directory containing the configuration file.
         # All relative paths in the config will be resolved based on this directory.
         config_dir = config_file_path.parent
-        
+
         # Load the configuration data first (Initialization of self._config)
         try:
             with open(config_path, 'r') as f:
                 self._config: Dict[str, Any] = yaml.safe_load(f) or {}  # Handles empty YAML files
-        
+
         except yaml.YAMLError as e:
             raise ValueError(f"Error loading YAML configuration file: {e}")
 

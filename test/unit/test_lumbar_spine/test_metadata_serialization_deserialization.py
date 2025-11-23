@@ -2,7 +2,6 @@
 
 import pytest
 import pandas as pd
-import numpy as np
 from unittest.mock import MagicMock, patch
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from pathlib import Path
@@ -29,6 +28,7 @@ def setup_dataframe():
             }
     return pd.DataFrame(data)
 
+
 @pytest.fixture
 def dataset_instance(
                         mock_setup: Tuple[dict[str, Any], MagicMock],
@@ -48,9 +48,10 @@ def dataset_instance(
         instance._config = mock_config
     return instance
 
+
 class TestMetadataIntegrity:
     """
-        Tests for serialization and deserialization of metadata 
+        Tests for serialization and deserialization of metadata
         in LumbarDicomTFRecordDataset, ensuring data integrity across the full cycle.
         This class merges all tests from the original serialization and deserialization files.
     """
@@ -137,23 +138,22 @@ class TestMetadataIntegrity:
                                                 extra={"status": "success"}
                                             )
 
-
-
     def test_serialize_metadata_null_raises_exception(
         self,
         dataset_instance: LumbarDicomTFRecordDataset,
         mock_setup: Tuple[dict[str, Any], MagicMock]
     ) -> None:
         """
-        Tests the null value detection block. 
-        Ensures the function logs an ERROR and raises an Exception immediately when nulls are detected.
-        
+        Tests the null value detection block.
+        Ensures the function logs an ERROR and raises an Exception immediately
+        when nulls are detected.
+
         This test assumes that the error message is constructed as a single string (msg_error)
-        which is then logged and raised. If the logging is changed to multiple calls, 
+        which is then logged and raised. If the logging is changed to multiple calls,
         this test logic needs to be adjusted accordingly to check for all logging calls.
         """
         _, mock_logger = mock_setup
-        
+
         # 1. Create a DataFrame with nulls in specific columns
         null_data_df = pd.DataFrame({
             'ID': [1, 2],
@@ -163,14 +163,14 @@ class TestMetadataIntegrity:
         })
 
         mock_logger.reset_mock()
-        
+
         # 2. Call function with nulls and assert that an Exception is raised
         with pytest.raises(ValueError) as excinfo:
             dataset_instance._serialize_metadata(null_data_df, logger=mock_logger)
-            
+
         # 3. Define the expected error messages (assuming the log output matches the exception text)
         null_columns = ['Value1', 'Value2']
-        
+
         expected_msg_part1 = "Null values detected in data_df before serialization."
         expected_msg_part2 = f"Columns affected: {null_columns}."
         expected_msg_part3 = "Serialization might fail or produce corrupted records."
@@ -180,21 +180,23 @@ class TestMetadataIntegrity:
             f"{expected_msg_part2} "
             f"{expected_msg_part3}"
         )
-            
+
         # 4. Assert that the error logger was called exactly three times
         mock_logger.error.acall_count == 3
 
-        
         # 5. Assert the content of the error messages
         mock_logger.error.assert_any_call(expected_msg_part1)
         mock_logger.error.assert_any_call(expected_msg_part2)
         mock_logger.error.assert_any_call(expected_msg_part3)
-        
+
         # 6. Check raised exception message
         assert str(excinfo.value) == expected_full_error_message
-        
+
         # 7. Assert success info log was NOT called
-        info_calls = [call for call in mock_logger.info.call_args_list if "completed successfully" in call[0][0]]
+        info_calls = [
+            call for call in mock_logger.info.call_args_list
+            if "completed successfully" in call[0][0]
+        ]
         assert len(info_calls) == 0
 
     def test_serialize_metadata_handles_exception_and_raises(
@@ -277,23 +279,24 @@ class TestMetadataIntegrity:
         # Test with non-matching data
         mask = (
                      (setup_dataframe["study_id"] == 999) &
-                        (setup_dataframe["series_id"] == 999) &
-                        (setup_dataframe["instance_number"] == 999)
+                     (setup_dataframe["series_id"] == 999) &
+                     (setup_dataframe["instance_number"] == 999)
                )
 
         mask_dataframe = setup_dataframe[mask]
 
-        # ASSERTION 1 (CRITICAL): Assert that the call to _serialize_metadata 
-        # with an empty DataFrame raises a ValueError, originating from the check 
+        # ASSERTION 1 (CRITICAL): Assert that the call to _serialize_metadata
+        # with an empty DataFrame raises a ValueError, originating from the check
         # within _serialize_header.
-        with pytest.raises(ValueError, match="Cannot serialize header: Input DataFrame is None or empty."):
+        err_msg = "Cannot serialize header: Input DataFrame is None or empty."
+        with pytest.raises(ValueError, match=err_msg):
             dataset_instance._serialize_metadata(mask_dataframe, logger=mock_logger)
 
         # ASSERTION 2: Assert that the error was logged by the exception handler
         # in _serialize_metadata.
         mock_logger.error.assert_called_once()
-        
-        # ASSERTION 3: Ensure that no successful data logging (like 'info' or 'warning') 
+
+        # ASSERTION 3: Ensure that no successful data logging (like 'info' or 'warning')
         # happened, as the process resulted in a failure.
         mock_logger.warning.assert_not_called()
         mock_logger.info.assert_called_once()
@@ -369,12 +372,7 @@ class TestMetadataIntegrity:
             }
             records_dataframe = pd.DataFrame(data)
 
-            # 2. Define expected inputs (not strictly used for the failure, but for context)
-            mock_study_id = "123"
-            mock_series_id = "456"
-            mock_instance_number = "7"
-
-            # 3. Assert that the ValueError is raised
+            # 2. Assert that the ValueError is raised
             expected_error_message = "The number of records exceeds the limit of 25."
 
             with pytest.raises(ValueError, match=expected_error_message):
@@ -396,15 +394,16 @@ class TestMetadataIntegrity:
             (setup_dataframe["study_id"] == 1) &
             (setup_dataframe["series_id"] == 10) &
             (setup_dataframe["instance_number"] == 100)
-        ].copy() # Must use .copy() to avoid SettingWithCopyWarning
+        ].copy()  # Must use .copy() to avoid SettingWithCopyWarning
 
         # Introduce a null value in 'condition'
         records_df_null.loc[records_df_null.index[0], 'condition'] = pd.NA
-        
+
         # The expected error message pattern
         expected_cols = "['condition']"
         expected_message = (
-            f"Cannot serialize header: Null values detected in critical header columns: {expected_cols}. "
+            f"Cannot serialize header: "
+            f"Null values detected in critical header columns: {expected_cols}. "
             "Serialization requires all header values to be non-null integers."
         )
 
@@ -420,20 +419,20 @@ class TestMetadataIntegrity:
         Tests the header's uniqueness check for critical header columns.
         Ensures a ValueError is raised when a column (like 'series_description')
         contains more than one unique value for a single header block.
-        
+
         This test specifically covers the validation block:
         for col in [...]:
             if len(records_df[col].unique()) != 1:
                 raise ValueError(...)
         """
-        # 1. Create a records_df where two records share the same file key, 
+        # 1. Create a records_df where two records share the same file key,
         # but one critical header property is inconsistent ('series_description')
         data_corrupted = {
             "study_id": [1, 1],
             "series_id": [10, 10],
             "instance_number": [100, 100],
             "condition": [1, 1],
-            "series_description": [3, 4], # This is the inconsistent column (2 unique values)
+            "series_description": [3, 4],  # This is the inconsistent column (2 unique values)
             "level": [1, 2],
             "severity": [2, 1],
             "x": [1.23, 4.56],
@@ -499,7 +498,6 @@ class TestMetadataIntegrity:
         assert x2 == 456  # 4.56 * 100
         assert y2 == 567  # 5.67 * 100
 
-
     def test_serialize_payload_null_raises_exception(
                                             self,
                                             setup_dataframe: pd.DataFrame,
@@ -514,7 +512,7 @@ class TestMetadataIntegrity:
             (setup_dataframe["study_id"] == 1) &
             (setup_dataframe["series_id"] == 10) &
             (setup_dataframe["instance_number"] == 100)
-        ].copy() 
+        ].copy()
 
         # Introduce a null value in 'level'
         records_df_null.loc[records_df_null.index[0], 'level'] = pd.NA
@@ -522,7 +520,8 @@ class TestMetadataIntegrity:
         # The expected error message pattern
         expected_cols = "['level']"
         expected_message = (
-            f"Cannot serialize payload: Null values detected in critical payload columns: {expected_cols}. "
+            f"Cannot serialize payload: "
+            f"Null values detected in critical payload columns: {expected_cols}. "
             f"Serialization requires all payload values to be non-null."
         )
 
@@ -531,7 +530,10 @@ class TestMetadataIntegrity:
         with pytest.raises(ValueError, match=re.escape(expected_message)):
             dataset_instance._serialize_payload(records_df_null)
 
-    @pytest.mark.parametrize("invalid_df", [None, pd.DataFrame({})], ids=["None", "Empty DataFrame"])
+    @pytest.mark.parametrize(
+                                "invalid_df",
+                                [None, pd.DataFrame({})], ids=["None", "Empty DataFrame"]
+                             )
     def test_serialize_payload_none_or_empty_raises_exception(
                                             self,
                                             dataset_instance: LumbarDicomTFRecordDataset,
@@ -546,11 +548,10 @@ class TestMetadataIntegrity:
             raise ValueError("Cannot serialize payload: Input DataFrame is None or empty.")
         """
         expected_message = "Cannot serialize payload: Input DataFrame is None or empty."
-        
+
         # Assert that the ValueError is raised with the correct message
         with pytest.raises(ValueError, match=re.escape(expected_message)):
             dataset_instance._serialize_payload(invalid_df)
-
 
     def test_deserialize_metadata_successfull(self, mock_setup, tmp_path):
         """
@@ -577,7 +578,7 @@ class TestMetadataIntegrity:
         )
 
         logger_path = "src.core.utils.logger.get_current_logger"
-        with patch(logger_path, return_value = mock_logger):
+        with patch(logger_path, return_value=mock_logger):
 
             # Initialize the dataset with the mock logger
             dataset = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
@@ -954,9 +955,9 @@ class TestMetadataIntegrity:
                                                         dataset_instance: LumbarDicomTFRecordDataset
                                                        ) -> None:
         """
-            Tests the complete serialization -> deserialization cycle (serialize-deserialize) 
+            Tests the complete serialization -> deserialization cycle (serialize-deserialize)
             to ensure data integrity field by field for a multi-record input.
-        
+
             Steps:
             1. Select multiple records (multi-row DataFrame).
             2. Serialize the records (_serialize_payload).
@@ -990,16 +991,54 @@ class TestMetadataIntegrity:
         deserialized_df = deserialized_df.reset_index(drop=True)
 
         # 5. Compare the original and deserialized DataFrames field by field
-        assert deserialized_dict['nb_records'] == 2
-        assert record_df.study_id.to_list() == deserialized_df.study_id.to_list()
-        assert record_df.series_id.to_list() == deserialized_df.series_id.to_list()
-        assert record_df.instance_number.to_list() == deserialized_df.instance_number.to_list()
-        assert record_df.condition.to_list() == deserialized_df.condition.to_list()
-        assert record_df.series_description.to_list() == deserialized_df.description.to_list()
-        
-        assert record_df.level.tolist() == [deserialized_df.records.iloc[idx][0] for idx in range(deserialized_dict['nb_records'])]
-        assert record_df.severity.tolist() == [deserialized_df.records.iloc[idx][1] for idx in range(deserialized_dict['nb_records'])]
-        assert record_df.x.tolist() == [deserialized_df.records.iloc[idx][2] for idx in range(deserialized_dict['nb_records'])]
-        assert record_df.y.tolist() == [deserialized_df.records.iloc[idx][3] for idx in range(deserialized_dict['nb_records'])]
+        assert deserialized_dict['nb_records'] == 2, (
+            f"Expected 'nb_records' to be 2, but got {deserialized_dict['nb_records']}"
+        )
+        assert record_df.study_id.to_list() == deserialized_df.study_id.to_list(), (
+            f"Study IDs do not match. Expected {record_df.study_id.to_list()}, "
+            f"but got {deserialized_df.study_id.to_list()}"
+        )
+        assert record_df.series_id.to_list() == deserialized_df.series_id.to_list(), (
+            f"Series IDs do not match. Expected {record_df.series_id.to_list()}, "
+            f"but got {deserialized_df.series_id.to_list()}"
+        )
+        assert record_df.instance_number.to_list() == deserialized_df.instance_number.to_list(), (
+            f"Instance Numbers do not match. Expected {record_df.instance_number.to_list()}, "
+            f"but got {deserialized_df.instance_number.to_list()}"
+        )
+        assert record_df.condition.to_list() == deserialized_df.condition.to_list(), (
+            f"Conditions do not match. Expected {record_df.condition.to_list()}, "
+            f"but got {deserialized_df.condition.to_list()}"
+        )
+        assert record_df.series_description.to_list() == deserialized_df.description.to_list(), (
+            f"Series Descriptions do not match. Expected {record_df.series_description.to_list()}, "
+            f"but got {deserialized_df.description.to_list()}"
+        )
 
+        # Pre-calculate lists for the payload assertions to keep lines under 100 chars
+        nb_records = deserialized_dict['nb_records']
+        get_records = lambda idx, key: deserialized_df.records.iloc[idx][key]
 
+        level_list = [get_records(idx, 0) for idx in range(nb_records)]
+        assert record_df.level.tolist() == level_list, (
+            f"Level data does not match. Expected {record_df.level.tolist()}, "
+            f"but got {level_list}"
+        )
+
+        severity_list = [get_records(idx, 1) for idx in range(nb_records)]
+        assert record_df.severity.tolist() == severity_list, (
+            f"Severity data does not match. Expected {record_df.severity.tolist()}, "
+            f"but got {severity_list}"
+        )
+
+        x_list = [get_records(idx, 2) for idx in range(nb_records)]
+        assert record_df.x.tolist() == x_list, (
+            f"X coordinates do not match. Expected {record_df.x.tolist()}, "
+            f"but got {x_list}"
+        )
+
+        y_list = [get_records(idx, 3) for idx in range(nb_records)]
+        assert record_df.y.tolist() == y_list, (
+            f"Y coordinates do not match. Expected {record_df.y.tolist()}, "
+            f"but got {y_list}"
+        )

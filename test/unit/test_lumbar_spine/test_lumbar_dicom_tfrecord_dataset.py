@@ -3,8 +3,8 @@
 from unittest.mock import patch, MagicMock, ANY
 
 # The 'ANY' object is imported here for use in mock assertions.
-# It is necessary to replace a pandas.DataFrame argument in 
-# 'assert_called_once_with', as direct comparison of DataFrames 
+# It is necessary to replace a pandas.DataFrame argument in
+# 'assert_called_once_with', as direct comparison of DataFrames
 # raises a 'ValueError: DataFrame is ambiguous' within unittest.mock.
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
@@ -13,7 +13,6 @@ import pandas as pd
 import tensorflow as tf
 from pathlib import Path
 from typing import Tuple, Any
-import inspect
 
 
 class TestLumbarDicomTFRecordDataset:
@@ -305,7 +304,7 @@ class TestLumbarDicomTFRecordDataset:
         # DataFrame required to pass the 'study_metadata_df.empty' check in the loop
         metadata_for_exception_test = pd.DataFrame({
             'study_id': ['dummy_study_1'],
-            'some_required_col': [1] # Minimal column for a valid, non-empty row
+            'some_required_col': [1]  # Minimal column for a valid, non-empty row
         })
 
         # Initialize the Dataset
@@ -388,7 +387,7 @@ class TestLumbarDicomTFRecordDataset:
         dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # Define the study ID that will be marked as 'valid'
-        valid_study_id = "ValidStudyID123" 
+        valid_study_id = "ValidStudyID123"
 
         # 1. Setup Mock Paths for iterdir()
 
@@ -504,14 +503,14 @@ class TestLumbarDicomTFRecordDataset:
         study_id = "123456789"
         series_id = "1234567"
         study_path_str = str(tmp_path / study_id)
-        
+
         # Create a reference to the empty DataFrame to avoid ambiguous truth value error
         # in mock assertion.
         mock_metadata_df = pd.DataFrame(
                                             {
                                                 'study_id': [study_id],
                                                 'series_id': [series_id],
-                                                'instance_number':[1],
+                                                'instance_number': [1],
                                                 'metadata': ['meta1']
                                             }
                                         )
@@ -591,10 +590,10 @@ class TestLumbarDicomTFRecordDataset:
             )
 
     def test_process_study_missing_series_metadata(
-                                                        self,
-                                                        mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                        tmp_path: Path
-                                                      ) -> None:
+                                                      self,
+                                                      mock_setup: Tuple[dict[str, Any], MagicMock],
+                                                      tmp_path: Path
+                                                   ) -> None:
         """
         Tests the 'if series_metadata_df.empty: continue' branch in _process_study.
 
@@ -612,15 +611,14 @@ class TestLumbarDicomTFRecordDataset:
         study_id = "123456789"
         series_id = "1234567"
         study_path_str = str(tmp_path / study_id)
-        tfrecord_dir = tmp_path/"tfrecords"
-        
+
         # Create a reference to the empty DataFrame to avoid ambiguous truth value error
         # in mock assertion.
         mock_metadata_df = pd.DataFrame(
                                             {
                                                 'study_id': ["fake_study_id"],
                                                 'series_id': ["fake_series_id"],
-                                                'instance_number':[1],
+                                                'instance_number': [1],
                                                 'metadata': ['meta1']
                                             }
                                         )
@@ -684,10 +682,13 @@ class TestLumbarDicomTFRecordDataset:
             # 4.3. Assert the logger was called with the right number of warnings
             assert mock_logger.warning.call_count == 4
 
-            # 4.4. Assert the logger was called with the right warning message 
+            # 4.4. Assert the logger was called with the right warning message
             # 4.4.1 Verify the content of the first and last warnings
-            expected_warning_1_start = f"No metadata found for series {series_id}"
-            expected_warning_4_exact = "Please check the CSV files and ensure they contain the right records"
+            warning_msg = f"No metadata found for series {series_id}"
+            expected_warning_1_start = warning_msg
+
+            warning_msg = "Please check the CSV files and ensure they contain the right records"
+            expected_warning_4_exact = warning_msg
 
             # 4.4.2 Extract teh arguments from all warning calls
             warning_calls = mock_logger.warning.call_args_list
@@ -700,7 +701,6 @@ class TestLumbarDicomTFRecordDataset:
             # 4.4.4 Check the latest warning (user instruction)
             last_warning_msg = warning_calls[3][0][0]
             assert last_warning_msg == expected_warning_4_exact
-
 
     def test_build_tf_dataset_pipeline(
                                         self,

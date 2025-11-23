@@ -237,7 +237,6 @@ class TestDicomToTFRecordConversion:
             # Verifications
             mock_process_series.assert_called_once()
 
-
     def test_process_series(
         self,
         mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
@@ -313,26 +312,28 @@ class TestDicomToTFRecordConversion:
 
         # Initialize the dataset object
         # Note: We must patch _generate_tfrecord_files to prevent side effects during init
-        with patch.object(LumbarDicomTFRecordDataset, '_generate_tfrecord_files', return_value=None):
+        with patch.object(
+                            LumbarDicomTFRecordDataset,
+                            '_generate_tfrecord_files',
+                            return_value=None
+                          ):
             dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # 1. Setup Mock Paths and IDs
         series_id = "SERIES_12345"
-        dicom_file_stem = "99" # Instance number (file stem) that will not be found
+        dicom_file_stem = "99"  # Instance number (file stem) that will not be found
         dicom_file_name = f"{dicom_file_stem}.dcm"
         series_path_str = str(tmp_path / series_id)
 
         # 2. Setup Input Data (metadata_df)
-        # DataFrame contains metadata for a DIFFERENT instance number (e.g., '100')
-        # This ensures that the filter 'metadata df[... == dicom path.stem]' will return an empty DataFrame.
-        mock_metadata_df = pd.DataFrame(
-                                            {
-                                                'study_id': ["STUDY_999"],
-                                                'series_id': [series_id],
-                                                'instance_number': ["100"], # Does not correspond to '99'
-                                                'metadata': ['meta1']
-                                            }
-                                        )
+        # DataFrame contains metadata for a DIFFERENT instance number (e.g., '100'). This ensures
+        # that the filter 'metadata df[... == dicom path.stem]' will return an empty DataFrame.
+        mock_metadata_df = pd.DataFrame({
+                                          'study_id': ["STUDY_999"],
+                                          'series_id': [series_id],
+                                          'instance_number': ["100"], # Does not correspond to '99'
+                                          'metadata': ['meta1']
+                                        })
 
         # 3. Mock Series Path and its contents
 
@@ -343,17 +344,23 @@ class TestDicomToTFRecordConversion:
         # Mock: The path to the DICOM file whose metadata is missing
         mock_dicom_path = MagicMock(spec=Path)
         mock_dicom_path.name = dicom_file_name
-        mock_dicom_path.stem = dicom_file_stem # La valeur utilisee pour le filtrage
+        mock_dicom_path.stem = dicom_file_stem  # La valeur utilisee pour le filtrage
         mock_dicom_path.__str__.return_value = f"{series_path_str}/{dicom_file_name}"
-        
+
         # Mock the glob("*.dcm") call to return only the missing file
         mock_series_path.glob.return_value = [mock_dicom_path]
 
         # 4. Patch Dependencies
         with (
                 # We patch the functions that SHOULD NOT be called.
-                patch.object(dataset_object, '_process_dicom_file') as mock_process_dicom_file,
-                patch.object(dataset_object, '_write_tfrecord_example') as mock_write_tfrecord_example,
+                patch.object(
+                                dataset_object,
+                                '_process_dicom_file'
+                             ) as mock_process_dicom_file,
+                patch.object(
+                                dataset_object,
+                                '_write_tfrecord_example'
+                             ) as mock_write_tfrecord_example,
                ):
 
             # Reset calls to the logger
@@ -384,12 +391,19 @@ class TestDicomToTFRecordConversion:
             assert mock_logger.warning.call_count == 4
 
             # 6.3. Assert the content of the 4 calls to the logger
-            
+
             # Expected messages for the 4 calls
-            expected_warning_1_start = f"No metadata found for DICOM file {dicom_file_name} "
-            expected_warning_2_exact = "This file will not be considered during training or evaluation."
-            expected_warning_3_exact = "This may be due to missing or inconsistent records in the CSV files."
-            expected_warning_4_exact = "Please check the CSV files and ensure they contain the relevant records."
+            warning_msg = f"No metadata found for DICOM file {dicom_file_name} "
+            expected_warning_1_start = warning_msg
+
+            warning_msg = "This file will not be considered during training or evaluation."
+            expected_warning_2_exact = warning_msg
+
+            warning_msg = "This may be due to missing or inconsistent records in the CSV files."
+            expected_warning_3_exact = warning_msg
+
+            warning_msg = "Please check the CSV files and ensure they contain the relevant records."
+            expected_warning_4_exact = warning_msg
 
             # Extract arguments from all warning calls
             warning_calls = mock_logger.warning.call_args_list
@@ -402,7 +416,7 @@ class TestDicomToTFRecordConversion:
             # Verify the next messages
             assert warning_calls[1][0][0] == expected_warning_2_exact
             assert warning_calls[2][0][0] == expected_warning_3_exact
-            
+
             # Verify the mast message message (User instruction)
             assert warning_calls[3][0][0] == expected_warning_4_exact
 
