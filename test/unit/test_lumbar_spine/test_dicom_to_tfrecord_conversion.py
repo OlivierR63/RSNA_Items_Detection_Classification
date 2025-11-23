@@ -331,7 +331,7 @@ class TestDicomToTFRecordConversion:
         mock_metadata_df = pd.DataFrame({
                                           'study_id': ["STUDY_999"],
                                           'series_id': [series_id],
-                                          'instance_number': ["100"], # Does not correspond to '99'
+                                          'instance_number': ["100"],  # Does not correspond to '99'
                                           'metadata': ['meta1']
                                         })
 

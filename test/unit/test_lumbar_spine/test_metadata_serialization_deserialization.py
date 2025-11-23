@@ -1017,7 +1017,13 @@ class TestMetadataIntegrity:
 
         # Pre-calculate lists for the payload assertions to keep lines under 100 chars
         nb_records = deserialized_dict['nb_records']
-        get_records = lambda idx, key: deserialized_df.records.iloc[idx][key]
+        
+        def get_records(idx, key):
+            """
+                Retrieves a specific value 'key' from the record at index 'idx'
+                in the 'records' column of the deserialized DataFrame.
+            """
+            return deserialized_df.records.iloc[idx][key]
 
         level_list = [get_records(idx, 0) for idx in range(nb_records)]
         assert record_df.level.tolist() == level_list, (

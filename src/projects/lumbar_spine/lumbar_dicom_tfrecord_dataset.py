@@ -254,7 +254,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             records_list = deserialized_dict.get('records', [])
             flattened_records = [val for rec in records_list for val in rec] or [-1.0] * 4
 
-            # Pad the flattened list to the self._MAX_RECORDS_FLAT size 
+            # Pad the flattened list to the self._MAX_RECORDS_FLAT size
             # ( = self._MAX_RECORDS * 4 elements)
             # Pad with a safe value (0.0)
             padded_records = (flattened_records
@@ -455,7 +455,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     msg_warning = (
                                     "Please check the CSV files "
                                     "and ensure they contain the right records."
-                                   ) 
+                                   )
                     logger.warning(msg_warning)
                     continue
 
@@ -536,7 +536,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     msg_warning = (
                                     "Please check the CSV files "
                                     "and ensure they contain the right records"
-                                    ) 
+                                    )
                     logger.warning(msg_warning)
 
                     # Skip the series
@@ -762,7 +762,15 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                         'series_description'
                         ]
         if records_df[HEADER_COLS].isnull().any().any():
-            null_cols = records_df[HEADER_COLS].columns[records_df[HEADER_COLS].isnull().any()].tolist()
+            # Isolate the header columns (HEADER_COLS)
+            header_df = records_df[HEADER_COLS]
+
+            # Determine which header columns contain null values
+            header_null_mask = header_df.isnull().any()
+
+            # Retrieve the names of the concerned columns as a list
+            null_cols = header_df.columns[header_null_mask].tolist()
+
             raise ValueError(
                                 f"Cannot serialize header: "
                                 f"Null values detected in critical header columns: {null_cols}. "
