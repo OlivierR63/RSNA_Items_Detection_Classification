@@ -209,9 +209,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     4: condition (int, encoded category)
                     5: nb_records (int, number of records/annotations)
                 - The 7th tensor is a 1D `tf.float32` tensor of shape (100,) representing:
-                    6: Flattened and padded records (level, severity, x, y) for up to 25 records.
-                      Each record is represented by 4 values, and the tensor is padded with zeros
-                      to ensure a fixed size of 100 elements (25 records * 4 values).
+                    6: Flattened and padded records (level, severity, x, y) for up to
+                       self._MAX_RECORDS records.
+                       Each record is represented by 4 values, and the tensor is padded with zeros
+                       to ensure a fixed size of 4 * self._MAX_RECORDS elements (self._MAX_RECORDS records * 4 values).
 
         Raises:
             ValueError: If the deserialized metadata structure is invalid or inconsistent.
@@ -252,7 +253,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             records_list = deserialized_dict.get('records', [])
             flattened_records = [val for rec in records_list for val in rec] or [-1.0] * 4
 
-            # Pad the flattened list to the self._MAX_RECORDS_FLAT size (25 * 4 = 100 elements)
+            # Pad the flattened list to the self._MAX_RECORDS_FLAT size (self._MAX_RECORDS * 4 elements)
             # Pad with a safe value (0.0)
             padded_records = (flattened_records
                               + [0.0] * (self._MAX_RECORDS_FLAT - len(flattened_records)))
@@ -356,7 +357,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 ) = deserialized_tensors
 
             # Reshape the padded records tensor to (self._MAX_RECORDS, 4)
-            padded_records_t = tf.reshape(padded_records_t, [25, 4])
+            padded_records_t = tf.reshape(padded_records_t, [self._MAX_RECORDS, 4])
 
             # --- 3. Normalize the Image (Pure TF) ---
             # The image is currently uint16. Convert to float32 and normalize.
@@ -372,7 +373,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 "description": description_t,
                 "condition": condition_t,
                 "nb_records": nb_records_t,
-                # The records are now a (25, 4) float32 tensor
+                # The records are now a (self._MAX_RECORDS, 4) float32 tensor
                 "records": padded_records_t
             })
 
@@ -383,7 +384,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                          extra={"status": "failed", "error": str(e)})
             # Return a safe dummy structure to avoid pipeline crash
             dummy_image = tf.zeros([64, 64, 64, 1], dtype=tf.float32)
-            dummy_records = tf.zeros([25, 4], dtype=tf.float32)
+            dummy_records = tf.zeros([self._MAX_RECORDS, 4], dtype=tf.float32)
 
             return dummy_image, {
                 "study_id": tf.constant(0, dtype=tf.int32),
@@ -404,10 +405,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         TensorFlow TFRecord files, generating one TFRecord file per study.
 
         Args:
-            study_dir (str): The path to the directory containing study subfolders.
-            metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata.
-            tfrecord_dir (str): The directory where the resulting TFRecord files will be saved.
-            logger: Automatically injected logger (optional).
+            - study_dir (str): The path to the directory containing study subfolders.
+            - metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata.
+            - tfrecord_dir (str): The directory where the resulting TFRecord files will be saved.
+            - logger: Automatically injected logger (optional).
 
         Returns:
             None: The function saves files to disk but returns nothing.
@@ -417,8 +418,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     extra={"action": "convert_dicom", "dicom_study_dir": study_dir})
 
         try:
+            # Ensure the destination directory for TFRecord files exists and return its Path.
             tfrecord_path = self._setup_tfrecord_directory(tfrecord_dir)
 
+            # Iterate over all items (expected study directories) in the root study path.
             for study_path in tqdm(list(Path(study_dir).iterdir())):
                 if not study_path.is_dir():
                     msg_warning = (
@@ -427,8 +430,24 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                                    )
                     logger.warning(msg_warning)
                     continue
+                
+                study_metadata_df = metadata_df[metadata_df['study_id'] == study_path.name ]
 
-                self._process_study(study_path, metadata_df, tfrecord_path, logger)
+                if study_metadata_df.empty:
+                    msg_warning = (
+                                    f"No metadata found for study {study_path.name}. "
+                                    f"Skipping TFRecord generation for this study."
+                                   )
+                    logger.warning(msg_warning)
+
+                    logger.warning("This study will not be considered during training or evaluation.")
+                    logger.warning("This may be due to missing or inconsistent records in the CSV files.")
+
+                    msg_warning = "Please check the CSV files and ensure they contain the right records."
+                    logger.warning(msg_warning)
+                    continue
+                
+                self._process_study(study_path, study_metadata_df, tfrecord_path, logger)
 
             logger.info("DICOM to TFRecord conversion completed successfully",
                         extra={"status": "success"})
@@ -446,11 +465,26 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         tfrecord_path.mkdir(parents=True, exist_ok=True)
         return tfrecord_path
 
+    @log_method()
     def _process_study(self, study_path: Path, metadata_df: pd.DataFrame,
-                       tfrecord_dir: Path, logger: logging.Logger) -> None:
+                       tfrecord_dir: Path, logger: Optional[logging.Logger] = None) -> None:
         """
-            Process all DICOM files in a study directory and write them to a TFRecord file.
+            Iterates over the series directories within a given study directory.
+    
+            Each series directory is checked and then processed by `_process_series`
+            to extract DICOM data and write it as features into the TFRecord file
+            designated for the study. Non-directory items are skipped and logged.
+    
+            Args:
+                - study_path: The path to the root directory of the study.
+                - metadata_df: DataFrame containing metadata relevant to the study.
+                - tfrecord_dir: The target directory for the output TFRecord file.
+                                This directory is supposed to already exist. No specific checking
+                                is done here.
+                - logger: Logger instance for logging warnings.
         """
+        logger = logger or self.logger
+
         study_id = study_path.name
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
 
@@ -464,28 +498,94 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     logger.warning(msg_warning)
                     continue
 
-                self._process_series(series_path, metadata_df, writer)
+                series_metadata_df = metadata_df[metadata_df['series_id'] == series_path.name ]
 
+                if series_metadata_df.empty:
+                    # Main messages with dynamic Ids (study_id, series_id)
+                    msg_warning = (
+                                    f"No metadata found for series {series_path.name} "
+                                    f"in study {study_id}. Skipping this series."
+                                   )
+                    logger.warning(msg_warning)
+
+                    # Explanation of the impact (consequences of the omission)
+                    logger.warning("This series will not be considered during training or evaluation.")
+
+                    # Possible root cause
+                    logger.warning("This may be due to missing or inconsistent records in the CSV files.")
+
+                    # Suggested corrective actions
+                    msg_warning = "Please check the CSV files and ensure they contain the right records"
+                    logger.warning(msg_warning)
+                    
+                    # Skip the series
+                    continue
+
+                self._process_series(series_path, series_metadata_df, writer)
+
+    @log_method()
     def _process_series(self, series_path: Path, metadata_df: pd.DataFrame,
-                        writer: tf.io.TFRecordWriter) -> None:
+                        writer: tf.io.TFRecordWriter, logger: Optional[logging.Logger] = None) -> None:
         """
-            Process all DICOM files in a series directory and write them to the TFRecord writer.
+            Processes all DICOM files within a single series directory.
+
+            For each DICOM file (`.dcm`), this method filters the provided metadata 
+            DataFrame using the file's `instance_number` (stem). If matching metadata 
+            is found, the process continues by delegating file reading, metadata 
+            serialization to `_process_dicom_file`, and feature writing to 
+            `_write_tfrecord_example`. Files without corresponding metadata are 
+            skipped, and a warning is logged.
+
+            Args:
+                - series_path: The path to the series directory.
+                - metadata_df: DataFrame containing metadata specific to this series.
+                - writer: The active TFRecordWriter instance for the current study.
         """
+        logger = logger or self.logger
+
         for dicom_path in series_path.glob("*.dcm"):
-            img_bytes, serialized_metadata = self._process_dicom_file(dicom_path, metadata_df)
+
+            dicom_metadata_df = metadata_df[metadata_df['instance_number'] == dicom_path.stem ]
+            if dicom_metadata_df.empty:
+                # Log a series of warnings for clarity when metadata is missing
+                logger.warning(
+                    f"No metadata found for DICOM file {dicom_path.name} "
+                    f"in series {series_path.name}. Skipping this file."
+                )
+                logger.warning(
+                    "This file will not be considered during training or evaluation."
+                )
+                logger.warning(
+                    "This may be due to missing or inconsistent records in the CSV files."
+                )
+                logger.warning(
+                    "Please check the CSV files and ensure they contain the relevant records."
+                )
+
+                continue
+
+            # Process the DICOM file and its metadata
+            img_bytes, serialized_metadata = self._process_dicom_file(dicom_path, dicom_metadata_df)
+            
+            # Write the result to the TFRecord
             self._write_tfrecord_example(img_bytes, serialized_metadata, writer)
 
+    @log_method()
     def _process_dicom_file(self, dicom_path: Path,
-                            metadata_df: pd.DataFrame) -> Tuple[bytes, bytes]:
+                            metadata_df: pd.DataFrame,
+                            logger: Optional[logging.Logger] = None) -> Tuple[bytes, bytes]:
         """
             Process a single DICOM file and return serialized image and metadata.
         """
+        logger = logger or self.logger
+
         img = sitk.ReadImage(str(dicom_path))
         img_array = sitk.GetArrayFromImage(img)
         img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
         img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
 
-        serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
+        #serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
+        serialized_metadata = self._serialize_metadata(metadata_df)
 
         return img_bytes, serialized_metadata
 
@@ -551,8 +651,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             # Call the core serialization function, passing the extracted IDs
             # and the full DataFrame.
             # This will filter the DataFrame and create the compact byte sequence.
-            serialized_metadata = self._serialize_metadata(study_id, series_id,
-                                                           instance_number, metadata_df)
+            serialized_metadata = self._serialize_metadata(metadata_df)
 
             # Return the byte sequence.
             return serialized_metadata
@@ -567,40 +666,61 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
     @log_method()
     def _serialize_metadata(self,
-                            study_id_str: str,
-                            series_id_str: str,
-                            instance_number_str: str,
                             data_df: pd.DataFrame, *,
                             logger: Optional[logging.Logger] = None) -> bytes:
         """
-            Serializes specific metadata records from a DataFrame into a compact byte sequence.
+            Serializes metadata records (header + payload) for a single DICOM instance
+            into a structured binary format.
+
+            This function is responsible for taking a subset of the main DataFrame
+            corresponding to a specific DICOM image (defined by study_id, series_id,
+            and instance_number) and converting its associated metadata (e.g.,
+            lesion data) into a compact binary representation suitable for TFRecords.
+
+            The structure of the resulting bytes object is:
+            [Header (15 bytes)] + [Payload (8 bytes * N records)]
 
             Args:
-                study_id_str: The study identifier used to filter the DataFrame.
-                series_id_str: The series identifier used to filter the DataFrame.
-                instance_number_str: The name of the DICOM file, without its '.dcm' extension.
-                data_df: The main DataFrame containing all metadata records.
-                logger: Automatically injected logger (optional).
+                records_df (pd.DataFrame): A DataFrame containing all records
+                    (e.g., all lesions/annotations) associated with a single
+                    instance_number, series_id, and study_id.
+                logger (Logger): The logger instance used for logging status and errors.
 
             Returns:
-                bytes: A compact byte sequence representing the serialized metadata.
-                    **Returns an empty byte sequence (b'') if no corresponding records are found.**
+                bytes: The complete serialized metadata block (header + payload).
 
             Raises:
-                ValueError: If the number of records for the given identifiers exceeds 25.
+                Exception: If null values are detected in the `records_df`.
+                    **Logging Change**: If nulls are found, the full error message is
+                    logged via three separate calls to `logger.error` before
+                    the exception is raised, which includes the list of affected columns.
+                ValueError: If the input `records_df` is empty, or if the number of
+                    records exceeds the maximum allowed limit (`self._MAX_RECORDS`).
+                RuntimeError: If any underlying serialization step fails.
         """
         logger = logger or self.logger
         logger.info("Starting function _serialize_metadata")
 
-        try:
-            records_df = self._filter_records(data_df, study_id_str,
-                                              series_id_str, instance_number_str, logger)
-            if records_df.empty:
-                return b''
+        if data_df.isnull().any().any():
+            # Get columns that contain null values
+            null_columns = data_df.columns[data_df.isnull().any()].tolist()
+        
+            msg_error_part1 = "Null values detected in data_df before serialization."
+            msg_error_part2 = f"Columns affected: {null_columns}."
+            msg_error_part3 = "Serialization might fail or produce corrupted records."
 
-            header_bytes = self._serialize_header(records_df, study_id_str,
-                                                  series_id_str, instance_number_str)
-            payload_bytes = self._serialize_payload(records_df)
+            logger.error(msg_error_part1)
+            logger.error(msg_error_part2)
+            logger.error(msg_error_part3)
+
+            # Build the full message to raise the exception
+            full_msg_error = f"{msg_error_part1} {msg_error_part2} {msg_error_part3}"
+            raise ValueError(full_msg_error)
+
+        try:
+            
+            header_bytes = self._serialize_header(data_df)
+            payload_bytes = self._serialize_payload(data_df) 
 
             metadata_bytes = header_bytes + payload_bytes
 
@@ -613,36 +733,39 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                          extra={"status": "failed", "error": str(e)})
             raise
 
-    def _filter_records(self, data_df: pd.DataFrame, study_id_str: str, series_id_str: str,
-                        instance_number_str: str, logger: logging.Logger) -> pd.DataFrame:
-        """Filters the DataFrame to get records matching the given identifiers."""
-        mask = (
-                (data_df["study_id"] == int(study_id_str)) &
-                (data_df["series_id"] == int(series_id_str)) &
-                (data_df["instance_number"] == int(instance_number_str))
-        )
-        records_df = data_df[mask]
+    def _serialize_header(self, records_df: pd.DataFrame) -> bytes:
+        """
+            Serializes the header part of the metadata.
 
-        if records_df.empty:
-            msg_warning = ("No metadata linked with the file ",
-                           f"{study_id_str}/{series_id_str}/{instance_number_str}.dcm")
-            logger.warning(msg_warning)
+            Raises:
+                ValueError: If records_df is empty or None, or if the number of records 
+                            exceeds the defined limit (self._MAX_RECORDS) or if global 
+                            properties (like study_id) are not unique.
+        """
+        # Consolidated check for empty or None DataFrame
+        if records_df is None or records_df.empty:
+            raise ValueError("Cannot serialize header: Input DataFrame is None or empty.")
 
-            logger.warning("This file will not be considered during training or evaluation.")
+        # VALIDATION: Ensure NO Null Values in Header Columns ---
+        HEADER_COLS = ['study_id', 'series_id', 'instance_number', 'condition', 'series_description']
+        if records_df[HEADER_COLS].isnull().any().any():
+            null_cols = records_df[HEADER_COLS].columns[records_df[HEADER_COLS].isnull().any()].tolist()
+            raise ValueError(
+                f"Cannot serialize header: Null values detected in critical header columns: {null_cols}. "
+                "Serialization requires all header values to be non-null integers."
+            )
 
-            logger.warning("This may be due to missing or inconsistent records in the CSV files.")
+        # The header requires a single, unique value for these identifiers, 
+        # as the DataFrame should represent records for one specific DICOM file.
+        for col in ['study_id', 'series_id', 'instance_number', 'condition', 'series_description']:
+            if len(records_df[col].unique()) != 1:
+                raise ValueError(f"Cannot serialize header: Column '{col}' must contain exactly one unique value, "
+                                 f"but found {len(records_df[col].unique())}.")
+        
+        study_id_str = str(records_df['study_id'].unique()[0])
+        series_id_str = str(records_df['series_id'].unique()[0])
+        instance_number_str = str(records_df['instance_number'].unique()[0])
 
-            msg_warning = ("Please check the CSV files and ensure ",
-                           "they contain the necessary records.")
-            logger.warning(msg_warning)
-
-            logger.warning("Returning an empty byte sequence for metadata")
-
-        return records_df
-
-    def _serialize_header(self, records_df: pd.DataFrame, study_id_str: str,
-                          series_id_str: str, instance_number_str: str) -> bytes:
-        """Serializes the header part of the metadata."""
         # Extract global properties (must be unique for the filtered records)
         condition = int(records_df['condition'].unique()[0])
         description = int(records_df['series_description'].unique()[0])
@@ -658,25 +781,55 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         description_bytes = description.to_bytes(1, byteorder='big', signed=False)
         condition_bytes = condition.to_bytes(1, byteorder='big', signed=False)
 
-        # Serialize the number of records (max 25) as a 1-byte unsigned character
+        # Serialize the number of records (max self._MAX_RECORDS) as a 1-byte unsigned character
         nb_records = len(records_df)
-        if nb_records > 25:
-            raise ValueError("The number of records exceeds the limit of 25.")
+        if nb_records > self._MAX_RECORDS:
+            raise ValueError(f"The number of records exceeds the limit of {self._MAX_RECORDS}.")
 
         nb_records_bytes = nb_records.to_bytes(1, byteorder='big', signed=False)
 
-        return (study_id_bytes + series_id_bytes + instance_number_bytes
+        serialized_bytes = (study_id_bytes + series_id_bytes + instance_number_bytes
                 + description_bytes + condition_bytes + nb_records_bytes)
 
+        
+        return serialized_bytes
+
     def _serialize_payload(self, records_df: pd.DataFrame) -> bytes:
-        """Serializes the payload part of the metadata."""
+        """
+            Serializes the payload part of the metadata by iterating over individual 
+            records (rows) in the DataFrame.
+
+            Each record is converted into an 8-byte binary sequence containing the 
+            level, severity, and scaled x/y coordinates.
+
+            Raises:
+                ValueError: If records_df is empty or None, or if any critical payload 
+                            columns contain null values (NaN).
+        """
+
+        # Consolidated check for empty or None DataFrame
+        if records_df is None or records_df.empty:
+            raise ValueError("Cannot serialize payload: Input DataFrame is None or empty.")
+
+        # Ensure NO Null Values in Payload Columns ---
+        PAYLOAD_COLS = ['level', 'severity', 'x', 'y']
+        if records_df[PAYLOAD_COLS].isnull().any().any():
+            null_cols = records_df[PAYLOAD_COLS].columns[records_df[PAYLOAD_COLS].isnull().any()].tolist()
+            raise ValueError(
+                f"Cannot serialize payload: Null values detected in critical payload columns: {null_cols}. "
+                f"Serialization requires all payload values to be non-null."
+            )
+
         payload_bytes = b''
 
         for row in records_df.itertuples():
+
             level = row.level
             severity = row.severity
 
             # Convert float coordinates to integers by scaling (multiplication by 100)
+            # This conversion is guaranteed to be robust because null values (NaN) 
+            # have been explicitly checked and rejected at the beginning of this function. 
             x = round(float(row.x) * 100)
             y = round(float(row.y) * 100)
 
@@ -688,6 +841,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             x_bytes = x.to_bytes(3, byteorder='big', signed=False)
             y_bytes = y.to_bytes(3, byteorder='big', signed=False)
 
+            # Each record provide an additional 8-bytes long payload
             payload_bytes += level_bytes + severity_bytes + x_bytes + y_bytes
 
         return payload_bytes
@@ -696,16 +850,16 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     def _deserialize_metadata(self, metadata_bytes: bytes, *,
                               logger: Optional[logging.Logger] = None) -> Dict:
         """
-        Deserializes a compact byte sequence back into structured metadata components.
-        This function is the inverse of _serialize_metadata.
-        Args:
-            metadata_bytes: The byte sequence containing the serialized metadata.
-            logger: Automatically injected logger (optional).
-        Returns:
-            dict: A dictionary containing the deserialized header values and a list of tuples
-                  (level, severity, x, y) for the individual records.
-        Raises:
-            ValueError: If the input is not a byte sequence or if the buffer length is insufficient.
+            Deserializes a compact byte sequence back into structured metadata components.
+            This function is the inverse of _serialize_metadata.
+            Args:
+                metadata_bytes: The byte sequence containing the serialized metadata.
+                logger: Automatically injected logger (optional).
+            Returns:
+                dict: A dictionary containing the deserialized header values and a list of tuples
+                      (level, severity, x, y) for the individual records.
+            Raises:
+                ValueError: If the input is not a byte sequence or if the buffer length is insufficient.
         """
         if not isinstance(metadata_bytes, bytes):
             raise ValueError("Input must be a byte sequence")
@@ -733,7 +887,9 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             raise Exception(f"Error deserializing metadata: {str(e)}")
 
     def _deserialize_header(self, buffer: io.BytesIO) -> Dict:
-        """Deserializes the header part of the metadata."""
+        """
+            Deserializes the header part of the metadata.
+        """
         study_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
         series_id = int.from_bytes(buffer.read(5), byteorder='big', signed=False)
         instance_number = int.from_bytes(buffer.read(2), byteorder='big', signed=False)
@@ -751,7 +907,9 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         }
 
     def _deserialize_records(self, buffer: io.BytesIO, nb_records: int) -> List[Tuple]:
-        """Deserializes the records part of the metadata."""
+        """
+            Deserializes the records part of the metadata.
+        """
         records = []
 
         for _ in range(nb_records):
@@ -772,19 +930,19 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     def _encode_dataframe(self, metadata_df: pd.DataFrame, *,
                           logger: Optional[logging.Logger] = None) -> pd.DataFrame:
         """
-        Converts categorical textual metadata fields in a DataFrame to numerical values.
-        This process is essential for preparing data for serialization or machine learning models,
-        replacing descriptive strings with compact integers.
+            Converts categorical textual metadata fields in a DataFrame to numerical values.
+            This process is essential for preparing data for serialization or machine learning models,
+            replacing descriptive strings with compact integers.
 
-        Args:
-            metadata_df: The DataFrame containing metadata to be converted.
-                        Example column values: {
-                                                    "condition": "Spinal Canal Stenosis",
-                                                    "level": "L1-L2", ...
-                                                }
+            Args:
+                metadata_df: The DataFrame containing metadata to be converted.
+                            Example column values: {
+                                                        "condition": "Spinal Canal Stenosis",
+                                                        "level": "L1-L2", ...
+                                                    }
 
-        Returns:
-            pd.DataFrame: The DataFrame with the specified columns converted to integer values.
+            Returns:
+                pd.DataFrame: The DataFrame with the specified columns converted to integer values.
         """
         logger = logger or self.logger
         logger.info("Starting function _encode_dataframe")
@@ -811,14 +969,14 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     def _create_mappings(self, metadata_df: pd.DataFrame,
                          columns_to_encode: Dict[str, str]) -> Dict[str, Dict]:
         """
-        Creates mapping dictionaries for each categorical column.
+            Creates mapping dictionaries for each categorical column.
 
-        Args:
-            metadata_df: The DataFrame containing metadata to be converted.
-            columns_to_encode: Dictionary mapping column names to their mapping variable names.
+            Args:
+                metadata_df: The DataFrame containing metadata to be converted.
+                columns_to_encode: Dictionary mapping column names to their mapping variable names.
 
-        Returns:
-            Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
+            Returns:
+                Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
         """
         mappings = {}
 
@@ -832,15 +990,15 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                          columns_to_encode: List[str],
                          mappings: Dict[str, Dict]) -> pd.DataFrame:
         """
-        Applies the encoding mappings to each specified column in the DataFrame.
+            Applies the encoding mappings to each specified column in the DataFrame.
 
-        Args:
-            metadata_df: The DataFrame containing metadata to be converted.
-            columns_to_encode: Dictionary mapping column names to their mapping variable names.
-            mappings: Dictionary of mapping dictionaries for each column.
+            Args:
+                metadata_df: The DataFrame containing metadata to be converted.
+                columns_to_encode: Dictionary mapping column names to their mapping variable names.
+                mappings: Dictionary of mapping dictionaries for each column.
 
-        Returns:
-            pd.DataFrame: The DataFrame with the specified columns converted to integer values.
+            Returns:
+                pd.DataFrame: The DataFrame with the specified columns converted to integer values.
         """
         for column in columns_to_encode:
             metadata_df[column] = metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
@@ -850,20 +1008,21 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
     @log_method()
     def _create_string_to_int_mapper(self, strings_lst: list, *,
                                      logger: Optional[logging.Logger] = None) -> callable:
-        """Creates a mapping function between strings and integers.
+        """
+            Creates a mapping function between strings and integers.
 
-        This is a factory function that generates a callable (the mapper)
-        capable of converting predefined category strings into their corresponding
-        integer indices (starting from 0).
+            This is a factory function that generates a callable (the mapper)
+            capable of converting predefined category strings into their corresponding
+            integer indices (starting from 0).
 
-        Args:
-            strings_lst (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"])
-                            The order of the strings defines their integer value.
+            Args:
+                strings_lst (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"])
+                                The order of the strings defines their integer value.
 
-        Returns:
-            callable: A function that maps an input string to an integer.
-                      The resulting function includes 'mapping' and 'reverse_mapping
-                      dictionaries as attributes.
+            Returns:
+                callable: A function that maps an input string to an integer.
+                          The resulting function includes 'mapping' and 'reverse_mapping
+                          dictionaries as attributes.
         """
 
         logger = logger or self.logger

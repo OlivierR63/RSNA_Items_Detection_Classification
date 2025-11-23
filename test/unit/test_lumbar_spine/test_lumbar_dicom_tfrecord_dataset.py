@@ -1,12 +1,19 @@
 # coding: utf-8
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
+
+# The 'ANY' object is imported here for use in mock assertions.
+# It is necessary to replace a pandas.DataFrame argument in 
+# 'assert_called_once_with', as direct comparison of DataFrames 
+# raises a 'ValueError: DataFrame is ambiguous' within unittest.mock.
+
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 import pytest
 import pandas as pd
 import tensorflow as tf
 from pathlib import Path
 from typing import Tuple, Any
+import inspect
 
 
 class TestLumbarDicomTFRecordDataset:
@@ -295,10 +302,18 @@ class TestLumbarDicomTFRecordDataset:
         mock_config, mock_logger = mock_setup
         exception_message = "Simulated DICOM processing failure"
 
+        # DataFrame required to pass the 'study_metadata_df.empty' check in the loop
+        metadata_for_exception_test = pd.DataFrame({
+            'study_id': ['dummy_study_1'],
+            'some_required_col': [1] # Minimal column for a valid, non-empty row
+        })
+
         # Initialize the Dataset
         # (Mocking CSVMetadata and skipping the file generation check)
+        mock_csv_path = 'src.projects.lumbar_spine.csv_metadata.CSVMetadata'
+
         with (
-                patch('src.projects.lumbar_spine.csv_metadata.CSVMetadata'),
+                patch(mock_csv_path),
                 patch.object(
                                 LumbarDicomTFRecordDataset,
                                 '_generate_tfrecord_files',
@@ -333,7 +348,7 @@ class TestLumbarDicomTFRecordDataset:
                 # Call the method directly
                 dataset._convert_dicom_to_tfrecords(
                     study_dir=str(tmp_path),
-                    metadata_df=pd.DataFrame(),  # Dummy dataframe
+                    metadata_df=metadata_for_exception_test,  # Use the non-empty DataFrame
                     tfrecord_dir=str(tmp_path / "tfrecords_output"),
                     logger=mock_logger
                 )
@@ -372,6 +387,9 @@ class TestLumbarDicomTFRecordDataset:
         # Initialize the dataset object
         dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
+        # Define the study ID that will be marked as 'valid'
+        valid_study_id = "ValidStudyID123" 
+
         # 1. Setup Mock Paths for iterdir()
 
         # Mock Path 1: A non-directory item (should trigger 'continue')
@@ -382,7 +400,8 @@ class TestLumbarDicomTFRecordDataset:
         # Mock Path 2: A valid directory (should be processed)
         mock_valid_dir_path = MagicMock(spec=Path)
         mock_valid_dir_path.is_dir.return_value = True
-        mock_valid_dir_path.__str__.return_value = "mock_study_dir/ValidStudy"
+        mock_valid_dir_path.__str__.return_value = f"mock_study_dir/{valid_study_id}"
+        mock_valid_dir_path.name = valid_study_id
 
         # Mock the iterdir() result to contain both item types
         mock_iterdir_result = [mock_file_path, mock_valid_dir_path]
@@ -393,7 +412,7 @@ class TestLumbarDicomTFRecordDataset:
         mock_study_dir_instance = MagicMock(spec=Path)
         mock_study_dir_instance.iterdir.return_value = mock_iterdir_result
 
-        # CRITICAL FIX: Mock the Path class constructor itself.
+        # Mock the Path class constructor itself.
         # This mock will be returned when Path(...) is called.
         mock_path_constructor = MagicMock(spec=Path)
         mock_path_constructor.return_value = mock_study_dir_instance
@@ -401,7 +420,7 @@ class TestLumbarDicomTFRecordDataset:
         # 2. Setup Mock Dependencies
 
         # Mock metadata dataframe
-        mock_metadata_dataframe = pd.DataFrame({'StudyUID': []})
+        mock_metadata_dataframe = pd.DataFrame({'study_id': [valid_study_id]})
         tfrecord_directory_string = "mock_tfrecords"
 
         # Create a separate mock object for the Path return value of _setup_tfrecord_directory
@@ -428,15 +447,8 @@ class TestLumbarDicomTFRecordDataset:
                              ),
 
                 # Patch _process_study
-                patch.object(dataset_object, '_process_study') as mock_process_study,
+                patch.object(dataset_object, '_process_study') as mock_process_study
 
-                # Patch _filter_records to return the input dataframe as-is without any filtering
-                # nor warning message
-                patch.object(
-                                dataset_object,
-                                '_filter_records',
-                                side_effect=lambda metadata_df, *args, **kwargs: metadata_df
-                             )
                ):
 
             # Clear any warning calls made during object initialization
@@ -463,16 +475,19 @@ class TestLumbarDicomTFRecordDataset:
             mock_process_study.assert_called_once()
 
             # 4.3. Check the argument used for the single call
+
+            # Use ANY to skip the problematic DataFrame comparison.
             mock_process_study.assert_called_once_with(
                                                             mock_valid_dir_path,
-                                                            mock_metadata_dataframe,
+                                                            ANY,
                                                             mock_tfrecord_path,
                                                             mock_logger
                                                         )
 
     def test_process_study_skip_non_directory(
                                                 self,
-                                                mock_setup: Tuple[dict[str, Any], MagicMock]
+                                                mock_setup: Tuple[dict[str, Any], MagicMock],
+                                                tmp_path: Path
                                               ) -> None:
         """
         Tests the 'if not series_path.is_dir(): continue' branch in _process_study.
@@ -486,12 +501,20 @@ class TestLumbarDicomTFRecordDataset:
         dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # 1. Setup Mock Paths
-        study_path_str = "path/to/Study001"
-        study_id = "Study001"
-
+        study_id = "123456789"
+        series_id = "1234567"
+        study_path_str = str(tmp_path / study_id)
+        
         # Create a reference to the empty DataFrame to avoid ambiguous truth value error
         # in mock assertion.
-        mock_metadata_df = pd.DataFrame()
+        mock_metadata_df = pd.DataFrame(
+                                            {
+                                                'study_id': [study_id],
+                                                'series_id': [series_id],
+                                                'instance_number':[1],
+                                                'metadata': ['meta1']
+                                            }
+                                        )
 
         # Mock the Path instances passed as arguments
         mock_study_path = MagicMock(spec=Path)
@@ -514,7 +537,8 @@ class TestLumbarDicomTFRecordDataset:
         # Mock 2: A valid series directory (the one that should be processed)
         mock_valid_dir_path = MagicMock(spec=Path)
         mock_valid_dir_path.is_dir.return_value = True
-        mock_valid_dir_path.__str__.return_value = f"{study_path_str}/Series_A"
+        mock_valid_dir_path.name = series_id
+        mock_valid_dir_path.__str__.return_value = f"{study_path_str}/{series_id}"
 
         # Mock the iterdir() call on the study_path
         mock_study_path.iterdir.return_value = [mock_file_path, mock_valid_dir_path]
@@ -527,6 +551,7 @@ class TestLumbarDicomTFRecordDataset:
                   # Patch _process_series, which should NOT be called for the file
                   patch.object(dataset_object, '_process_series') as mock_process_series,
               ):
+
             # Clear any warning calls made during object initialization
             mock_logger.warning.reset_mock()
 
@@ -558,12 +583,124 @@ class TestLumbarDicomTFRecordDataset:
             mock_process_series.assert_called_once_with(
                 mock_valid_dir_path,
 
-                # Use the mock reference here for comparison
-                mock_metadata_df,
+                # Use ANY to bypass DataFrame comparison issues (instead of metadata_df)
+                ANY,
 
                 # The mock writer context manager
                 mock_tfrecord_writer_class.return_value.__enter__.return_value
             )
+
+    def test_process_study_missing_series_metadata(
+                                                        self,
+                                                        mock_setup: Tuple[dict[str, Any], MagicMock],
+                                                        tmp_path: Path
+                                                      ) -> None:
+        """
+        Tests the 'if series_metadata_df.empty: continue' branch in _process_study.
+
+        Simulates a study containing a series directory for which no metadata is
+        available in the metadata_df, and asserts that:
+        1. The series processing is skipped (_process_series is NOT called).
+        2. The four expected warnings are logged.
+        """
+        mock_config, mock_logger = mock_setup
+
+        # Initialize the dataset object
+        dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
+
+        # 1. Setup Mock Paths
+        study_id = "123456789"
+        series_id = "1234567"
+        study_path_str = str(tmp_path / study_id)
+        tfrecord_dir = tmp_path/"tfrecords"
+        
+        # Create a reference to the empty DataFrame to avoid ambiguous truth value error
+        # in mock assertion.
+        mock_metadata_df = pd.DataFrame(
+                                            {
+                                                'study_id': ["fake_study_id"],
+                                                'series_id': ["fake_series_id"],
+                                                'instance_number':[1],
+                                                'metadata': ['meta1']
+                                            }
+                                        )
+
+        # Mock the Path instances passed as arguments
+        mock_study_path = MagicMock(spec=Path)
+        mock_study_path.name = study_id
+        mock_tfrecord_dir = MagicMock(spec=Path)
+
+        # Mock the resulting TFRecord path
+        # Remove 'spec=Path' from the return mock to fix string assertion mismatch.
+        mock_tfrecord_path = MagicMock()
+
+        # Mock the division operator (/) on mock_tfrecord_dir
+        # as the path is constructed via: tfrecord_dir / f"{study_id}.tfrecord"
+        mock_tfrecord_dir.__truediv__.return_value = mock_tfrecord_path
+
+        # Mock: A valid series directory (the one that should be processed)
+        mock_valid_dir_path = MagicMock(spec=Path)
+        mock_valid_dir_path.is_dir.return_value = True
+        mock_valid_dir_path.name = series_id
+        mock_valid_dir_path.__str__.return_value = f"{study_path_str}/{series_id}"
+
+        # Mock the iterdir() call on the study_path
+        mock_study_path.iterdir.return_value = [mock_valid_dir_path]
+
+        # 2. Patch Dependencies (tf.io.TFRecordWriter and _process_series)
+        with (
+                  # Patch tf.io.TFRecordWriter to prevent actual file writing
+                  patch('tensorflow.io.TFRecordWriter') as mock_tfrecord_writer_class,
+
+                  # Patch _process_series, which should NOT be called for the file
+                  patch.object(dataset_object, '_process_series') as mock_process_series,
+              ):
+
+            # Clear any warning calls made during object initialization
+            mock_logger.warning.reset_mock()
+
+            # 3. Call the method under test
+            # Remark: the logger SHALL be passed as a keyword argument (logger=mock_logger)
+            # to avoid the "got multiple values for argument 'logger'" TypeError,
+            # which occurs when the 'log_method' decorator tries to inject the logger
+            # while it is simultaneously passed positionally.
+            dataset_object._process_study(
+                                            study_path=mock_study_path,
+                                            metadata_df=mock_metadata_df,
+                                            tfrecord_dir=mock_tfrecord_dir,
+                                            logger=mock_logger
+                                            )
+
+            # 4. Assertions
+
+            # 4.1. Assert that the TFRecordWriter was initialized for the correct path
+            # The function under test calls str() on the path before passing it to the Writer
+            expected_tfrecord_path_str = str(mock_tfrecord_path)
+            mock_tfrecord_writer_class.assert_called_once_with(expected_tfrecord_path_str)
+
+            # 4.2. Assert that _process_series was NOT called
+            mock_process_series.assert_not_called()
+
+            # 4.3. Assert the logger was called with the right number of warnings
+            assert mock_logger.warning.call_count == 4
+
+            # 4.4. Assert the logger was called with the right warning message 
+            # 4.4.1 Verify the content of the first and last warnings
+            expected_warning_1_start = f"No metadata found for series {series_id}"
+            expected_warning_4_exact = "Please check the CSV files and ensure they contain the right records"
+
+            # 4.4.2 Extract teh arguments from all warning calls
+            warning_calls = mock_logger.warning.call_args_list
+
+            # 4.4.3 Check the first warning (detailed message about the ignored series)
+            first_warning_msg = warning_calls[0][0][0]
+            assert first_warning_msg.startswith(expected_warning_1_start)
+            assert f"in study {study_id}. Skipping this series." in first_warning_msg
+
+            # 4.4.4 Check the latest warning (user instruction)
+            last_warning_msg = warning_calls[3][0][0]
+            assert last_warning_msg == expected_warning_4_exact
+
 
     def test_build_tf_dataset_pipeline(
                                         self,
@@ -1022,8 +1159,7 @@ class TestLumbarDicomTFRecordDataset:
             )
 
             # Check that _serialize_metadata was called with the correct arguments
-            mock_serialize_metadata.assert_called_once_with(
-                                          "1", "2", "1", mock_metadata_df)
+            mock_serialize_metadata.assert_called_once_with(mock_metadata_df)
 
             # Check that the result is the expected serialized metadata
             assert result == b"serialized_metadata_bytes"
