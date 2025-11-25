@@ -5,8 +5,7 @@
     <ProjectGuid>0963f959-8e06-4b38-bd80-e09408281960</ProjectGuid>
     <ProjectHome>.</ProjectHome>
     <StartupFile>src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py</StartupFile>
-    <SearchPath>
-    </SearchPath>
+    <SearchPath>src</SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
     <Name>RSNA_Items_Detection_Classification</Name>
@@ -16,8 +15,9 @@
     <UnitTestPattern>test*.py</UnitTestPattern>
     <UnitTestRootDirectory>.</UnitTestRootDirectory>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <EnableNativeCodeDebugging>True</EnableNativeCodeDebugging>
+    <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
     <IsWindowsApplication>True</IsWindowsApplication>
+    <InterpreterPath>C:\Users\Olivier\anaconda3\envs\airflow_env\python.exe</InterpreterPath>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>

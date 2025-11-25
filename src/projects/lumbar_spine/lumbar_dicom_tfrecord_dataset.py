@@ -1,5 +1,7 @@
 # coding: utf-8
 
+from ast import Try, TryStar
+from pickle import FALSE
 import tensorflow as tf
 from typing import Dict, Tuple, List, Optional
 from src.core.data_handlers.dicom_tfrecord_dataset import DicomTFRecordDataset
@@ -156,18 +158,15 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
             # 3. Encode categorical metadata
             #    Fields affected : condition, level, series_description, severity
-            encoded_metadata_df = self._encode_dataframe(metadata_handler._merged_df)
+            encoded_metadata_df = self._encode_dataframe(metadata_handler.merged)
             logger.info("Encoded categorical metadata", extra={"action": "encode_metadata"})
 
             # 4. Convert DICOM files to TFRecords (if needed)
             if not list(self._tfrecord_dir.glob("*.tfrecord")):
                 logger.info("  Creating TFRecord files...")
 
-                str_study_dir = str(
-                    Path(self._config["root_dir"]) / self._config["dicom_study_dir"]
-                )
                 self._convert_dicom_to_tfrecords(
-                    study_dir=str_study_dir,
+                    study_dir=self._config["dicom_study_dir"],
                     metadata_df=encoded_metadata_df,
                     tfrecord_dir=str(self._tfrecord_dir)
                 )
@@ -433,7 +432,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     logger.warning(msg_warning)
                     continue
 
-                study_metadata_df = metadata_df[metadata_df['study_id'] == study_path.name]
+                study_metadata_df = metadata_df[metadata_df['study_id'] == int(study_path.name)]
 
                 if study_metadata_df.empty:
                     msg_warning = (
@@ -459,7 +458,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                     logger.warning(msg_warning)
                     continue
 
-                self._process_study(study_path, study_metadata_df, tfrecord_path, logger)
+                self._process_study(study_path, study_metadata_df, tfrecord_path)
 
             logger.info("DICOM to TFRecord conversion completed successfully",
                         extra={"status": "success"})
@@ -483,7 +482,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         """
             Iterates over the series directories within a given study directory.
 
-            Each series directory is checked and then processed by `_process_series`
+            Each series directory is checked and then processed by `_process_single_series_instance`
             to extract DICOM data and write it as features into the TFRecord file
             designated for the study. Non-directory items are skipped and logged.
 
@@ -498,51 +497,94 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         logger = logger or self.logger
 
         study_id = study_path.name
+
+        logger.info(f"Starting processing study {study_id}",
+                    extra={"action": "process_study", "study_dir": study_path})
+
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
+
+        nb_skipped_series = 0
 
         with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
             for series_path in study_path.iterdir():
-                if not series_path.is_dir():
-                    msg_warning = (
-                                    f"Skipping non-directory item: {series_path} "
-                                    f"in study: {study_path}"
-                                   )
-                    logger.warning(msg_warning)
+                if not self._process_single_series_instance(series_path, metadata_df, writer):
+                    nb_skipped_series += 1
                     continue
 
-                series_metadata_df = metadata_df[metadata_df['series_id'] == series_path.name]
+        if nb_skipped_series > 0:
+            logger.warning(
+                f"Study {study_id} processed with {nb_skipped_series} skipped series "
+                "due to missing metadata or aborted TFRecord file generation.",
+                extra={"status": "partial_success", "skipped_series": nb_skipped_series}
+            )
+        else:
+            logger.info(
+                f"Study {study_id} processing completed successfully.",
+                extra={"status": "success"}
+            )
+    
 
-                if series_metadata_df.empty:
-                    # Main messages with dynamic Ids (study_id, series_id)
-                    msg_warning = (
-                                    f"No metadata found for series {series_path.name} "
-                                    f"in study {study_id}. Skipping this series."
-                                   )
-                    logger.warning(msg_warning)
+    def _process_single_series_instance(
+                                        self,
+                                        series_path: Path,
+                                        metadata_df: pd.DataFrame,
+                                        writer: tf.io.TFRecordWriter,
+                                        logger: Optional[logging.Logger] = None
+                                       ) -> None:
+        """
+            Processes a single series directory within a study.
+            This method checks if the provided series path is a directory.
+            If it is, it filters the metadata DataFrame for entries corresponding
+            to the series ID. If matching metadata is found, it delegates the
+            processing of the series to `_process_series`. Non-directory items
+            are skipped with a warning.
 
-                    # Explanation of the impact (consequences of the omission)
-                    logger.warning(
-                                    "This series will not be considered during training "
-                                    "or evaluation."
-                                    )
+            Args:
+                - series_path: The path to the series directory.
+                - metadata_df: DataFrame containing metadata relevant to the study.
+                - writer: The active TFRecordWriter instance for the current study.
+                - logger: Logger instance for logging warnings.
 
-                    # Possible root cause
-                    logger.warning(
-                                    "This may be due to missing or inconsistent records "
-                                    "in the CSV files."
-                                    )
 
-                    # Suggested corrective actions
-                    msg_warning = (
-                                    "Please check the CSV files "
-                                    "and ensure they contain the right records"
-                                    )
-                    logger.warning(msg_warning)
+            Returns:
+                bool: True if the series was processed (meaning it was a valid directory with 
+                      metadata, and `_process_series` was called). False if the series was 
+                      skipped (non-directory item, missing metadata, or complete processing failure
+                      in `_process_series`).
+        """
+        logger = logger or self.logger
 
-                    # Skip the series
-                    continue
+        study_path = series_path.parent
+        study_id = study_path.name
+        
+        if not series_path.is_dir():
+            msg_warning = (
+                            f"\nSkipping non-directory item: {series_path} "
+                            f"in study: {study_path}"
+                           )
+            logger.warning(msg_warning)
+            return False
 
-                self._process_series(series_path, series_metadata_df, writer)
+        series_id = int(series_path.name)
+        series_metadata_df = metadata_df[metadata_df['series_id'] == series_id]
+
+        if series_metadata_df.empty:
+            warning_message = (
+                f"Skipping series {series_path.name} in study {study_id}: No matching metadata found.\n"
+                "-> Consequence: This series will not be considered during training or evaluation.\n"
+                "-> Root Cause: This may be due to missing or inconsistent records in the CSV files.\n"
+                "-> Action: Please check the CSV files and ensure they contain the right records."
+            )
+            logger.warning(warning_message, 
+                           extra={"status": "metadata_missing", 
+                                  "series_dir": series_path.name,
+                                  "study_id": study_id})
+            return False
+
+        is_successful = not self._process_series(series_path, series_metadata_df, writer)
+
+        return is_successful
+
 
     @log_method()
     def _process_series(
@@ -565,64 +607,212 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 - series_path: The path to the series directory.
                 - metadata_df: DataFrame containing metadata specific to this series.
                 - writer: The active TFRecordWriter instance for the current study.
+
+            Returns:
+                bool: True if the processing of the series resulted in a *complete failure* (i.e., zero successful TFRecord examples were written). False otherwise 
+                      (meaning full or partial success).
         """
         logger = logger or self.logger
 
+        logger.info(f"Starting processing series {series_path.name}",
+                    extra={"action": "process_series", "series_dir": series_path})  
+
+        nb_skipped_files = 0
+        nb_failed_process = 0
+        nb_success_file = 0
+
         for dicom_path in series_path.glob("*.dcm"):
+            metadata_ok, process_initiated_and_aborted = self._process_single_dicom_instance(dicom_path, metadata_df, writer)
 
-            dicom_metadata_df = metadata_df[metadata_df['instance_number'] == dicom_path.stem]
-            if dicom_metadata_df.empty:
-                # Log a series of warnings for clarity when metadata is missing
-                logger.warning(
-                    f"No metadata found for DICOM file {dicom_path.name} "
-                    f"in series {series_path.name}. Skipping this file."
-                )
-                logger.warning(
-                    "This file will not be considered during training or evaluation."
-                )
-                logger.warning(
-                    "This may be due to missing or inconsistent records in the CSV files."
-                )
-                logger.warning(
-                    "Please check the CSV files and ensure they contain the relevant records."
-                )
-
+            if metadata_ok is False:
+                nb_skipped_files +=1
                 continue
 
+            if process_initiated_and_aborted is True:
+                nb_failed_process +=1
+                continue
+
+            nb_success_file +=1
+
+        full_success : bool = (nb_skipped_files == 0 and nb_failed_process == 0)
+        partial_success : bool = (nb_success_file > 0 and not full_success)
+        complete_failure = (nb_success_file == 0)
+
+        if complete_failure:
+            logger.error(
+                f"Series {series_path.name} processing failed: "
+                f"All files were skipped or failed during processing.",
+                extra={"status": "failed"}
+            )
+
+        if partial_success:
+            total_unprocessed = nb_skipped_files + nb_failed_process
+            logger.warning(
+                f"Series {series_path.name} partially processed ({nb_success_file} success). "
+                f"Skipped {total_unprocessed} files in total: "
+                f"({nb_skipped_files} due to missing metadata; "
+                f"{nb_failed_process} due to processing errors).",
+                extra={"status": "partial_success", 
+                       "skipped_metadata": nb_skipped_files,
+                       "failed_processing": nb_failed_process}
+            )
+
+        if full_success:
+            logger.info(
+                f"Series {series_path.name} processing completed successfully.",
+                extra={"status": "success"}
+            )
+
+        return complete_failure
+    
+    @log_method()
+    def _process_single_dicom_instance(
+                                        self,
+                                        dicom_path: Path,
+                                        metadata_df: pd.DataFrame,
+                                        writer: tf.io.TFRecordWriter,
+                                        logger: Optional[logging.Logger] = None
+                                       ) -> bool:
+        """
+            Processes a single DICOM file within a series.
+
+            This method filters the provided metadata DataFrame using the DICOM file's
+            `instance_number` (derived from the file name). If matching metadata is found,
+            it delegates the processing of the DICOM file and metadata serialization to
+            `_process_dicom_file`, and writes the resulting features to the TFRecord
+            using `_write_tfrecord_example`. If no matching metadata is found, it logs
+            a warning and returns False.
+
+            Args:
+                - dicom_path: The path to the DICOM file.
+                - metadata_df: DataFrame containing metadata specific to the series.
+                - writer: The active TFRecordWriter instance for the current study.
+                - series_path: The path to the parent series directory (for logging context).
+                - logger: Optional logger instance.
+        
+            Returns:
+                Tuple[bool, bool]: A tuple `(metadata_ok, process_aborted)`.
+                    - `metadata_ok`: True if matching metadata was found for the DICOM file. 
+                      False otherwise (file was skipped).
+                    - `process_aborted`: True if metadata was found, but the processing 
+                      (`_process_dicom_file` or `_write_tfrecord_example`) failed 
+                      due to an exception. False otherwise (success or skipped due to metadata).
+        """
+        logger = logger or self.logger
+        series_path = dicom_path.parent
+
+        dicom_metadata_df = metadata_df[metadata_df['instance_number'] == int(dicom_path.stem)]
+        if dicom_metadata_df.empty:
+            # Consolidated Warning: Use newlines (\n) to separate the points
+            # while maintaining a single log event.
+            warning_message = (
+                f"Skipping DICOM file {dicom_path.name} in series {series_path.name}. "
+                "No matching metadata found.\n"
+                "-> Consequence: This file will not be considered during training or evaluation.\n"
+                "-> Action: Please check the CSV files for missing or inconsistent records."
+            )
+            logger.warning(warning_message)
+
+            metadata_OK = False
+            process_initiated_and_aborted = False
+            return metadata_OK, process_initiated_and_aborted
+
+        try:
             # Process the DICOM file and its metadata
             img_bytes, serialized_metadata = self._process_dicom_file(dicom_path, dicom_metadata_df)
 
             # Write the result to the TFRecord
             self._write_tfrecord_example(img_bytes, serialized_metadata, writer)
 
+            metadata_OK = True
+            process_initiated_and_aborted = False
+
+            return metadata_OK, process_initiated_and_aborted
+
+        except Exception as e:
+            metadata_OK = True
+            process_initiated_and_aborted = True
+
+            return metadata_OK, process_initiated_and_aborted
+
     @log_method()
-    def _process_dicom_file(self, dicom_path: Path,
-                            metadata_df: pd.DataFrame,
-                            logger: Optional[logging.Logger] = None) -> Tuple[bytes, bytes]:
+    def _process_dicom_file(
+                                self,
+                                dicom_path: Path,
+                                metadata_df: pd.DataFrame,
+                                logger: Optional[logging.Logger] = None
+                            ) -> Tuple[bytes, bytes]:
         """
             Process a single DICOM file and return serialized image and metadata.
+
+            Args:
+                - dicom_path: The path to the DICOM file.
+                - metadata_df: DataFrame containing metadata for this instance.
+                - logger: Optional logger instance.
+        
+            Returns:
+                Tuple[bytes, bytes]: Serialized image tensor and serialized metadata.
+        
+            Raises:
+                Exception: If reading, converting, or serializing the DICOM image fails.
         """
         logger = logger or self.logger
 
-        img = sitk.ReadImage(str(dicom_path))
-        img_array = sitk.GetArrayFromImage(img)
-        img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
-        img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
+        logger.info(f"Processing DICOM file {dicom_path}",
+                    extra={"action": "process_dicom_file", "dicom_file": dicom_path})
 
-        # serialized_metadata = self._get_metadata_for_file(str(dicom_path), metadata_df)
-        serialized_metadata = self._serialize_metadata(metadata_df)
+        try:
+            img = sitk.ReadImage(str(dicom_path))
+            img_array = sitk.GetArrayFromImage(img)
+            img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
+            img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
 
-        return img_bytes, serialized_metadata
+            serialized_metadata = self._serialize_metadata(metadata_df)
 
+            logger.info(f"Successfully processed DICOM file {dicom_path}",
+                           extra={"status":"success"})
+
+            return img_bytes, serialized_metadata
+
+        except Exception as e:
+            logger.error(
+                f"Error during DICOM file read/conversion/serialization for {dicom_path.name}: {str(e)}",
+                exc_info=True,  # Includes the full stack trace upon failure
+                extra={"status": "failed", "error_type": "DicomProcessingError"}
+            )
+            raise
+
+    @log_method()
     def _write_tfrecord_example(self, img_bytes: bytes, serialized_metadata: bytes,
                                 writer: tf.io.TFRecordWriter) -> None:
-        """Write a single TFRecord example to the writer."""
+        """
+            Write a single TFRecord example to the writer.
+
+            Args:
+                - img_bytes: Serialized image tensor bytes.
+                - serialized_metadata: Serialized metadata bytes.
+                - writer: The active TFRecordWriter instance.
+
+            Returns:
+                None: The method writes the example directly to the provided writer.
+
+            Raises:
+                Exception: If an error occurs during the creation or writing of the TFRecord example.
+        """
+        logger = self.logger
+
         feature = {
             "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
             "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
         }
-        example = tf.train.Example(features=tf.train.Features(feature=feature))
-        writer.write(example.SerializeToString())
+        try:
+            example = tf.train.Example(features=tf.train.Features(feature=feature))
+            writer.write(example.SerializeToString())
+        
+        except Exception as e:
+            self.logger.error(f"Error writing TFRecord example: {str(e)}", exc_info=True,
+                              extra={"status": "failed", "error": str(e)})
+            raise
 
     @log_method()
     def _get_metadata_for_file(self, file_path: str, metadata_df: pd.DataFrame, *,

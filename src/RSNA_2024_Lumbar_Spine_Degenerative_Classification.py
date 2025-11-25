@@ -20,8 +20,8 @@ def handle_interrupt(signum, frame):
 
 def main():
     """
-    Main function to load configuration, set up the TensorFlow dataset pipeline,
-    load and compile the 3D model, and start the training process.
+        Main function to load configuration, set up the TensorFlow dataset pipeline,
+        load and compile the 3D model, and start the training process.
     """
     # Setup signal handler for graceful interruption
     signal.signal(signal.SIGINT, handle_interrupt)
@@ -58,5 +58,6 @@ def main():
         clean_old_logs(days=30)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     main()
+    #print("COUCOU")

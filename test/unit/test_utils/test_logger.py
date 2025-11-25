@@ -169,6 +169,7 @@ def test_log_method_decorator_with_logger_param(tmp_path):
         Test that the log_method decorator injects the logger if the function accepts it.
     """
     log_dir = tmp_path / "logs"
+    print(f"log_dir = {log_dir}")
 
     @log_method()
     def test_function_with_logger(logger=None):
