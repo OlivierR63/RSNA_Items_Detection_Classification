@@ -1017,7 +1017,7 @@ class TestMetadataIntegrity:
 
         # Pre-calculate lists for the payload assertions to keep lines under 100 chars
         nb_records = deserialized_dict['nb_records']
-        
+
         def get_records(idx, key):
             """
                 Retrieves a specific value 'key' from the record at index 'idx'

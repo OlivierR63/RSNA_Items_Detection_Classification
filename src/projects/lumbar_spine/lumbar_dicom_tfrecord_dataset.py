@@ -1,7 +1,5 @@
 # coding: utf-8
 
-from ast import Try, TryStar
-from pickle import FALSE
 import tensorflow as tf
 from typing import Dict, Tuple, List, Optional
 from src.core.data_handlers.dicom_tfrecord_dataset import DicomTFRecordDataset
@@ -522,7 +520,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 f"Study {study_id} processing completed successfully.",
                 extra={"status": "success"}
             )
-    
 
     def _process_single_series_instance(
                                         self,
@@ -547,8 +544,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
 
             Returns:
-                bool: True if the series was processed (meaning it was a valid directory with 
-                      metadata, and `_process_series` was called). False if the series was 
+                bool: True if the series was processed (meaning it was a valid directory with
+                      metadata, and `_process_series` was called). False if the series was
                       skipped (non-directory item, missing metadata, or complete processing failure
                       in `_process_series`).
         """
@@ -556,7 +553,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         study_path = series_path.parent
         study_id = study_path.name
-        
+
         if not series_path.is_dir():
             msg_warning = (
                             f"\nSkipping non-directory item: {series_path} "
@@ -570,13 +567,16 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         if series_metadata_df.empty:
             warning_message = (
-                f"Skipping series {series_path.name} in study {study_id}: No matching metadata found.\n"
+                f"Skipping series {series_path.name} in study {study_id}: "
+                "No matching metadata found.\n"
                 "-> Consequence: This series will not be considered during training or evaluation.\n"
-                "-> Root Cause: This may be due to missing or inconsistent records in the CSV files.\n"
-                "-> Action: Please check the CSV files and ensure they contain the right records."
+                "-> Root Cause: This may be due to missing "
+                    "or inconsistent records in the CSV files.\n"
+                "-> Action: Please check the CSV files "
+                "and ensure they contain the right records."
             )
-            logger.warning(warning_message, 
-                           extra={"status": "metadata_missing", 
+            logger.warning(warning_message,
+                           extra={"status": "metadata_missing",
                                   "series_dir": series_path.name,
                                   "study_id": study_id})
             return False
@@ -584,7 +584,6 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
         is_successful = not self._process_series(series_path, series_metadata_df, writer)
 
         return is_successful
-
 
     @log_method()
     def _process_series(
@@ -609,34 +608,37 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 - writer: The active TFRecordWriter instance for the current study.
 
             Returns:
-                bool: True if the processing of the series resulted in a *complete failure* (i.e., zero successful TFRecord examples were written). False otherwise 
-                      (meaning full or partial success).
+                bool: True if the processing of the series resulted in a *complete failure*
+                        (i.e., zero successful TFRecord examples were written).
+                      False otherwis (meaning full or partial success).
         """
         logger = logger or self.logger
 
         logger.info(f"Starting processing series {series_path.name}",
-                    extra={"action": "process_series", "series_dir": series_path})  
+                    extra={"action": "process_series", "series_dir": series_path})
 
         nb_skipped_files = 0
         nb_failed_process = 0
         nb_success_file = 0
 
         for dicom_path in series_path.glob("*.dcm"):
-            metadata_ok, process_initiated_and_aborted = self._process_single_dicom_instance(dicom_path, metadata_df, writer)
+            (metadata_ok, process_initiated_and_aborted) = self._process_single_dicom_instance(
+                                                                dicom_path, metadata_df, writer
+            )
 
             if metadata_ok is False:
-                nb_skipped_files +=1
+                nb_skipped_files += 1
                 continue
 
             if process_initiated_and_aborted is True:
-                nb_failed_process +=1
+                nb_failed_process += 1
                 continue
 
-            nb_success_file +=1
+            nb_success_file += 1
 
-        full_success : bool = (nb_skipped_files == 0 and nb_failed_process == 0)
-        partial_success : bool = (nb_success_file > 0 and not full_success)
-        complete_failure = (nb_success_file == 0)
+        full_success: bool = (nb_skipped_files == 0 and nb_failed_process == 0)
+        partial_success: bool = (nb_success_file > 0 and not full_success)
+        complete_failure: bool = (nb_success_file == 0)
 
         if complete_failure:
             logger.error(
@@ -652,7 +654,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 f"Skipped {total_unprocessed} files in total: "
                 f"({nb_skipped_files} due to missing metadata; "
                 f"{nb_failed_process} due to processing errors).",
-                extra={"status": "partial_success", 
+                extra={"status": "partial_success",
                        "skipped_metadata": nb_skipped_files,
                        "failed_processing": nb_failed_process}
             )
@@ -664,7 +666,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             )
 
         return complete_failure
-    
+
     @log_method()
     def _process_single_dicom_instance(
                                         self,
@@ -689,13 +691,13 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 - writer: The active TFRecordWriter instance for the current study.
                 - series_path: The path to the parent series directory (for logging context).
                 - logger: Optional logger instance.
-        
+
             Returns:
                 Tuple[bool, bool]: A tuple `(metadata_ok, process_aborted)`.
-                    - `metadata_ok`: True if matching metadata was found for the DICOM file. 
+                    - `metadata_ok`: True if matching metadata was found for the DICOM file.
                       False otherwise (file was skipped).
-                    - `process_aborted`: True if metadata was found, but the processing 
-                      (`_process_dicom_file` or `_write_tfrecord_example`) failed 
+                    - `process_aborted`: True if metadata was found, but the processing
+                      (`_process_dicom_file` or `_write_tfrecord_example`) failed
                       due to an exception. False otherwise (success or skipped due to metadata).
         """
         logger = logger or self.logger
@@ -729,7 +731,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
             return metadata_OK, process_initiated_and_aborted
 
-        except Exception as e:
+        except Exception:
             metadata_OK = True
             process_initiated_and_aborted = True
 
@@ -749,10 +751,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 - dicom_path: The path to the DICOM file.
                 - metadata_df: DataFrame containing metadata for this instance.
                 - logger: Optional logger instance.
-        
+
             Returns:
                 Tuple[bytes, bytes]: Serialized image tensor and serialized metadata.
-        
+
             Raises:
                 Exception: If reading, converting, or serializing the DICOM image fails.
         """
@@ -770,21 +772,27 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             serialized_metadata = self._serialize_metadata(metadata_df)
 
             logger.info(f"Successfully processed DICOM file {dicom_path}",
-                           extra={"status":"success"})
+                        extra={"status": "success"})
 
             return img_bytes, serialized_metadata
 
         except Exception as e:
+            
             logger.error(
-                f"Error during DICOM file read/conversion/serialization for {dicom_path.name}: {str(e)}",
+                f"Error during DICOM file read/conversion/serialization for {dicom_path.name}: "
+                f"{str(e)}",
                 exc_info=True,  # Includes the full stack trace upon failure
                 extra={"status": "failed", "error_type": "DicomProcessingError"}
             )
             raise
 
     @log_method()
-    def _write_tfrecord_example(self, img_bytes: bytes, serialized_metadata: bytes,
-                                writer: tf.io.TFRecordWriter) -> None:
+    def _write_tfrecord_example(
+                                    self, img_bytes: bytes,
+                                    serialized_metadata: bytes,
+                                    writer: tf.io.TFRecordWriter,
+                                    logger: Optional[logging.Logger] = None
+                                ) -> None:
         """
             Write a single TFRecord example to the writer.
 
@@ -799,18 +807,20 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             Raises:
                 Exception: If an error occurs during the creation or writing of the TFRecord example.
         """
-        logger = self.logger
+        logger = logger or self.logger
 
         feature = {
             "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
-            "metadata": tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_metadata]))
+            "metadata": tf.train.Feature(
+                bytes_list=tf.train.BytesList(value=[serialized_metadata])
+            )
         }
         try:
             example = tf.train.Example(features=tf.train.Features(feature=feature))
             writer.write(example.SerializeToString())
-        
+
         except Exception as e:
-            self.logger.error(f"Error writing TFRecord example: {str(e)}", exc_info=True,
+            logger.error(f"Error writing TFRecord example: {str(e)}", exc_info=True,
                               extra={"status": "failed", "error": str(e)})
             raise
 
