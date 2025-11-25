@@ -569,9 +569,10 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             warning_message = (
                 f"Skipping series {series_path.name} in study {study_id}: "
                 "No matching metadata found.\n"
-                "-> Consequence: This series will not be considered during training or evaluation.\n"
+                "-> Consequence: This series will not be considered "
+                "during training or evaluation.\n"
                 "-> Root Cause: This may be due to missing "
-                    "or inconsistent records in the CSV files.\n"
+                "or inconsistent records in the CSV files.\n"
                 "-> Action: Please check the CSV files "
                 "and ensure they contain the right records."
             )
@@ -777,7 +778,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
             return img_bytes, serialized_metadata
 
         except Exception as e:
-            
+
             logger.error(
                 f"Error during DICOM file read/conversion/serialization for {dicom_path.name}: "
                 f"{str(e)}",
@@ -805,7 +806,8 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 None: The method writes the example directly to the provided writer.
 
             Raises:
-                Exception: If an error occurs during the creation or writing of the TFRecord example.
+                Exception: If an error occurs during the creation or writing 
+                           of the TFRecord example.
         """
         logger = logger or self.logger
 
@@ -821,7 +823,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
         except Exception as e:
             logger.error(f"Error writing TFRecord example: {str(e)}", exc_info=True,
-                              extra={"status": "failed", "error": str(e)})
+                         extra={"status": "failed", "error": str(e)})
             raise
 
     @log_method()
