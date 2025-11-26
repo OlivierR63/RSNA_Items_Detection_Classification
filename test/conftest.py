@@ -10,15 +10,16 @@ import pandas as pd
 @pytest.fixture
 def mock_config(tmp_path):
     """Fixture for a mocked configuration dictionary."""
+    root_dir = Path(__file__).resolve().parent
     return {
-        "root_dir": str(Path(__file__).resolve().parent),
-        "dicom_study_dir": "fixtures/dicom_unique_sample",
-        "tfrecord_sample_dir": "fixtures/tfrecords",
+        "root_dir": str(root_dir),
+        "dicom_study_dir": str(root_dir/"fixtures/dicom_unique_sample"),
+        "tfrecord_sample_dir": str(root_dir/"fixtures/tfrecords"),
         "tfrecord_dir": str(tmp_path / "tfrecords"),
         "csv_files": {
-            "series_description": "fixtures/csv_samples/mock_train_series_descriptions.csv",
-            "label_coordinates": "fixtures/csv_samples/mock_train_label_coordinates.csv",
-            "train": "fixtures/csv_samples/mock_train.csv"
+            "series_description": str(root_dir/"fixtures/csv_samples/mock_train_series_descriptions.csv"),
+            "label_coordinates": str(root_dir/"fixtures/csv_samples/mock_train_label_coordinates.csv"),
+            "train": str(root_dir/"fixtures/csv_samples/mock_train.csv")
         },
         "output_dir": str(tmp_path),
         "model_2d": {"type": "mock_model"},

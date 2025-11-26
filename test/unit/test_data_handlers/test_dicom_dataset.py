@@ -27,7 +27,7 @@ def test_dicom_tf_dataset(mock_config):
 
     # --- Setup ---
     # The path is injected by the pytest fixture
-    dicom_dir = mock_config["root_dir"] + '/' + mock_config["dicom_study_dir"]
+    dicom_dir = mock_config["dicom_study_dir"]
     BATCH_SIZE = 2
 
     # Check that the directory exists and contains DICOM files

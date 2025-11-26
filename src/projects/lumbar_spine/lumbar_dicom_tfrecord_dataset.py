@@ -434,24 +434,11 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
 
                 if study_metadata_df.empty:
                     msg_warning = (
-                                    f"No metadata found for study {study_path.name}. "
-                                    f"Skipping TFRecord generation for this study."
-                                   )
-                    logger.warning(msg_warning)
-
-                    logger.warning(
-                                    "This study will not be considered "
-                                    "during training or evaluation."
-                                   )
-
-                    logger.warning(
-                                    "This may be due to missing "
-                                    "or inconsistent records in the CSV files."
-                                   )
-
-                    msg_warning = (
-                                    "Please check the CSV files "
-                                    "and ensure they contain the right records."
+                                    f"Skipping study {study_path.name} due to missing metadata. "
+                                    "This study will not be considered during training or evaluation "
+                                    "and the relevant TFRecord file will not be generated."
+                                    "Possible cause: missing or inconsistent records in the CSV files. "
+                                    "Required action: Please check the CSV files and ensure they contain the right records."
                                    )
                     logger.warning(msg_warning)
                     continue
@@ -806,7 +793,7 @@ class LumbarDicomTFRecordDataset(DicomTFRecordDataset):
                 None: The method writes the example directly to the provided writer.
 
             Raises:
-                Exception: If an error occurs during the creation or writing 
+                Exception: If an error occurs during the creation or writing
                            of the TFRecord example.
         """
         logger = logger or self.logger

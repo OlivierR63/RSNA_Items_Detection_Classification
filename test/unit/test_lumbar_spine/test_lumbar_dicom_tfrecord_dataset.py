@@ -1,5 +1,6 @@
 # coding: utf-8
 
+from json.scanner import NUMBER_RE
 from unittest.mock import patch, MagicMock, ANY
 
 # The 'ANY' object is imported here for use in mock assertions.
@@ -303,7 +304,7 @@ class TestLumbarDicomTFRecordDataset:
 
         # DataFrame required to pass the 'study_metadata_df.empty' check in the loop
         metadata_for_exception_test = pd.DataFrame({
-            'study_id': ['dummy_study_1'],
+            'study_id': [123456789],
             'some_required_col': [1]  # Minimal column for a valid, non-empty row
         })
 
@@ -338,7 +339,7 @@ class TestLumbarDicomTFRecordDataset:
                              ),
 
                 # Create a dummy study directory so the outer loop finds something to iterate over
-                patch('pathlib.Path.iterdir', return_value=[tmp_path / "dummy_study_1"]),
+                patch('pathlib.Path.iterdir', return_value=[tmp_path / "123456789"]),
                 patch('pathlib.Path.is_dir', return_value=True),
               ):
             # Assert that the exception is correctly re-raised (L432)
@@ -368,18 +369,117 @@ class TestLumbarDicomTFRecordDataset:
             assert kwargs["extra"]["error"] == exception_message
             assert kwargs["exc_info"] is True
 
-    def test_convert_dicom_to_tfrecord_skip_non_directory(
-        self,
-        mock_setup: Tuple[dict[str, Any], MagicMock],
-        tmp_path: Path
-    ) -> None:
+    def test_convert_dicom_to_tfrecords_skip_missing_metadata(
+            self,
+            mock_setup: Tuple[dict[str, Any], MagicMock],
+            tmp_path: Path
+        ) -> None:
         """
-        Tests the 'if not study_path.is_dir(): continue' branch in
-        _convert_dicom_to_tfrecords.
+            Tests the 'if study_metadata_df.empty: continue' branch in _convert_dicom_to_tfrecords.
 
-        It simulates a study directory containing a file (non-directory item)
-        and asserts that the file is skipped, a warning is logged, and
-        _process_study is NOT called for the non-directory item.
+            Simulates:
+            1. A valid study directory (which passes the initial is_dir() check).
+            2. A metadata DataFrame that DOES NOT contain the study ID, so the filtered df is empty.
+
+            Asserts:
+            1. _process_study is never called.
+            2. A warning is logged for the skipped study.
+            3. A 'success' log is emitted (no exception).
+        """
+
+        mock_config, mock_logger = mock_setup
+
+        STUDY_ID = 999999999
+        SERIES_ID = 1234567
+        NUM_INSTANCES = 1
+
+        # Base paths
+        mock_study_root_path = Path(tmp_path / "dicom_root")
+        mock_tfrecord_dir = Path(tmp_path / "tfrecord_output")
+
+        # Metadata DOES NOT contain the STUDY_ID
+        metadata_df = pd.DataFrame(
+            {
+                'study_id': [111111111],
+                'series_id': [SERIES_ID],
+                'instance_number': [NUM_INSTANCES],
+                'metadata': ['meta1']
+            }
+        )
+
+        # Mock a study directory object (returned by iterdir)
+        mock_study_path = MagicMock(spec=Path)
+        mock_study_path.name = str(STUDY_ID)
+        mock_study_path.is_dir.return_value = True
+
+        # Create dataset object
+        with patch.object(
+            LumbarDicomTFRecordDataset,
+            '_generate_tfrecord_files',
+            return_value=None
+        ):
+            dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
+
+        with (
+            patch.object(
+                dataset_object,
+                '_setup_tfrecord_directory',
+                return_value=mock_tfrecord_dir
+            ) as mock_setup_dir,
+
+            patch.object(
+                dataset_object,
+                '_process_study',
+                return_value=None
+            ) as mock_process_study,
+
+            patch("pathlib.Path.iterdir", return_value=[mock_study_path]),
+
+            patch("tqdm.tqdm", side_effect=lambda x: x),
+        ):
+            mock_logger.reset_mock()
+
+            dataset_object._convert_dicom_to_tfrecords(
+                study_dir=str(mock_study_root_path),
+                metadata_df=metadata_df,
+                tfrecord_dir=str(mock_tfrecord_dir),
+                logger=mock_logger
+            )
+
+            # -------------------------------
+            # Assertions
+            # -------------------------------
+
+            # No study processing
+            mock_process_study.assert_not_called()
+
+            # Destination directory prepared
+            mock_setup_dir.assert_called_once_with(str(mock_tfrecord_dir))
+
+            # One warning for skipped study
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert warning_msg.startswith(f"Skipping study {STUDY_ID} due to missing metadata.")
+
+            # Two info logs: start + success
+            assert mock_logger.info.call_count == 2
+
+            # No error log
+            mock_logger.error.assert_not_called()
+
+
+    def test_convert_dicom_to_tfrecord_skip_non_directory(
+            self,
+            mock_setup: Tuple[dict[str, Any], MagicMock],
+            tmp_path: Path
+        ) -> None:
+        """
+            Tests the 'if not study_path.is_dir(): continue' branch in
+            _convert_dicom_to_tfrecords.
+
+            It simulates a study directory containing a file (non-directory item)
+            and asserts that the file is skipped, a warning is logged, and
+            _process_study is NOT called for the non-directory item.
         """
         mock_config, mock_logger = mock_setup
 
@@ -387,7 +487,7 @@ class TestLumbarDicomTFRecordDataset:
         dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # Define the study ID that will be marked as 'valid'
-        valid_study_id = "ValidStudyID123"
+        valid_study_id = 123456789
 
         # 1. Setup Mock Paths for iterdir()
 
@@ -468,239 +568,151 @@ class TestLumbarDicomTFRecordDataset:
                 f"Skipping non-directory item {mock_file_path} "
                 f"in study folder {study_directory_string}"
             )
-            mock_logger.warning.assert_called_once_with(expected_warning_message)
+            mock_logger.warning.assert_any_call(expected_warning_message)
 
             # 4.2. Check that _process_study was only called for the valid directory (once)
             mock_process_study.assert_called_once()
 
             # 4.3. Check the argument used for the single call
 
-            # Use ANY to skip the problematic DataFrame comparison.
-            mock_process_study.assert_called_once_with(
-                                                            mock_valid_dir_path,
-                                                            ANY,
-                                                            mock_tfrecord_path,
-                                                            mock_logger
-                                                        )
+            # Retrieve the actual arguments passed to the mocked object
+            args, kwargs = mock_process_study.call_args
+        
+            actual_study_path = args[0]
+            actual_study_metadata_df = args[1]
+            actual_tfrecord_path = args[2]
 
-    def test_process_study_skip_non_directory(
-                                                self,
-                                                mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                tmp_path: Path
-                                              ) -> None:
-        """
-        Tests the 'if not series_path.is_dir(): continue' branch in _process_study.
+            # The logger is passed either as the fourth positional argument (args[3])
+            # or as a keyword argument (kwargs['logger']).
+            actual_logger = args[3] if len(args) > 3 else kwargs.get('logger')
 
-        Simulates a study directory containing a non-directory item (file) and
-        asserts that it is skipped, and a warning is logged.
+            # Check the study path (1st argument)
+            assert actual_study_path is mock_valid_dir_path
+
+            # Check the metadata DataFrame (2nd argument)
+            assert isinstance(actual_study_metadata_df, pd.DataFrame)
+
+            # Check that the DataFrame is not empty (the filter worked)
+            assert not actual_study_metadata_df.empty
+
+            # Check that the correct study_id was filtered (logic verification)
+            assert actual_study_metadata_df['study_id'].tolist() == [valid_study_id]
+
+            # Check the TFRecord path (3rd argument)
+            assert actual_tfrecord_path is mock_tfrecord_path
+
+
+    def test_process_study_missing_series_metadata(
+            self,
+            mock_setup: Tuple[dict[str, Any], MagicMock, Path, Path, pd.DataFrame],
+            tmp_path: Path
+        ) -> None:
+
         """
+            Tests the 'if not self._process_single_series_instance(...)' branch in _process_study.
+
+            Simulates a study containing a single series where the delegated processing call
+            (_process_single_series_instance) returns False, indicating a skip or failure.
+            Asserts that:
+            1. The delegated series processing is called once and returns False (skip).
+            2. The logging correctly records a single 'partial_success' warning by _process_study.
+        """
+
+        STUDY_ID = "123456789"
+        SERIES_ID = "1234567"
+        NUM_SKIPPED = 1 # We simulate one skipped series
+
+        # Note: We assume mock_setup fixture now correctly includes Path and pd.DataFrame from previous corrections
         mock_config, mock_logger = mock_setup
+    
+        # Minimal mock DataFrame
+        metadata_df = pd.DataFrame({'study_id': ["fake_study_id"], 'series_id': ["fake_series_id"]})
 
-        # Initialize the dataset object
-        dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
+        # Initialize the dataset object (patching _generate_tfrecord_files to skip side effects during init)
+        with patch.object(
+            LumbarDicomTFRecordDataset,
+            '_generate_tfrecord_files',
+            return_value=None
+        ):
+            dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
 
         # 1. Setup Mock Paths
-        study_id = "123456789"
-        series_id = "1234567"
-        study_path_str = str(tmp_path / study_id)
+        study_path_str = str(tmp_path / STUDY_ID)
 
-        # Create a reference to the empty DataFrame to avoid ambiguous truth value error
-        # in mock assertion.
-        mock_metadata_df = pd.DataFrame(
-                                            {
-                                                'study_id': [study_id],
-                                                'series_id': [series_id],
-                                                'instance_number': [1],
-                                                'metadata': ['meta1']
-                                            }
-                                        )
+        # Use the mock metadata from the fixture for consistency
+        mock_metadata_df = metadata_df 
 
         # Mock the Path instances passed as arguments
         mock_study_path = MagicMock(spec=Path)
-        mock_study_path.name = study_id
+        mock_study_path.name = STUDY_ID
         mock_tfrecord_dir = MagicMock(spec=Path)
 
-        # Mock the resulting TFRecord path
-        # Remove 'spec=Path' from the return mock to fix string assertion mismatch.
+        # Mock the resulting TFRecord path construction
         mock_tfrecord_path = MagicMock()
-
-        # Mock the division operator (/) on mock_tfrecord_dir
-        # as the path is constructed via: tfrecord_dir / f"{study_id}.tfrecord"
         mock_tfrecord_dir.__truediv__.return_value = mock_tfrecord_path
 
-        # Mock 1: A non-directory item (the one that should be skipped)
-        mock_file_path = MagicMock(spec=Path)
-        mock_file_path.is_dir.return_value = False
-        mock_file_path.__str__.return_value = f"{study_path_str}/readme.txt"
+        # Mock: The series directory that will be returned by iterdir
+        mock_series_path = MagicMock(spec=Path)
+        mock_series_path.is_dir.return_value = True
+        mock_series_path.name = SERIES_ID
+        mock_series_path.__str__.return_value = f"{study_path_str}/{SERIES_ID}"
 
-        # Mock 2: A valid series directory (the one that should be processed)
-        mock_valid_dir_path = MagicMock(spec=Path)
-        mock_valid_dir_path.is_dir.return_value = True
-        mock_valid_dir_path.name = series_id
-        mock_valid_dir_path.__str__.return_value = f"{study_path_str}/{series_id}"
+        # Mock the iterdir() call on the study_path to return only the single skipped series
+        mock_study_path.iterdir.return_value = [mock_series_path]
 
-        # Mock the iterdir() call on the study_path
-        mock_study_path.iterdir.return_value = [mock_file_path, mock_valid_dir_path]
-
-        # 2. Patch Dependencies (tf.io.TFRecordWriter and _process_series)
+        # 2. Patch Dependencies (tf.io.TFRecordWriter and _process_single_series_instance)
         with (
-                  # Patch tf.io.TFRecordWriter to prevent actual file writing
-                  patch('tensorflow.io.TFRecordWriter') as mock_tfrecord_writer_class,
+            # Patch tf.io.TFRecordWriter to prevent actual file writing
+            patch('tensorflow.io.TFRecordWriter') as mock_tfrecord_writer_class,
 
-                  # Patch _process_series, which should NOT be called for the file
-                  patch.object(dataset_object, '_process_series') as mock_process_series,
-              ):
+            # Patch _process_single_series_instance to simulate a skip/failure
+            # This function returns False to trigger the 'nb_skipped_series += 1' branch
+            patch.object(
+                dataset_object, 
+                '_process_single_series_instance',
+                return_value=False
+            ) as mock_process_single_series_instance,
+        ):
 
-            # Clear any warning calls made during object initialization
-            mock_logger.warning.reset_mock()
+            # Configure the TFRecordWriter mock (Context Manager)
+            mock_tfrecord_writer_class.return_value.__enter__.return_value = MagicMock()
+        
+            # Clear any log calls made *before* the function call (including initialization warnings)
+            mock_logger.reset_mock()
 
             # 3. Call the method under test
             dataset_object._process_study(
                 study_path=mock_study_path,
-                metadata_df=mock_metadata_df,  # Use the mock reference here
+                metadata_df=mock_metadata_df,
                 tfrecord_dir=mock_tfrecord_dir,
                 logger=mock_logger
             )
 
             # 4. Assertions
+            # 4.1. Assert flow control
+            # The delegation call must be made exactly once
+            mock_process_single_series_instance.assert_called_once()
 
-            # 4.1. Assert that the TFRecordWriter was initialized for the correct path
-            # The function under test calls str() on the path before passing it to the Writer
+            # 4.2. Assert Logging (Partial Success branch)
+            # The starting 'info' log and the final 'warning' log
+            assert mock_logger.info.call_count == 1
+
+            # The 'partial_success' warning is expected (since nb_skipped_series = 1)
+            mock_logger.warning.assert_called_once()
+            mock_logger.error.assert_not_called()
+
+            # Check the content of the warning log
+            warning_call_args, warning_call_kwargs = mock_logger.warning.call_args
+
+            expected_warning_start = f"Study {STUDY_ID} processed with {NUM_SKIPPED} skipped series"
+
+            assert warning_call_args[0].startswith(expected_warning_start)
+            assert warning_call_kwargs["extra"]["status"] == "partial_success"
+            assert warning_call_kwargs["extra"]["skipped_series"] == NUM_SKIPPED
+
+            # 4.3. Assert the TFRecordWriter initialization
             expected_tfrecord_path_str = str(mock_tfrecord_path)
             mock_tfrecord_writer_class.assert_called_once_with(expected_tfrecord_path_str)
-
-            # 4.2. Assert that the warning was logged exactly once for the non-directory item
-            expected_warning_message = (
-                f"Skipping non-directory item: {mock_file_path} in study: {mock_study_path}"
-            )
-            mock_logger.warning.assert_called_once_with(expected_warning_message)
-
-            # 4.3. Assert that _process_series was called only for the valid directory
-            mock_process_series.assert_called_once()
-
-            # 4.4. Assert the arguments for the single successful call
-            mock_process_series.assert_called_once_with(
-                mock_valid_dir_path,
-
-                # Use ANY to bypass DataFrame comparison issues (instead of metadata_df)
-                ANY,
-
-                # The mock writer context manager
-                mock_tfrecord_writer_class.return_value.__enter__.return_value
-            )
-
-    def test_process_study_missing_series_metadata(
-                                                      self,
-                                                      mock_setup: Tuple[dict[str, Any], MagicMock],
-                                                      tmp_path: Path
-                                                   ) -> None:
-        """
-        Tests the 'if series_metadata_df.empty: continue' branch in _process_study.
-
-        Simulates a study containing a series directory for which no metadata is
-        available in the metadata_df, and asserts that:
-        1. The series processing is skipped (_process_series is NOT called).
-        2. The four expected warnings are logged.
-        """
-        mock_config, mock_logger = mock_setup
-
-        # Initialize the dataset object
-        dataset_object = LumbarDicomTFRecordDataset(mock_config, logger=mock_logger)
-
-        # 1. Setup Mock Paths
-        study_id = "123456789"
-        series_id = "1234567"
-        study_path_str = str(tmp_path / study_id)
-
-        # Create a reference to the empty DataFrame to avoid ambiguous truth value error
-        # in mock assertion.
-        mock_metadata_df = pd.DataFrame(
-                                            {
-                                                'study_id': ["fake_study_id"],
-                                                'series_id': ["fake_series_id"],
-                                                'instance_number': [1],
-                                                'metadata': ['meta1']
-                                            }
-                                        )
-
-        # Mock the Path instances passed as arguments
-        mock_study_path = MagicMock(spec=Path)
-        mock_study_path.name = study_id
-        mock_tfrecord_dir = MagicMock(spec=Path)
-
-        # Mock the resulting TFRecord path
-        # Remove 'spec=Path' from the return mock to fix string assertion mismatch.
-        mock_tfrecord_path = MagicMock()
-
-        # Mock the division operator (/) on mock_tfrecord_dir
-        # as the path is constructed via: tfrecord_dir / f"{study_id}.tfrecord"
-        mock_tfrecord_dir.__truediv__.return_value = mock_tfrecord_path
-
-        # Mock: A valid series directory (the one that should be processed)
-        mock_valid_dir_path = MagicMock(spec=Path)
-        mock_valid_dir_path.is_dir.return_value = True
-        mock_valid_dir_path.name = series_id
-        mock_valid_dir_path.__str__.return_value = f"{study_path_str}/{series_id}"
-
-        # Mock the iterdir() call on the study_path
-        mock_study_path.iterdir.return_value = [mock_valid_dir_path]
-
-        # 2. Patch Dependencies (tf.io.TFRecordWriter and _process_series)
-        with (
-                  # Patch tf.io.TFRecordWriter to prevent actual file writing
-                  patch('tensorflow.io.TFRecordWriter') as mock_tfrecord_writer_class,
-
-                  # Patch _process_series, which should NOT be called for the file
-                  patch.object(dataset_object, '_process_series') as mock_process_series,
-              ):
-
-            # Clear any warning calls made during object initialization
-            mock_logger.warning.reset_mock()
-
-            # 3. Call the method under test
-            # Remark: the logger SHALL be passed as a keyword argument (logger=mock_logger)
-            # to avoid the "got multiple values for argument 'logger'" TypeError,
-            # which occurs when the 'log_method' decorator tries to inject the logger
-            # while it is simultaneously passed positionally.
-            dataset_object._process_study(
-                                            study_path=mock_study_path,
-                                            metadata_df=mock_metadata_df,
-                                            tfrecord_dir=mock_tfrecord_dir,
-                                            logger=mock_logger
-                                            )
-
-            # 4. Assertions
-
-            # 4.1. Assert that the TFRecordWriter was initialized for the correct path
-            # The function under test calls str() on the path before passing it to the Writer
-            expected_tfrecord_path_str = str(mock_tfrecord_path)
-            mock_tfrecord_writer_class.assert_called_once_with(expected_tfrecord_path_str)
-
-            # 4.2. Assert that _process_series was NOT called
-            mock_process_series.assert_not_called()
-
-            # 4.3. Assert the logger was called with the right number of warnings
-            assert mock_logger.warning.call_count == 4
-
-            # 4.4. Assert the logger was called with the right warning message
-            # 4.4.1 Verify the content of the first and last warnings
-            warning_msg = f"No metadata found for series {series_id}"
-            expected_warning_1_start = warning_msg
-
-            warning_msg = "Please check the CSV files and ensure they contain the right records"
-            expected_warning_4_exact = warning_msg
-
-            # 4.4.2 Extract teh arguments from all warning calls
-            warning_calls = mock_logger.warning.call_args_list
-
-            # 4.4.3 Check the first warning (detailed message about the ignored series)
-            first_warning_msg = warning_calls[0][0][0]
-            assert first_warning_msg.startswith(expected_warning_1_start)
-            assert f"in study {study_id}. Skipping this series." in first_warning_msg
-
-            # 4.4.4 Check the latest warning (user instruction)
-            last_warning_msg = warning_calls[3][0][0]
-            assert last_warning_msg == expected_warning_4_exact
 
     def test_build_tf_dataset_pipeline(
                                         self,
