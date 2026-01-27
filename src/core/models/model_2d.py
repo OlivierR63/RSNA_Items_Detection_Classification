@@ -1,19 +1,25 @@
-# src/core/models/model_2d.py
+# coding: utf-8
+
 import tensorflow as tf
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, Model
 
-class YoloSegmentation2D(tf.keras.Model):
-    """Modèle 2D pour la segmentation (exemple simplifié)."""
+class Backbone2D:
+    def __init__(self, model_name="MobileNetV2", input_shape=(224, 224, 3)):
+        self._input_shape = input_shape
+        self._model_name = model_name
 
-    def __init__(self, input_shape: tuple = (256, 256, 1), num_classes: int = 2):
-        super(YoloSegmentation2D, self).__init__()
-        self.conv1 = layers.Conv2D(32, (3, 3), activation="relu", input_shape=input_shape)
-        self.pool1 = layers.MaxPooling2D((2, 2))
-        self.flatten = layers.Flatten()
-        self.dense = layers.Dense(num_classes, activation="softmax")
+        # On peut charger depuis Keras ou un modèle custom
+        if self._model_name == "MobileNetV2":
+            base = tf.keras.applications.MobileNetV2(
+                                                        input_shape=input_shape,
+                                                        include_top=False,
+                                                        weights='imagenet'
+                                                      )
+        else:
+            # Import externe ou modèle custom ici
+            base = tf.keras.Sequential([layers.Conv2D(32, 3, activation='relu')])
+            
+        self._model = Model(inputs=base.input, outputs=base.output)
 
-    def call(self, inputs, training=False):
-        x = self.conv1(inputs)
-        x = self.pool1(x)
-        x = self.flatten(x)
-        return self.dense(x)
+    def get_model(self):
+        return self._model

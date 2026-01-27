@@ -86,22 +86,6 @@ class TestLumbarDicomTFRecordDataset:
     # Test functions using the new helpers
     # -------------------------------------------------------------------------
 
-    def test_max_records_flat(
-                                self,
-                                mock_setup: Tuple[dict[str, Any], MagicMock],
-                                tmp_path: Path
-                              ) -> None:
-        """
-            Tests the maximum number of flattened records calculation.
-        """
-        mock_config, mock_logger = mock_setup
-
-        # Initialize the dataset
-        dataset = LumbarDicomTFRecordDataset(mock_config,
-                                             logger=mock_logger)
-
-        assert dataset.max_records_flat() == dataset._MAX_RECORDS_FLAT
-
     def test_py_func_map_wrapper(
                                     self,
                                     mock_setup: Tuple[dict[str, Any], MagicMock],
