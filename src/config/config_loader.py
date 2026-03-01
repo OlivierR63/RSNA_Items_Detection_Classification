@@ -49,7 +49,7 @@ class ConfigLoader:
         # --- Resolve Core Relative Paths ---
         # The paths 'dicom_root_dir' and 'output_dir' are resolved relative
         # to the configuration file's location.
-        for key in ["dicom_study_dir", "tfrecord_dir", "output_dir"]:
+        for key in ["dicom_studies_dir", "tfrecord_dir", "output_dir", "input_data_inspection"]:
             if key in self._config:
                 # Resolve the path and convert the resulting Path object back to a string.
                 self._config[key] = str(config_dir / self._config[key])

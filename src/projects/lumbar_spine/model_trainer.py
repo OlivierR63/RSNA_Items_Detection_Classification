@@ -4,47 +4,54 @@ import os
 import gc
 import psutil
 import logging
+import tensorflow as tf
+import random
+
 from pathlib import Path
-from typing import Optional, Any, Tuple
+from typing import Optional, Any
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from src.core.utils.logger import get_current_logger, log_method
-from src.core.utils.log_training_progress import LogTrainingProgress
+from src.core.utils.log_training_callbacks import LogTrainingCallbacks
+from src.core.utils.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
 
-import tensorflow as tf
 
 # In recent TensorFlow versions, Keras 3 is a separate package installed
 # as a requirement of the tensorflow meta-package. 
 from keras.callbacks import LambdaCallback, ProgbarLogger
 
 
-def log_memory_usage(stage_name=""):
+def log_memory_usage(*, process, stage_name=""):
     """
     Logs the current RAM usage of the Python process and the overall system.
     Useful for monitoring memory leaks during 3D medical imaging pipelines.
     """
-    # Get the current process ID and its memory information
-    process = psutil.Process(os.getpid())
-    mem_info = process.memory_info()
+    try:
+        # Get the current process ID and its memory information
+        mem_info = process.memory_info()
     
-    # Convert Resident Set Size (RSS) to Megabytes (MB)
-    # RSS represents the portion of memory occupied by a process that is held in RAM
-    mem_mb = mem_info.rss / (1024 * 1024)
+        # Convert Resident Set Size (RSS) to Megabytes (MB)
+        # RSS represents the portion of memory occupied by a process that is held in RAM
+        mem_mb = mem_info.rss / (1024 * 1024)
     
-    # Retrieve the total percentage of system RAM currently in use
-    total_ram_percent = psutil.virtual_memory().percent
+        # Retrieve the total percentage of system RAM currently in use
+        total_ram_percent = psutil.virtual_memory().percent
     
-    # Output the memory snapshot to the console
-    print(f">>> [RAM] {stage_name} | Process: {mem_mb:.2f} MB | System: {total_ram_percent}%")
+        # Output the memory snapshot to the console
+        print(f">>> [RAM] {stage_name} | Process: {mem_mb:.2f} MB | System: {total_ram_percent}%")
+
+    except Exception as e:
+        print(f"Memory monitoring failed: {e}")
 
 
 class ModelTrainer:
     """
     Orchestrates the training process for the RSNA Lumbar Spine model.
     
-    This class handles dataset preparation, callback configuration, and 
-    the execution of the training loop. It integrates structured logging 
-    and memory monitoring to ensure stability when processing large 
+    This class handles the end-to-end training pipeline, including dataset preparation 
+    (splitting TFRecord files), callback configuration (checkpointing, TensorBoard), 
+    and the execution of the training loop. It integrates structured logging and 
+    proactive memory monitoring to ensure stability when processing large 
     3D medical imaging volumes.
     """
     def __init__(
@@ -55,28 +62,59 @@ class ModelTrainer:
         model_depth: int = 1
     ) -> None:
 
-        """Initializes the ModelTrainer."""
+        """
+        Initializes the ModelTrainer with the model, configuration, and tracking tools.
+
+        Args:
+            - model (tf.keras.Model): The compiled Keras model to be trained.
+            - config (dict): Configuration dictionary containing hyperparameters, 
+                directory paths, and training settings.
+            - logger (Optional[logging.Logger]): Logger instance for process tracking. 
+                Defaults to the current system logger if not provided.
+            - model_depth (int): The depth of the 3D input volume, used for 
+                dataset dimension configuration.
+        """
+
         # Force a clean break between lines
         self._model = model
         self._config = config
         self._logger = logger or get_current_logger()
+        self._process = psutil.Process(os.getpid())
+
+        # Define the directory where the TFRecord files shall be stored.
+        self._tfrecord_dir = Path(config["tfrecord_dir"]).resolve()
+
+        # Define the pattern to match all TFRecord files in the directory.
+        self._tfrecord_pattern = str(self._tfrecord_dir / "*.tfrecord")
 
         # Test line: if the error is here, it's a scope issue
         self._model_depth = model_depth
 
-        # Unpack dataset results
-        results = self._prepare_dataset_for_training()
-        self._nb_train, self._train_dataset, self._nb_val, self._validation_dataset = results
+        self._nb_train = None
+        self._nb_val = None
+        self._train_dataset = None
+        self._validation_dataset = None
 
     @log_method()
     def train_model(
         self,
         *,
-        logger: Optional[logging.Logger]=None,
+        logger: Optional[logging.Logger]=None
     ) -> None:
 
         """
-            Training function with automatic logger injection and structured logging.
+        High-level entry point to start the model training process.
+
+        This method injects the logger, handles the training execution flow, 
+        and ensures that any critical failure during the training loop is 
+        properly logged with a full stack trace before being raised.
+
+        Args:
+            logger (Optional[logging.Logger]): Overriding logger instance.
+
+        Raises:
+            Exception: Re-raises any exception encountered during the 
+                training lifecycle for external handling.
         """
 
         logger = logger or self._logger
@@ -111,24 +149,33 @@ class ModelTrainer:
 
 
     @log_method()
-    def _prepare_dataset_for_training(self, logger: Optional[logging.Logger] = None) -> Tuple[int, tf.data.Dataset, int, tf.data.Dataset]:
+    def prepare_training_and_validation_datasets(
+        self,
+        logger: Optional[logging.Logger] = None
+    ) -> None:
+
         """
-        Creates TensorFlow training and validation datasets with logging.
-        Stores and returns dataset metadata and pipeline objects.
+        Builds and splits the TensorFlow dataset pipelines for training and validation.
+
+        This method identifies all available TFRecord files, performs a randomized shuffle 
+        at the file level to ensure data independence, and splits them according to the 
+        configured 'train_split_ratio'. It then initializes the specialized 
+        `LumbarDicomTFRecordDataset` to create optimized input pipelines.
+
+        The resulting datasets and their respective sample counts are stored as internal 
+        attributes of the class instance.
 
         Args:
-            logger: Logger instance for process tracking. If None, retrieves 
-                    the current active logger.
+            logger (Optional[logging.Logger]): Logger instance for tracking dataset 
+                creation and memory usage. Defaults to self._logger.
 
         Returns:
-            Tuple containing:
-                - nb_train (int): Number of training samples.
-                - train_dataset (tf.data.Dataset): The pre-processed training pipeline.
-                - nb_val (int): Number of validation samples.
-                - val_dataset (tf.data.Dataset): The pre-processed validation pipeline.
+            None: The results are assigned to self._train_dataset, self._nb_train, 
+                  self._validation_dataset, and self._nb_val.
 
         Raises:
-            Exception: If the pipeline construction via LumbarDicomTFRecordDataset fails.
+            Exception: Propagates any error encountered during file discovery, 
+                shuffling, or pipeline generation.
         """
 
         logger = logger or self._logger
@@ -139,20 +186,40 @@ class ModelTrainer:
         try:
             batch_size = self._config["batch_size"]
 
-            log_memory_usage("Before Dataset creation")
+            log_memory_usage(stage_name="Before Dataset creation", process=self._process)
 
             dataset_object = LumbarDicomTFRecordDataset(self._config, self._logger, self._model_depth)
 
-            # batch_size details the number of studies processed simultaneously
-            nb_train, train_dataset, nb_val, val_dataset = dataset_object.build_tf_dataset_pipeline(batch_size=batch_size)
+            # 1. List files and shuffle them
+            all_tfrecord_files = tf.io.gfile.glob(self._tfrecord_pattern)
 
-            log_memory_usage("After Dataset creation")
+            # 2. Shuffle the files
+            shuffled_tfrecord_list = tf.random.shuffle(all_tfrecord_files, seed=42)
+
+            # 3. Calculate the total number of files
+            nb_tfrecord_files = tf.shape(shuffled_tfrecord_list)[0]
+
+            # 3. Define the train / validation ratio
+            train_ratio = self._config.get('train_split_ratio', 0.8)
+
+            # 4. Split the train and validation datasets
+            split_idx = tf.cast(tf.cast(nb_tfrecord_files, tf.float32) * train_ratio, tf.int32)
+            train_list = shuffled_tfrecord_list[:split_idx]
+            val_list = shuffled_tfrecord_list[split_idx:]
+
+            # 5. The TensorFlow world starts here
+            self._nb_train = len(train_list.numpy())
+            self._train_dataset = dataset_object.generate_tfrecord_dataset(train_list, batch_size=batch_size)
+            self._nb_val = len(val_list.numpy())
+            self._validation_dataset = dataset_object.generate_tfrecord_dataset(val_list, batch_size=batch_size)
+
+            log_memory_usage(stage_name="After Dataset creation", process=self._process)
 
             logger.info("Training and validation dataset created successfully.",
                         extra={"status": "success", "batch_size": self._config["batch_size"]})
 
-            return nb_train, train_dataset, nb_val, val_dataset
-    
+            return 
+
         except Exception as e:
             logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
                          extra={"status": "failed", "error": str(e)})
@@ -160,31 +227,57 @@ class ModelTrainer:
 
 
     @log_method()
-    def _train_with_callbacks(self, *,logger: Optional[logging.Logger] = None) -> Any:
+    def _train_with_callbacks(
+        self,
+        *,
+        logger: Optional[logging.Logger] = None
+    ) -> Any:
 
-        """Trains model with callbacks and logging."""
+        """
+        High-level entry point to start the model training process.
+
+        This method injects the logger, handles the training execution flow, 
+        and ensures that any critical failure during the training loop is 
+        properly logged with a full stack trace before being raised.
+
+        Args:
+            logger (Optional[logging.Logger]): Overriding logger instance.
+
+        Raises:
+            Exception: Re-raises any exception encountered during the 
+                training lifecycle for external handling.
+        """
+
         logger = logger or self._logger
+
+        Path(self._config["output_dir"]).mkdir(parents=True, exist_ok=True)
 
         logger.info("Setting up training callbacks...", extra={"action": "setup_callbacks"})
 
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        checkpoint_dir = Path(self._config.get("checkpoint_dir", "checkpoints"))
-        best_path = checkpoint_dir / "best_model.keras"
-        last_path = checkpoint_dir / "last_model.keras"
+        last_path = Path(self._config.get("checkpoint_path", "checkpoints")).resolve()
+        best_path = last_path.parent / "best_model.keras"
 
-        # In ModelTrainer._train_with_callbacks
+        # Initialize your custom hardware and metrics monitor
+        training_progress_callback = LogTrainingCallbacks(logger)
+        monitor_callback = SystemResourceMonitorCallbacks(memory_threshold_percent=90.0)
+
+        # Simplified print callback for batch monitoring
+        # Since LogTrainingCallbacks already prints RAM/Time, 
+        # we only print metrics here every 5 steps.
         print_callback = LambdaCallback(
             on_batch_end=lambda batch, logs: print(
-                f" >>> Step {batch:04d} | Loss: {logs['loss']:.4f} | Avg Acc: {logs.get('accuracy', 0):.4f}"
-            ) if batch % 5 == 0 else None # Log every 5 steps for readability
+                f" >>> Step {int(batch)+1:04d} | Loss: {logs['loss']:.4f}"
+            ) #if (int(batch)+1) % 5 == 0 else None 
         )
-
+        
         callbacks = [
+            monitor_callback,
+            training_progress_callback,
             print_callback,
             ProgbarLogger(),
-            LogTrainingProgress(logger),
 
             # Save the best version of the model for final inference
             tf.keras.callbacks.ModelCheckpoint(
@@ -198,7 +291,7 @@ class ModelTrainer:
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=str(last_path),
                 save_best_only=False,
-                verbose=0
+                verbose=1
             ),
 
             # Stop training if validation loss plateaus.
@@ -211,13 +304,14 @@ class ModelTrainer:
 
             # Export log for visualization in tensorboard
             tf.keras.callbacks.TensorBoard(
-                log_dir=str(Path(self._config["output_dir"]) / "tensorboard_logs"),
-                histogram_freq=1
+                log_dir=str((Path(self._config["output_dir"]) / "tensorboard_logs").resolve()),
+                histogram_freq=1,
+                profile_batch=(0)
             )
         ]
 
         logger.info("Training callbacks configured.",
-                    extra={"callbacks": [c.__class__.__name__ for c in callbacks]})
+                    extra={"callbacks": [callback.__class__.__name__ for callback in callbacks]})
 
         # Calculate steps_per_epoch and validation_step, since the dataset
         # uses .repeat()  (infinite stream)
@@ -233,7 +327,7 @@ class ModelTrainer:
 
         steps_per_epoch = max(1, self._nb_train // batch_size)
         validation_steps = max(1, self._nb_val // batch_size)
-
+        
         logger.info(
             f"Starting model training: {steps_per_epoch} steps/epoch, {validation_steps} validation steps.",
             extra={
@@ -244,12 +338,7 @@ class ModelTrainer:
 
         # Clear session and collect garbage to maximize available VRAM before fitting
         gc.collect()
-        tf.keras.backend.clear_session()
-        log_memory_usage("Pre-fit memory state")
-
-        for img, label in self._train_dataset.take(1):
-            log_memory_usage("After loading 1st Batch")
-            break
+        log_memory_usage(stage_name="Pre-fit memory state", process=self._process)
 
         try:
             # Execute the training loop
@@ -260,7 +349,7 @@ class ModelTrainer:
                 validation_data=self._validation_dataset,
                 validation_steps=validation_steps,
                 callbacks=callbacks, 
-                verbose=1
+                verbose=0
             )
 
             # Calculation of the average accuracy for the logger

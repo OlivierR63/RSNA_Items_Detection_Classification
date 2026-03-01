@@ -53,7 +53,7 @@ class Conv3DAggregator(BaseAggregator):
 
     def build(self, x, suffix=""):
         """
-        Builds the 3D aggregation network architecture using purely symbolic 
+        Builds the 3D aggregation network architecture using purely symbolic
         TensorFlow operations to ensure graph-level compatibility.
         """
         # 1. Prepare static dimensions 
@@ -114,6 +114,6 @@ class Conv3DAggregator(BaseAggregator):
         
         # ALL the arguments required by __init__ are included here
         config.update({
-            "target_depth": self._series_depth
+            "series_depth": self._series_depth
         })
         return config

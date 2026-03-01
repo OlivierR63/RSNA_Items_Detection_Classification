@@ -1,24 +1,102 @@
 # coding: utf-8
 
-from ast import Try
+from argparse import ONE_OR_MORE
 from typing import Dict, Tuple, List, Optional
 import logging
 import tensorflow as tf
 import numpy as np
 import pandas as pd
-from src.core.utils.logger import log_method
-from src.projects.lumbar_spine.csv_metadata import CSVMetadata
-from pathlib import Path
-from tqdm import tqdm
 import pydicom
 import SimpleITK as sitk
-from src.projects.lumbar_spine.serialization_manager import SerializationManager
-import json
 import inspect
+from src.core.utils.logger import log_method
+from src.core.utils.dataset_utils import calculate_max_series_depth
+from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
+from pathlib import Path
+from tqdm import tqdm
+
+
+# ----------------------- Helper functions -------------------------------
+def _int64_feature(value: int) -> tf.train.Feature:
+    """
+    Returns an int64_list from a single integer.
+    Used for IDs, instance numbers, and dimensions.
+    """
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+
+def _int64_list_feature(value: list[int]) -> tf.train.Feature:
+    """
+    Returns an int64_list from a list of integers.
+    Used for shape/format tuples like [Width, Height].
+    """
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+
+
+def _bool_feature(value: bool) -> tf.train.Feature:
+    """
+    Returns an int64_feature from a boolean.
+    The boolean is cast to int (0 or 1) for serialization.
+    """
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[int(value)]))
+
+
+def _float_list_feature(value: list[float]) -> tf.train.Feature:
+    """
+    Returns a float_list from a list of floats.
+    Used for the flattened 'records' containing coordinates and severity.
+    """
+    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
+
+def _bytes_feature(value: bytes) -> tf.train.Feature:
+    """
+    Returns a bytes_list from a raw bytes string.
+    Used for storing the raw pixel data of the DICOM image.
+    """
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+# -------------------------------------------------------------------------
+
+class EmptyDirectoryError(Exception):
+    """
+    Exception raised when a required directory is empty.
+    """
+    pass
+
+
+class SeriesProcessingError(Exception):
+    """
+    Exception raised when some series failed to be processed
+    """
+    pass
 
 
 class TFRecordFilesManager:
-    def __init__(self, config, logger):
+    """
+    Manager responsible for orchestrating the conversion of medical imaging studies 
+    from DICOM format to TensorFlow Records (TFRecords).
+
+    This class handles directory navigation, pixel data normalization at the series level, 
+    and the alignment of medical metadata with anatomical labels to produce 
+    standardized inputs for deep learning models.
+    """
+
+    def __init__(
+        self,
+        config: dict,
+        logger: logging.Logger
+    ) -> None:
+
+        """
+        Initializes the TFRecordFilesManager with configuration and logging.
+
+        Args:
+            config (Any): Configuration object containing project paths, 
+                processing parameters, and constants like MAX_RECORDS.
+            logger (Optional[logging.Logger]): Logger instance for tracking 
+                the conversion process. If None, a default logger will be used.
+        """
+
         class_name = self.__class__.__name__
         path_str = config.get('tfrecord_dir', None)
 
@@ -32,13 +110,15 @@ class TFRecordFilesManager:
 
         self._MAX_RECORDS = self._config.get('max_records', 0)
         if self._MAX_RECORDS <= 0:
-            error_msg = f"{class_name} initialization failed: the 'max_record' key is missing or wrongly defined in the configuration file"
+            error_msg = (
+                f"{class_name} initialization failed: the 'max_record' key is missing "
+                f"or invalid (value: {self._MAX_RECORDS}) in the configuration file"
+            )
+            
             raise ValueError(error_msg)
 
-        self._serialization_manager = SerializationManager(self._config, logger)
-
         # This attribute will be set later, when the instance method self.generate_tfrecord_files is called
-        self._max_series_depth = None
+        self._max_series_depth = calculate_max_series_depth(logger=self._logger)
 
     @log_method()
     def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
@@ -79,38 +159,33 @@ class TFRecordFilesManager:
                 self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
                 # 2. Load and merge metadata
-                metadata_handler = CSVMetadata(
-                                                logger=logger,
-                                                root_dir=self._config["root_dir"],
-                                                **self._config["csv_files"]
-                                                )
+                metadata_handler = CSVMetadataHandler(
+                    config = self._config,
+                    logger=logger,
+                    root_dir=self._config["root_dir"],
+                    dicom_studies_dir = self._config['dicom_studies_dir'],
+                    **self._config["csv_files"]
+                )
+
+                metadata_df = metadata_handler.generate_metadata_dataframe()
                 logger.info("Loaded metadata from CSV files",
                             extra={"csv_files": list(self._config["csv_files"].keys())})
-
-                # 3. Encode categorical metadata
-                #    Fields affected : condition, level, series_description, severity
-                encoded_metadata_df = self._encode_dataframe(metadata_handler.merged)
-                logger.info("Encoded categorical metadata", extra={"action": "encode_metadata"})
-
-                # 4. Create a new feature in metadata_df, as a synthesis of the features 'condition' and 'series_description'
-                nb_levels = encoded_metadata_df['level'].nunique()
-                encoded_metadata_df['condition_level'] = encoded_metadata_df['condition']*nb_levels + encoded_metadata_df['level'] 
 
                 logger.info("  Creating TFRecord files...")
 
                 self._convert_dicom_to_tfrecords(
-                    study_dir=self._config["dicom_study_dir"],
-                    metadata_df=encoded_metadata_df,
+                    studies_dir=self._config["dicom_studies_dir"],
+                    metadata_df=metadata_df,
                     tfrecord_dir=str(self._tfrecord_dir)
                 )
                 logger.info("DICOM to TFRecord conversion completed.",
                             extra={"status": "success"})
 
-                self._max_series_depth = self._calculate_max_series_depth()
+                #self._max_series_depth = calculate_max_series_depth(self._logger)
 
             else:
-                if self._max_series_depth is None:
-                    self._max_series_depth = self._calculate_max_series_depth()
+                #if self._max_series_depth is None:
+                    #self._max_series_depth = calculate_max_series_depth(self._logger)
 
                 logger.info("Existing TFRecords found. Skipping conversion.",
                             extra={"status": "skipped"})
@@ -129,7 +204,7 @@ class TFRecordFilesManager:
             raise
 
     @log_method()
-    def _convert_dicom_to_tfrecords(self, study_dir: str, metadata_df: pd.DataFrame,
+    def _convert_dicom_to_tfrecords(self, studies_dir: str, metadata_df: pd.DataFrame,
                                     tfrecord_dir: str, *,
                                     logger: Optional[logging.Logger] = None) -> None:
         """
@@ -137,7 +212,7 @@ class TFRecordFilesManager:
         TensorFlow TFRecord files, generating one TFRecord file per study.
 
         Args:
-            - study_dir (str): The path to the directory containing study subfolders.
+            - studies_dir (str): The full path to the root directory containing study subdirectories.
             - metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata.
             - tfrecord_dir (str): The directory where the resulting TFRecord files will be saved.
             - logger: Automatically injected logger (optional).
@@ -151,36 +226,53 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
         logger = logger or self._logger
         logger.info(f"Starting {class_name}.{func_name}",
-                    extra={"action": "convert_dicom", "dicom_study_dir": study_dir})
+                    extra={"action": "convert_dicom", "dicom_studies_dir": studies_dir})
+
+        # Case empty root directory
+        if not any(Path(studies_dir).iterdir()):
+            error_msg = f"No studies found in {studies_dir}. Process stops immediately."
+            logger.critical(error_msg, extra={"status": "failure"})
+            raise EmptyDirectoryError(error_msg)
 
         try:
             # Ensure the destination directory for TFRecord files exists and return its Path.
             tfrecord_path = self._setup_tfrecord_directory(tfrecord_dir)
 
-            # Iterate over all items (expected study directories) in the root study path.
-            for study_path in tqdm(list(Path(study_dir).iterdir())):
-                if not study_path.is_dir():
+            # Iterate over all items (expected study directories) in the root studies_dir.
+            for study_full_path in tqdm(list(Path(studies_dir).iterdir())):
+
+                # Case study_full_path is not a directory
+                if not study_full_path.is_dir():
                     msg_warning = (
-                                    f"Skipping non-directory item {study_path} "
-                                    f"in study folder {study_dir}"
-                                   )
+                        f"Skipping non-directory item {study_full_path} "
+                        f"in root directory {studies_dir}"
+                    )
                     logger.warning(msg_warning)
                     continue
 
-                study_metadata_df = metadata_df[metadata_df['study_id'] == int(study_path.name)]
+                # Case directory study_full_path is empty
+                if not any(study_full_path.iterdir()):
+                    msg_warning = (
+                        f"Skipping empty directory {study_full_path} in root directory {studies_dir}"
+                    )
+                    logger.warning(msg_warning, extra={"status": "Skipped studies"})
+                    continue
 
+                study_metadata_df = metadata_df[metadata_df['study_id'] == int(study_full_path.name)]
+
+                # Case missing metadata 
                 if study_metadata_df.empty:
                     msg_warning = (
-                                    f"Skipping study {study_path.name} due to missing metadata. "
-                                    "This study will not be considered during training or evaluation "
-                                    "and the relevant TFRecord file will not be generated."
-                                    "Possible cause: missing or inconsistent records in the CSV files. "
-                                    "Required action: Please check the CSV files and ensure they contain the right records."
-                                   )
+                        f"Skipping study {study_full_path.name} due to missing metadata. "
+                        "This study will not be considered during training or evaluation "
+                        "and the relevant TFRecord file will not be generated."
+                        "Possible cause: missing or inconsistent records in the CSV files. "
+                        "Required action: Please check the CSV files and ensure they contain the right records."
+                    )
                     logger.warning(msg_warning)
                     continue
 
-                self._process_study(study_path, study_metadata_df, tfrecord_path)
+                self._process_study(study_full_path, study_metadata_df, tfrecord_path)
 
             logger.info("DICOM to TFRecord conversion completed successfully",
                         extra={"status": "success"})
@@ -218,22 +310,21 @@ class TFRecordFilesManager:
         logger: Optional[logging.Logger] = None
     ) -> None:
         """
-            Iterates over the series directories within a given study directory.
+        Orchestrates the processing of all series within a study and saves them into a single TFRecord.
 
-            Each series directory is checked and then processed by `_process_single_series_instance`
-            to extract DICOM data and write it as features into the TFRecord file
-            designated for the study. Non-directory items are skipped and logged.
+        Args:
+            - study_path (Path): Path to the study directory.
+            - metadata_df (pd.DataFrame): DataFrame containing metadata for the study.
+            - tfrecord_dir (Path): Destination directory for the generated TFRecord file.
+            - logger (Optional[logging.Logger]): Logger instance for status reporting.
 
-            Args:
-                - study_path: The path to the root directory of the study.
-                - metadata_df: DataFrame containing metadata relevant to the study.
-                - tfrecord_dir: The target directory for the output TFRecord file.
-                                This directory is supposed to already exist. No specific checking
-                                is done here.
-                - logger: Logger instance for logging warnings.
+        Raises:
+            - EmptyDirectoryError: If no items are found in the study directory.
+            - SeriesProcessingError: If one or more series fail to process correctly.
+
+        Return: None
         """
         
-
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
         
@@ -246,60 +337,117 @@ class TFRecordFilesManager:
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
 
         nb_skipped_series = 0
-        header_df = metadata_df[['study_id', 'series_id', 'series_description']].drop_duplicates()
-        pathologies_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
+        columns = ['study_id', 'series_id', 'description', 'actual_file_format']
+        input_features_df = metadata_df[columns].drop_duplicates()
+        labels_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
 
-        with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
-            for series_path in study_path.iterdir():
-                if not self._process_single_series_instance(series_path, header_df, pathologies_df, writer):
-                    nb_skipped_series += 1
-                    continue
+        try:
+            series_list = list(study_path.iterdir())
+            nb_series = len(series_list)
 
-        if nb_skipped_series > 0:
-            warning_msg = (f"Issue in function {class_name}.{func_name}."
-                f"Study {study_id} processed with {nb_skipped_series} skipped series"
-                "due to missing metadata or aborted TFRecord file generation.")
-            logger.warning(
-                warning_msg,
-                extra={"status": "partial_success", "skipped_series": nb_skipped_series}
+            if (nb_series) == 0:
+                error_msg = (
+                    f"Issue in function {class_name}.{func_name}. "
+                    f"Study {study_path.name} is empty."
+                )
+                logger.error(
+                    error_msg,
+                    extra={"status": "failure", "nb_series": nb_series, "skipped_series": nb_series}
+                )
+
+                raise EmptyDirectoryError(error_msg)
+
+            # Case nb_series > 0
+            with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
+                for series_path in series_list:
+                    # Case series_full_path is not a directory
+                    if not series_path.is_dir():
+                        msg_error = (
+                            f"Skipping non-directory item {series_path.name} "
+                            f"in study directory {study_path.name}"
+                        )
+                        logger.error(msg_error)
+                        continue
+
+                    nb_success, _, _ = self._process_single_series_instance(
+                        series_path,
+                        input_features_df,
+                        labels_df,
+                        writer
+                    )
+
+                    if nb_success == 0:
+                        nb_skipped_series += 1
+                        continue
+
+
+            if nb_skipped_series > 0 :
+                error_msg = (f"Issue in function {class_name}.{func_name}."
+                    f"Study {study_id} processed with {nb_skipped_series} skipped series "
+                    "due to missing metadata or aborted TFRecord file generation."
+                )
+                logger.error(
+                    error_msg,
+                    extra={"status": "failure", "nb_series": nb_series, "skipped_series": nb_skipped_series}
+                )
+
+                raise SeriesProcessingError(error_msg)
+
+            else: # last case : nb_series > 0 and nb_skipped_series == 0
+                logger.info(
+                    f"Function {class_name}.{func_name}: study {study_id} processing completed successfully.",
+                    extra={"status": "success", "nb_series": nb_series, "skipped_series": nb_skipped_series}
+                )
+
+        except Exception as e:
+            # Log the specific study failure before re-raising
+            logger.error(
+                f"Failed to process study {study_id}: {str(e)}",
+                exc_info=True,
+                extra={"study_id": study_id, "status": "failed"}
             )
-        else:
-            logger.info(
-                f"Function {class_name}.{func_name}: study {study_id} processing completed successfully.",
-                extra={"status": "success"}
-            )
+            raise  # Keep propagating the error
+
 
     @log_method()
     def _process_single_series_instance(
         self,
         series_path: Path,
-        header_df: pd.DataFrame,
-        pathologies_df: pd.DataFrame,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
         logger: Optional[logging.Logger] = None
-    ) -> None:
+    ) -> Tuple[int, int, int]:
+
         """
-            Processes a single series directory within a study.
-            This method checks if the provided series path is a directory.
-            If it is, it filters the metadata DataFrame for entries corresponding
-            to the series ID. If matching metadata is found, it delegates the
-            processing of the series to `_process_series`. Non-directory items
-            are skipped with a warning.
+        Coordinates the processing of a single series by validating its directory 
+        structure and metadata availability.
 
-            Args:
-                - series_path: The path to the series directory.
-                - header_df: 
-                - pathologies_df:
-                - writer: The active TFRecordWriter instance for the current study.
-                - logger: Logger instance for logging warnings.
+        This method performs preliminary checks: it verifies that the series path is 
+        a valid directory and ensures that corresponding metadata exists in the 
+        provided DataFrame. If successful, it delegates the heavy lifting to 
+        `_process_series`.
 
+        Args:
+            series_path (Path): Path to the specific series directory.
+            input_features_df (pd.DataFrame): DataFrame containing input features 
+                (study_id, series_id, description).
+            labels_df (pd.DataFrame): DataFrame containing ground truth labels 
+                (coordinates and severity).
+            writer (tf.io.TFRecordWriter): The active TFRecord writer for the study.
+            logger (Optional[logging.Logger]): Logger for tracking warnings and errors.
 
-            Returns:
-                bool: True if the series was processed (meaning it was a valid directory with
-                      metadata, and `_process_series` was called). False if the series was
-                      skipped (non-directory item, missing metadata, or complete processing failure
-                      in `_process_series`).
+        Returns:
+            Tuple[int, int, int]: A tuple containing:
+                - nb_success: Number of successfully processed DICOM instances.
+                - nb_failures: Number of instances that failed during processing.
+                - nb_files: Total number of DICOM files found in the series.
+
+        Raises:
+            Exception: Re-raises any exception encountered during `_process_series` 
+                after logging the failure.
         """
+
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
         
@@ -312,15 +460,15 @@ class TFRecordFilesManager:
 
         if not series_path.is_dir():
             msg_warning = (
-                            f"Issue in function {func_name}.{class_name}: "
-                            f"\nSkipping non-directory item: {series_path} "
-                            f"in study: {study_path}"
-                           )
+                f"Issue in function {func_name}.{class_name}: "
+                f"\nSkipping non-directory item: {series_path} "
+                f"in study: {study_path}"
+            )
             logger.warning(msg_warning)
-            return False
+            return 0, 0, 0
 
         series_id = int(series_path.name)
-        series_metadata_df = header_df[header_df['series_id'] == series_id]
+        series_metadata_df = input_features_df[input_features_df['series_id'] == series_id]
 
         if series_metadata_df.empty:
             warning_message = (
@@ -338,38 +486,58 @@ class TFRecordFilesManager:
                            extra={"status": "metadata_missing",
                                   "series_dir": series_path.name,
                                   "study_id": study_id})
-            return False
+            dicom_files_list = list(series_path.glob("*.dcm"))
+            nb_files = len(dicom_files_list)
+            return 0, 0, nb_files
 
-        is_successful = not self._process_series(series_path, header_df, pathologies_df, writer)
+        try:
+            nb_success, nb_failures, nb_dcm_files = self._process_series(series_path, input_features_df, labels_df, writer)
+            return nb_success, nb_failures, nb_dcm_files
 
-        return is_successful
+        except Exception as e:
+            # Log the failure of the specific series instance before re-raising
+            logger.error(
+                f"Failed to process series instance {series_id} in study {study_id}: {str(e)}",
+                exc_info=True,
+                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
+            )
+            raise  # Keep propagating the error
 
     @log_method()
     def _process_series(
         self,
         series_path: Path,
-        header_df: pd.DataFrame,
-        pathologies_df: pd.DataFrame,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
         logger: Optional[logging.Logger] = None
-    ) -> bool:
+    ) -> Tuple[int, int, int]:
+
         """
-            Processes all DICOM files within a single series directory.
+        Processes all DICOM instances within a single series directory.
 
-            The process delegates both file reading and  metadata
-            serialization to `_process_dicom_file`, and feature writing to
-            `_write_tfrecord_example`.
+        This method first computes global statistics for the series (min/max pixel values) 
+        to ensure consistent normalization across all instances. It then iterates through 
+        each DICOM file, delegating the extraction and serialization to 
+        `_process_single_dicom_instance`.
 
-            Args:
-                - series_path: The path to the series directory.
-                - header_df:
-                - pathologies_df:
-                - writer: The active TFRecordWriter instance for the current study.
+        Args:
+             - series_path (Path): Path to the series directory containing DICOM files.
+             - input_features_df (pd.DataFrame): DataFrame containing input features metadata.
+             - labels_df (pd.DataFrame): DataFrame containing target labels and coordinates.
+             - writer (tf.io.TFRecordWriter): The active TFRecord writer for the current study.
+             - logger (Optional[logging.Logger]): Logger instance for status reporting.
 
-            Returns:
-                bool: True if the processing of the series resulted in a *complete failure*
-                        (i.e., zero successful TFRecord examples were written).
-                      False otherwise (meaning full or partial success).
+        Returns:
+            Tuple[int, int, int]: A tuple containing:
+                - nb_success: Number of DICOM files successfully serialized.
+                - nb_failures: Number of files that encountered errors during processing.
+                - nb_dicom_files: Total number of DICOM files discovered in the directory.
+
+        Raises:
+            Exception: Propagates any critical error encountered during series-level 
+                operations (e.g., stats computation) after logging.
+                
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -383,61 +551,122 @@ class TFRecordFilesManager:
         )
 
         logger.info(
-            info_msg,
-            extra={"action": "process_series", "series_dir": series_path}
+           info_msg,
+           extra={"action": "process_series", "series_dir": series_path}
         )
 
-        nb_failed_process = 0
-        nb_success_file = 0
+        nb_failures = 0
+        nb_success = 0
 
-        # Define the min / max pixel values of the series
-        series_min, series_max = self._get_series_stats(series_path)
+        try:
+            # Define the min / max pixel values of the series
+            series_min, series_max = self._get_series_stats(series_path)
+        
+            dicom_files_list = list(series_path.glob("*.dcm"))
+            nb_dicom_files = len(dicom_files_list)
 
-        for dicom_path in series_path.glob("*.dcm"):
+            if nb_dicom_files != self._max_series_depth:
+                dcm_files_instances_numbers_list = [int(Path(dcm_file).stem) for dcm_file in dicom_files_list]
+                max_inst = np.max(dcm_files_instances_numbers_list)
+                min_inst = np.min(dcm_files_instances_numbers_list)
 
-            process_aborted: bool = self._process_single_dicom_instance(
-                dicom_path,
-                series_min,
-                series_max,
-                header_df,
-                pathologies_df,
-                writer
-            )
+                # Create a list of objects (Path or int)
+                final_elements_list = dicom_files_list.copy()
+                target = self._max_series_depth - nb_dicom_files
 
-            if process_aborted is True:
-                nb_failed_process += 1
-                continue
+                # Step 1: Fill internal gaps (In-between existing instances)
+                for instance in range(min_inst + 1, max_inst):
+                    if instance not in dcm_files_instances_numbers_list:
+                        final_elements_list.append(instance) # Add instance number as sent
+                        target -=1
 
-            nb_success_file += 1
+                    if 0 == target: break
 
-        full_success: bool = (nb_failed_process == 0)
-        partial_success: bool = (nb_success_file > 0 and not full_success)
-        complete_failure: bool = (nb_success_file == 0)
+                # Step 2: Fill external gaps (Head and tail)
+                if target > 0:
+                    nb_inserted_files = min(max_inst -1, int(target) // 2)
+                    nb_appended_files = target - nb_inserted_files
 
-        if complete_failure:
+                    # Insert at the beginning (Head)
+                    for idx in range(nb_inserted_files):
+                        # Using negative or specific range to avoid collision if needed
+                        final_elements_list.insert(0, min_inst - 1 - idx)
+
+                    # Add at the end (tail)
+                    for idx in range(nb_appended_files):
+                        final_elements_list.append(max_inst + 1 + idx)
+
+                # Replace the original list with the padded / extended one
+                dicom_files_list = final_elements_list
+
+            for item in  dicom_files_list:
+                series_path = series_path.resolve()
+                if isinstance(item, Path):
+                    # Real DICOM file
+                    instance_num = int(item.stem)
+                    is_padding = False
+                else:
+                    # It is a padding instance : the item is the instance number
+                    instance_num = item
+                    is_padding = True
+
+                process_completed: bool = self._process_single_dicom_instance(
+                    series_path,
+                    series_min,
+                    series_max,
+                    input_features_df,
+                    labels_df,
+                    writer,
+                    instance_num=instance_num,
+                    is_padding = is_padding
+                )
+
+                if process_completed is False:
+                    nb_failures += 1
+                    continue
+
+                nb_success += 1
+
+            full_success: bool = (nb_failures == 0)
+            partial_success: bool = (nb_success > 0 and not full_success)
+            complete_failure: bool = (nb_success == 0)
+
+            if complete_failure:
+                logger.error(
+                    f"Series {series_path.name} processing failed: "
+                    f"All files failed during processing.",
+                    exc_info = True,
+                    extra={"status": "failed"}
+                )
+
+            if partial_success:
+                logger.warning(
+                    f"Series {series_path.name} partially completed:"
+                    f"    - ({nb_success} were processed with success). "
+                    f"    - {nb_failures} files were skipped due to processing errors).",
+                    extra={"status": "partial_success",
+                           "failed_processing": nb_failures}
+                )
+
+            if full_success:
+                logger.info(
+                    f"Series {series_path.name} processing completed successfully.",
+                    extra={"status": "success"}
+                )
+
+            return nb_success, nb_failures, nb_dicom_files
+
+        except Exception as e:
+            # Log the failure of the specific series before re-raising
+            series_id = series_path.name
+            study_id = series_path.parent.name
+
             logger.error(
-                f"Series {series_path.name} processing failed: "
-                f"All files failed during processing.",
-                exc_info = True,
-                extra={"status": "failed"}
+                f"Failed to process series instance {series_id} in study {study_id}: {str(e)}",
+                exc_info=True,
+                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
             )
-
-        if partial_success:
-            logger.warning(
-                f"Series {series_path.name} partially completed:"
-                f"    - ({nb_success_file} were processed with success). "
-                f"    - {nb_failed_process} files were skipped due to processing errors).",
-                extra={"status": "partial_success",
-                       "failed_processing": nb_failed_process}
-            )
-
-        if full_success:
-            logger.info(
-                f"Series {series_path.name} processing completed successfully.",
-                extra={"status": "success"}
-            )
-
-        return complete_failure
+            raise  # Keep propagating the error
 
     @log_method()
     def _get_series_stats(
@@ -447,7 +676,24 @@ class TFRecordFilesManager:
     ) -> Tuple[int, int]:
 
         """
-            Calculate the min et max pixel values on the whole volume of dicom files in a series.
+        Calculates the minimum and maximum pixel intensity values across an entire DICOM series.
+
+        This method iterates through all DICOM files in the specified directory to determine 
+        the global dynamic range of the volume. These statistics are essential for 
+        consistent normalization during the TFRecord serialization process.
+
+        Args:
+            series_path (Path): Path to the directory containing the DICOM series.
+            logger (Optional[logging.Logger]): Logger instance for error reporting.
+
+        Returns:
+            Tuple[int, int]: A tuple containing the (global_min, global_max) pixel values 
+                represented as integers.
+
+        Raises:
+            FileNotFoundError: If no DICOM files are discovered in the provided path.
+            Exception: Propagates any error encountered during file reading or 
+                pixel array extraction.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -464,10 +710,10 @@ class TFRecordFilesManager:
                         f"Error in function {class_name}.{func_name}"
                         f"No DICOM files found in {series_path}"
                     )
-                    raise FileNotFoundError()
+                    raise FileNotFoundError(error_msg)
 
             global_min = float('inf')
-            global_max = float(-'inf')
+            global_max = float('-inf')
 
             for path in dicom_paths:
                 ds = pydicom.dcmread(path)
@@ -492,63 +738,174 @@ class TFRecordFilesManager:
     @log_method()
     def _process_single_dicom_instance(
         self,
-        dicom_path: Path,
+        series_path: Path,
         series_min: int,
         series_max: int,
-        header_df: pd.DataFrame,
-        pathologies_df: pd.DataFrame,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
+        instance_num: int,
+        is_padding: bool=False,
         logger: Optional[logging.Logger] = None
     ) -> bool:
+
         """
-            Processes a single DICOM file within a series.
+        Handles the end-to-end processing of an individual DICOM instance or padding frame.
 
-            This method delegates the processing of the DICOM file and metadata serialization to
-            `_process_dicom_file`, and writes the resulting features to the TFRecord
-            using `_write_tfrecord_example`.
+        Args:
+             - series_path (Path): Directory path containing the series' DICOM files.
+             - series_min (int): Global minimum pixel value of the series.
+             - series_max (int): Global maximum pixel value of the series.
+             - input_features_df (pd.DataFrame): Metadata for the study/series.
+             - labels_df (pd.DataFrame): Ground truth labels and coordinates.
+             - writer (tf.io.TFRecordWriter): Active writer for TFRecord export.
+             - instance_num (int): The specific instance number to process/simulate.
+             - is_padding (bool): If True, generates a 1x1 dummy pixel instead of reading a file.
+             - logger (Optional[logging.Logger]): Logger instance.
 
-            Args:
-                - dicom_path: The path to the DICOM file.
-                - series_min: The lowest pixel value in the series
-                - series_max: The highest pixel value in the series
-                - header_df: DataFrame containing header metadata
-                - pathologies_df: DataFrame containing ground truth labels and pathologies
-                - writer: The active TFRecordWriter instance for the current study
-                - logger: Optional logger instance
-
-            Returns:
-            - `process_aborted` (bool): True if the processing
-               (`_process_dicom_file` or `_write_tfrecord_example`) failed
-               due to an exception. False otherwise (success or skipped due to metadata).
+        Returns:
+            bool: True if successful, False otherwise.
         """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+        logger = logger or self._logger
+
+        # Construct the specific file path only if it's a real DICOM
+        current_file_path = series_path / f"{instance_num}.dcm" if not is_padding else None
+
+        try:
+            if is_padding:
+                # -->> Route to a specialized method for dummy feature generation << --
+                # This method should create a 1x1 pixel with appropriate metadata
+                features = self._generate_padding_features(
+                    series_path,
+                    instance_num,
+                    series_min,
+                    series_max,
+                    input_features_df,
+                    labels_df
+                )
+            else:
+                # Standard processing for real DICOM files
+                features = self._process_dicom_file_with_metadata(
+                    current_file_path,
+                    series_min,
+                    series_max,
+                    input_features_df,
+                    labels_df
+                )
+
+            # Serialize and write to TFRecord
+            writer.write(features.SerializeToString())
+            return True
+
+        except Exception as e:
+            # Use instance_num in the log since current_file_path might be None
+            context_info = f"Instance: {instance_num} (Padding: {is_padding})"
+            error_msg = (
+                f"Function {class_name}.{func_name} failed: "
+                f"Error in _process_single_dicom_instance. {context_info}. - {e}"
+            )
+            logger.error(
+                error_msg,
+                exc_info=True,
+                extra={"status": "failed", "error_type": "DicomProcessingError", "instance": instance_num}
+            )
+            return False
+
+    def _generate_padding_features(
+        self,
+        series_path: Path,
+        instance_num: int,
+        series_min: int,
+        series_max: int,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
+        logger: Optional[logging.Logger] = None
+    ) -> tf.train.Example:
+        """
+        Generates a 1x1 dummy pixel feature set for padding.
+    
+        This mimics the output of _process_dicom_file_with_metadata but 
+        without reading any file from disk.
+        """
+
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
 
+        info_msg = (
+            f"Function {class_name}.{func_name} started "
+            f"for processing padding instance {instance_num} in series {series_path}"
+        )
+
+        logger.info(
+            info_msg,
+            extra={
+                "action": "generate_padding_features",
+                "series": {str(series_path)},
+                "instance": {instance_num}
+            }
+        )
+
         try:
-            # Process the DICOM file and its metadata
-            img_bytes, serialized_metadata = self._process_dicom_file_with_metadata(dicom_path, series_min, series_max, header_df, pathologies_df)
+            # 1. Basic Identifiers
+            series_id = int(series_path.stem)
+            study_id = int(series_path.parent.stem)
 
-            # Write the result to the TFRecord
-            logger.info(f"writer = {writer}")
-            self._write_tfrecord_example(img_bytes, serialized_metadata, writer)
+            # 2. Extract metadata from input_features_df for this series
+            # We take the first match as metadata (description, etc.) is series-consistent
+            series_meta = input_features_df[input_features_df['series_id'] == series_id].iloc[0]
+            description_code = int(series_meta['description'])
 
-            process_aborted = False
-            return process_aborted
+            # 3. Create the 1x1 dummy pixel (uint16 to match DICOM depth)
+            # We use 0 as the "null" value.
+            dummy_pixel = np.zeros((1, 1, 1), dtype=np.uint16).tobytes()
 
-        except Exception:
+            # 4. Build the Feature Dictionary
+            # Ensure keys match exactly those in your real DICOM processing
+            features_dict = self._prepare_tf_features(
+                    is_padding=True,
+                    image_bytes=dummy_pixel,
+                    study_id=study_id,
+                    series_id=series_id,
+                    series_min=series_min,
+                    series_max=series_max,
+                    instance_id=instance_num,
+                    img_height=1,
+                    img_width=1,
+                    description=description_code,
+                    labels_df=labels_df,
+                    nb_max_records=self._MAX_RECORDS
+                )
+            
+            features = tf.train.Example(features=tf.train.Features(feature=features_dict))
+
+            info_msg = (
+                f"Function {class_name}.{func_name}: "
+                f"Successfully processed padding instance {instance_num} in series {series_path}"
+            )
+
+            logger.info(
+                info_msg,
+                extra={"status": "success"}
+            )
+
+            return features
+
+        except Exception as e:
             error_msg = (
                 f"Function {class_name}.{func_name} failed: "
-                f"Error in _process_single_dicom_instance. Process failed. File: {dicom_path}"
+                f"The padding instance generation for {series_path}/{instance_num}.dcm failed. "
+                f"{str(e)}"
             )
             logger.error(
                 error_msg,
-                exc_info=True,
+                exc_info=True,  # Includes the full stack trace upon failure
                 extra={"status": "failed", "error_type": "DicomProcessingError"}
             )
-            process_aborted = True
-            return process_aborted
+            raise
 
     @log_method()
     def _process_dicom_file_with_metadata(
@@ -556,27 +913,38 @@ class TFRecordFilesManager:
         dicom_path: Path,
         series_min: int,
         series_max: int,
-        header_df: pd.DataFrame,
-        pathologies_df: pd.DataFrame,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
         logger: Optional[logging.Logger] = None
-    ) -> Tuple[bytes, int, int, bytes]:
+    ) -> tf.train.Example:
+
         """
-            Process a single DICOM file and return serialized image and metadata.
+        Processes a single DICOM file to extract pixel data and associated metadata.
 
-            Args:
-                - dicom_path: The path to the considered DICOM file.
-                - series_min: The lowest pixel value in the series
-                - series_max: The highest pixel value in the series
-                - header_df: DataFrame containing header metadata
-                - pathologies_df: DataFrame containing ground truth labels and pathologies
-                - logger: Optional logger instance.
+        This method performs the core data transformation:
+        1. Reads the DICOM image using SimpleITK and converts it to a raw byte stream.
+        2. Extracts and validates hierarchical IDs (Study, Series, Instance).
+        3. Retrieves the specific series description from the provided metadata.
+        4. Compiles all data into a structured `tf.train.Example` via `_prepare_tf_features`.
 
-            Returns:
-                Tuple[bytes, bytes]: Serialized image tensor and serialized metadata.
+        Args:
+            - dicom_path (Path): Path to the DICOM file to be processed.
+            - series_min (int): Minimum pixel intensity value for the entire series.
+            - series_max (int): Maximum pixel intensity value for the entire series.
+            - input_features_df (pd.DataFrame): DataFrame containing series-level descriptions.
+            - labels_df (pd.DataFrame): DataFrame containing ground truth labels and coordinates.
+            - logger (Optional[logging.Logger]): Logger instance for status and error tracking.
 
-            Raises:
-                Exception: If reading, converting, or serializing the DICOM image fails.
+        Returns:
+            tf.train.Example: A serialized TensorFlow Example containing image bytes, 
+                spatial dimensions, and comprehensive metadata.
+
+        Raises:
+            ValueError: If the series description cannot be found in the metadata.
+            Exception: Propagates any error occurring during image reading, 
+                array conversion, or feature preparation.
         """
+
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
@@ -587,56 +955,97 @@ class TFRecordFilesManager:
             f"for processing DICOM file {dicom_path}"
         )
         logger.info(info_msg,
-                    extra={"action": "process_dicom_file", "dicom_file": dicom_path})
+                    extra={"action": "process_dicom_file_with_metadata", "dicom_file": dicom_path})
+
+        # Metadata serialization
+        instance_id = int(dicom_path.stem)
+        series_id = int(dicom_path.parent.name)
+        study_id = int(dicom_path.parent.parent.name)
 
         try:
-            # image processing
+            # Retrieve DICOM image array
             img = sitk.ReadImage(str(dicom_path))
             img_array:np.ndarray = sitk.GetArrayFromImage(img)
-            img_tensor = tf.convert_to_tensor(img_array, dtype=tf.uint16)
-            img_bytes = tf.io.serialize_tensor(img_tensor).numpy()
 
-            height, width = img_array.shape[-2:]
+            # SimpleITK considers each image as a 3D volume. Each DICOM file is loaded
+            # as a volume with one slice only ==> format (Depth, Height, Width), where Depth = 1
+            # Note: The channel dimension is absent by default if the number of channels is 1,
+            # which is normally the rule with DICOM files.
 
-            # Metadata serialization
-            instance_id = int(dicom_path.stem)
-            series_id = int(dicom_path.parent.name)
-            study_id = int(header_df['study_id'].unique())
+            # The first dimension is useless and must be removed
+            img_array = np.squeeze(img_array)
 
-            matches = header_df.loc[header_df['series_id'] == series_id, 'series_description'].unique()
+            # Handle Channels (Enforce Rank 3: [H, W, C])
+            if img_array.ndim == 2:
+                # Add channel dimension if missing
+                img_array = img_array[:,:,np.newaxis]
 
-            if len(matches) > 0:
-                description = int(matches[0]) # It is essential to convert an np.int64 variable into an int, for serialization purpose
+            elif img_array.ndim == 3:
+                # Verify that the last dimension is indeed the channel count
+                # and not a leftover depth dimension
+                if img_array.shape[2] != img.GetNumberOfComponentsPerPixel():
+                    # This could happen if squeeze didn't work as expected
+                    # or if the axes are transposed.
+                    raise ValueError(f"Inconsistent channel data in {dicom_path}")
+
             else:
-                err_msg = (
-                    f"Function {class_name}.{func_name} failed: "
-                    f"no description found related with study {study_id} and series {series_id}"
+                error_msg = (
+                    f"Unsupported image: rank {img_array.ndim} "
+                    f"(expected 2 before expansion or 3) in {dicom_path}"
                 )
-                raise ValueError(err_msg)
+                raise ValueError(error_msg)
+            
+            # Scale the image to the target size :
+            bool_var_1 = (input_features_df['series_id'] == series_id)
+            bool_var_2 = (input_features_df['study_id'] == study_id)
+            mask = bool_var_1 & bool_var_2
 
-            serialized_metadata = SerializationManager.serialize_metadata(
-                study_id,
-                series_id,
-                series_min,
-                series_max,
-                instance_id,
-                height,
-                width,
-                description,
-                pathologies_df
+            relevant_data = input_features_df.loc[mask, ['actual_file_format', 'description']]
+            if not relevant_data.empty:
+                # Note: target_format is formatted as follows: (Width, Height, Depth)
+                # This format derives from the command sitk.ImageFileReader().GetSize(),
+                # that was called by function CSVMetadataHandler._get_file_format().
+                # This format is the reverse order of the data returned by
+                # sitk.GetArrayFromImage(img), which is also used in this function.
+                target_format =  relevant_data['actual_file_format'].iloc[0]
+                description = int(relevant_data['description'].iloc[0])
+
+            else:
+                raise ValueError(f"No matching data in file {class_name}.{func_name}")
+
+            img_padded = self._pad_image_to_expected_format(img_array, target_format, dicom_path)
+
+            img_uint16 = img_padded.astype(np.uint16)
+            img_bytes = img_uint16.tobytes()
+
+            features_dict = self._prepare_tf_features(
+                is_padding=False,
+                image_bytes=img_bytes,
+                study_id=study_id,
+                series_id=series_id,
+                series_min=series_min,
+                series_max=series_max,
+                instance_id=instance_id,
+                img_height=target_format[1],
+                img_width=target_format[0],
+                description=description,
+                labels_df=labels_df,
+                nb_max_records=self._MAX_RECORDS
             )
+            
+            features = tf.train.Example(features=tf.train.Features(feature=features_dict))
 
-            logger.info(f"Function _process_dicom_file_with_metadata: Successfully processed DICOM file {dicom_path}",
+            logger.info(f"Function {class_name}.{func_name}: Successfully processed DICOM file {dicom_path}",
                         extra={"status": "success"})
 
-            return img_bytes, serialized_metadata
+            return features
 
         except Exception as e:
             error_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"Error in _process_dicom_file_with_metadata: The DICOM file read/conversion/serialization process for {dicom_path.name} failed. "
                 f"{str(e)}"
-                )
+            )
             logger.error(
                 error_msg,
                 exc_info=True,  # Includes the full stack trace upon failure
@@ -644,917 +1053,159 @@ class TFRecordFilesManager:
             )
             raise
 
-    @log_method()
-    def _write_tfrecord_example(
-        self,
-        img_bytes: bytes,
-        serialized_metadata: bytes,
-        writer: tf.io.TFRecordWriter,
-        logger: Optional[logging.Logger] = None
-    ) -> None:
+    def _pad_image_to_expected_format(self, img_array, file_format, dicom_path):
         """
-            Write a single TFRecord example to the writer.
-
-            Args:
-                - img_bytes: Serialized image tensor bytes.
-                - serialized_metadata: Serialized metadata bytes.
-                - writer: The active TFRecordWriter instance.
-
-            Returns:
-                None: The method writes the example directly to the provided writer.
-
-            Raises:
-                Exception: If an error occurs during the creation or writing
-                           of the TFRecord example.
+        Apply centered zero-padding to reach the target resolution.
+        file_format: (Width, Height, Channels)
         """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
 
-        logger = logger or self._logger
-        logger.info(f"Starting function {class_name}.{func_name}")
+        # 1. Extract current dimensions from the first two axes (Height, Width)
+        current_height, current_width, _ = img_array.shape
 
-        try:
-            feature = {
-                "image": tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_bytes])),
-                "metadata": tf.train.Feature(
-                    bytes_list=tf.train.BytesList(value=[serialized_metadata])
-                )
-            }
+        # 2. Padding calculation for Height (using index 1 of file_format)
+        pad_height_before = (file_format[1] - current_height) // 2
+        pad_height_after = file_format[1] - current_height - pad_height_before
         
-            example = tf.train.Example(features=tf.train.Features(feature=feature))
-            writer.write(example.SerializeToString())
+        # 3. Padding calculation for Width (using index 0 of file_format)
+        pad_width_before = (file_format[0] - current_width) // 2
+        pad_width_after = file_format[0] - current_width - pad_width_before
 
-        except Exception as e:
-            error_msg = (
-                f"Function {class_name}.{func_name} failed. "
-                f"Error writing TFRecord example: {str(e)}"
+        # 4. Define padding based on array dimensionality
+        if img_array.ndim == 3:
+            padding = (
+                (pad_height_before, pad_height_after),      # Vertical padding
+                (pad_width_before, pad_width_after),         # Horizontal padding
+                (0, 0)                       # No padding for channels
             )
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"status": "failed", "error": str(e)}
-            )
-            raise
+        else:
+            raise ValueError(f"Unsupported dicom file format {file_format} in {dicom_path}")
 
-    @log_method()
-    def _encode_dataframe(
+        # 5. Apply padding with constant zeros (black)
+        img_padded = np.pad(img_array, padding, mode='constant', constant_values=0)
+
+        return img_padded
+
+    def _prepare_tf_features(
         self,
-        metadata_df: pd.DataFrame,
-        *,
+        is_padding,
+        image_bytes: bytes,
+        study_id: int,
+        series_id: int,
+        series_min:int,
+        series_max: int,
+        instance_id: int,
+        img_height: int,
+        img_width: int,
+        description: int,
+        labels_df: pd.DataFrame,
+        nb_max_records: int,
         logger: Optional[logging.Logger] = None
-    ) -> pd.DataFrame:
+    ) -> dict:
 
         """
-            Converts categorical textual metadata fields in a DataFrame to numerical values.
-            This process is essential for preparing data for serialization
-            or machine learning models,replacing descriptive strings with compact integers.
+        Constructs a feature dictionary for a TensorFlow Example protobuf.
 
-            Args:
-                metadata_df: The DataFrame containing metadata to be converted.
-                            Example column values: {
-                                                        "condition": "Spinal Canal Stenosis",
-                                                        "level": "L1-L2", ...
-                                                    }
-
-            Returns:
-                pd.DataFrame: The DataFrame with the specified columns converted to integer values.
-        """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-        logger.info(f"Starting function {class_name}.{func_name}")
-
-        try:
-            # Define columns to encode and their corresponding mapping variables
-            columns_to_encode = ["condition", "level", "series_description", "severity"]
-
-            # Create mappings for each column
-            mappings = self._create_mappings(metadata_df, columns_to_encode)
-
-            # Apply encoding to each column
-            metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
-
-            msg_info = "Function _encode_dataframe completed successfully"
-            logger.info(msg_info, extra={"status": "success"})
-            return metadata_df
-
-        except Exception as e:
-            error_msg = (
-                f"Error in function {class_name}.{func_name}: {str(e)}"
-            )
-
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"status": "failed", "error": str(e)}
-            )
-            raise
-
-    def _create_mappings(
-        self,
-        metadata_df: pd.DataFrame,
-        columns_to_encode: Dict[str, str],
-        logger: Optional[logging.Logger] = None
-    ) -> Dict[str, Dict]:
-
-        """
-            Creates mapping dictionaries for each categorical column.
-
-            Args:
-                metadata_df: The DataFrame containing metadata to be converted.
-                columns_to_encode: Dictionary mapping column names to their mapping variable names.
-
-            Returns:
-                Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
-        """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-
-        mappings = {}
-
-        try: 
-            for column in columns_to_encode:
-                if column not in metadata_df.columns:
-                    self._logger.warning(f"Column '{column}' not found in DataFrame. Skipping.")
-                    continue
-
-                # Sort values to ensure mapping [0, 1, 2...] is always the same
-                values = sorted(metadata_df[column].dropna().unique().tolist())
-                
-                # We assume self._create_string_to_int_mapper returns an object with a .mapping attribute
-                mapper = self._create_string_to_int_mapper(values)
-                mappings[column] = mapper.mapping
-
-                self._logger.info(f"Created mapping for '{column}': {len(values)} categories found.")
-
-            return mappings
-
-        except Exception as e:
-            error_msg = f"Error in {self.__class__.__name__}.{func_name} while processing column '{column}': str({e})"
-            self._logger.error(
-                error_msg,
-                exc_info=True
-            )
-            raise
-
-
-    def _apply_encodings(self, metadata_df: pd.DataFrame,
-                         columns_to_encode: List[str],
-                         mappings: Dict[str, Dict]) -> pd.DataFrame:
-        """
-            Applies the encoding mappings to each specified column in the DataFrame.
-
-            Args:
-                metadata_df: The DataFrame containing metadata to be converted.
-                columns_to_encode: Dictionary mapping column names to their mapping variable names.
-                mappings: Dictionary of mapping dictionaries for each column.
-
-            Returns:
-                pd.DataFrame: The DataFrame with the specified columns converted to integer values.
-        """
-        for column in columns_to_encode:
-            metadata_df[column] = metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
-
-        return metadata_df
-
-    @log_method()
-    def _create_string_to_int_mapper(
-        self,
-        observed_pathologies_lst: list,
-        *,
-        logger: Optional[logging.Logger] = None
-    ) -> callable:
-        """
-            Creates a mapping function between strings and integers.
-
-            This is a factory function that generates a callable (the mapper)
-            capable of converting predefined category strings into their corresponding
-            integer indices (starting from 0).
-
-            Args:
-                strings_lst (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"])
-                                The order of the strings defines their integer value.
-
-            Returns:
-                callable: A function that maps an input string to an integer.
-                          The resulting function includes 'mapping' and 'reverse_mapping
-                          dictionaries as attributes.
-        """
-
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-        logger.info(f"Starting function {class_name}.{func_name}")
-
-        try:
-            # Create the primary dictionary {string: integer} using enumeration.
-            # The integer (i) corresponds to the string's index + 1 in the list.
-            mapping = {key: idx for idx, key in enumerate(observed_pathologies_lst)}
-
-            # Create the optional reverse dictionary {integer: string}
-            # for inspection/deserialization.
-            reverse_mapping = {idx: key for idx, key in enumerate(observed_pathologies_lst)}
-
-            def mapper(key: str) -> int:
-                """Maps an input string to its corresponding integer index."""
-                # Use .get() to return the mapped integer.
-                # Returns -1 if the input string is not found (unknown category).
-                return mapping.get(key, -1)
-
-            # Attach the mapping dictionaries as attributes to the mapper function.
-            # This allows users to inspect or reverse the mapping later.
-            mapper.mapping = mapping
-            mapper.reverse_mapping = reverse_mapping
-
-            # Return the callable function
-            logger.info(f"Function {class_name}.{func_name} completed successfully",
-                        extra={"status": "success"})
-            return mapper
-
-        except Exception as e:
-            error_msg = f"Error in function {class_name}.{func_name} : {str(e)}"
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"status": "failed", "error": str(e)}
-            )
-            raise
-
-    def _process_study_multi_series(
-        self, 
-        images: tf.Tensor, 
-        meta: Dict[str, tf.Tensor], 
-        labels: Dict[str, tf.Tensor],
-        logger: Optional[logging.Logger] = None
-    ) -> Tuple[Tuple[Tuple[tf.Tensor, tf.Tensor, tf.Tensor], 
-                     Tuple[tf.Tensor, tf.Tensor, tf.Tensor], 
-                     Tuple[tf.Tensor, tf.Tensor, tf.Tensor]
-                     ], 
-               tf.Tensor, 
-               Dict[str, tf.Tensor]
-            ]:
-        """
-        Orchestrates the conversion of a raw study-level frame collection into a 
-        structured multi-modal input for the neural network.
-    
-        This method ensures the model receives exactly three imaging series 
-        (Sagittal T1, Sagittal T2, and Axial T2) by:
-        1. Filtering frames by anatomical description.
-        2. Resolving duplicates by selecting the most complete series for each plane.
-        3. Standardizing the depth of each series through symmetric padding.
-        4. Reducing redundant study-level metadata and labels to single vectors.
+        This method handles the mapping of image data and metadata into TensorFlow-compatible 
+        feature types. A critical part of this process is the normalization of the 
+        labels: it ensures that the 'records' vector always contains exactly `nb_max_records` 
+        levels (ordered from 0 to 24), filling missing data with zeros to maintain a 
+        fixed-length input for the model.
 
         Args:
-            images (tf.Tensor): Flattened batch of all images in the study (N, H, W, C).
-            meta (dict): Dictionary of metadata tensors (each of length N).
-            labels (dict): Dictionary of label tensors (study-wide diagnostics).
+            - is_padding (bool): True if the image is a padding one (dummy image). False otherwise.
+            - image_bytes (bytes): Raw bytes of the DICOM image pixels.
+            - study_id (int): Unique identifier for the study.
+            - series_id (int): Unique identifier for the series.
+            - series_min (int): Minimum pixel intensity in the series.
+            - series_max (int): Maximum pixel intensity in the series.
+            - instance_id (int): Instance number of the DICOM file.
+            - img_height (int): Height of the image in pixels.
+            - img_width (int): Width of the image in pixels.
+            - description (int): Categorical description ID of the series.
+            - labels_df (pd.DataFrame): DataFrame containing condition levels, severity, and coordinates.
+            - nb_max_records (int): Expected number of condition levels (e.g., 25).
+            - logger (Optional[logging.Logger]): Logger instance for execution tracking.
 
         Returns:
-            tuple: (study_data_triplet, study_id, reduced_labels)
-                   - study_data_triplet: ((img, sid, desc)_t1, (img, sid, desc)_t2, (img, sid, desc)_ax)
-                   - study_id: The common identifier for the study.
-                   - reduced_labels: Compacted labels for the entire study.
-        """
-
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-
-        try:
-            # --- 1. Define Search Targets (Integer Codes) ---
-            # Based on the internal mapping: 0: "Sagittal T1", 1: "Sagittal T2", 2: "Axial T2"
-            # Using constants ensures Graph-compatibility during execution.
-            t1_code = tf.constant(0, dtype=tf.int32)
-            t2_code = tf.constant(1, dtype=tf.int32)
-            ax_code = tf.constant(2, dtype=tf.int32)
-
-            # --- 2. Process Individual Branches ---
-            # We extract the 3-tuple (Padded_Images, Selected_Series_ID, Description_Code) for each plane.
-            # This handles series selection and black-frame padding internally.
-            res_t1 = self._process_single_description(images, meta, t1_code)
-            res_t2 = self._process_single_description(images, meta, t2_code)
-            res_ax = self._process_single_description(images, meta, ax_code)
-
-            # --- 3. Extract Global Study Context ---
-            # Since all frames in the window belong to the same study (guaranteed by _get_group_key),
-            # we take the first element as the representative study_id.
-            study_id = meta['study_id'][0]
-
-            # --- 4. Label Consolidation ---
-            # Diagnostic labels (records) are identical for all frames within a study.
-            # We reduce them to a single scalar/vector to avoid redundant dimensions (64, -> 1,).
-            reduced_labels = {
-                k: v[0] if v.shape.rank is not None and v.shape.rank > 0 else v 
-                for k, v in labels.items()
-            }
-
-            # Return the structured data required by LumbarDicomTFRecordDataset._format_for_model :
-            return (res_t1, res_t2, res_ax), study_id, reduced_labels
-
-        except Exception as e:
-            error_msg = f"Error in function {class_name}.{func_name} : {str(e)}"
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"status": "failed", "error": str(e)}
-            )
-            raise
-
-    def _process_single_description(
-        self, 
-        all_images: tf.Tensor, 
-        all_meta: Dict[str, tf.Tensor], 
-        target_desc_tensor: tf.Tensor
-    ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
-        """
-        Filters, selects the best series, and pads images for a specific anatomical view.
-
-        The process follows these steps:
-        1. Mask all images matching the target description code.
-        2. If multiple series match, select the one with the most frames.
-        3. Sort frames by instance number to ensure correct anatomical order.
-        4. Apply symmetric padding or cropping to reach the fixed target depth.
-
-        Args:
-            all_images (tf.Tensor): Flattened batch of images (N, H, W, C).
-            all_meta (Dict[str, tf.Tensor]): Metadata containing 'description', 
-                                             'series_id', and 'instance_number'.
-            target_desc_tensor (tf.Tensor): The pathology/view code to filter for.
-
-        Returns:
-            Tuple[tf.Tensor, tf.Tensor, tf.Tensor]: 
-                - Padded Volume: (max_series_depth, H, W, C)
-                - Best Series ID: The ID of the selected series (int64).
-                - Description Code: The original target code (int32).
-        """
-        img_cfg = self._config['model_2d']['img_shape']
-
-        max_depth_tf = tf.constant(self._max_series_depth, dtype=tf.int32)
-    
-        # 1. Create the filtering mask
-        desc_mask = tf.equal(all_meta['description'], target_desc_tensor)
-        desc_mask = tf.cast(desc_mask, tf.bool)
-    
-        # Set shapes for TensorFlow Graph compatibility
-        desc_mask.set_shape([None])
-        all_images.set_shape([None, None, None, None])
-
-        # Check if any image matches the description
-        mask_has_data = tf.reduce_any(desc_mask)
-
-        def process_valid_series():
-            # --- 2. Filtering by Description ---
-            d_images = tf.boolean_mask(all_images, desc_mask)
-            d_series_ids = tf.boolean_mask(all_meta['series_id'], desc_mask)
-            d_instances = tf.boolean_mask(all_meta['instance_number'], desc_mask)
-
-            # --- 3. Best Series Selection (Highest Frame Count) ---
-            unique_ids, _, counts = tf.unique_with_counts(d_series_ids)
-            best_id = unique_ids[tf.argmax(counts)]
-
-            # Isolate the chosen series
-            series_mask = tf.equal(d_series_ids, best_id)
-            series_mask = tf.cast(series_mask, tf.bool)
-            series_mask.set_shape([None])
-            d_images.set_shape([None, None, None, None])
-
-            final_imgs = tf.boolean_mask(d_images, series_mask)
-            final_insts = tf.boolean_mask(d_instances, series_mask)
-
-            # --- 4. Spatial Sorting ---
-            sort_idx = tf.argsort(final_insts)
-            sorted_imgs = tf.gather(final_imgs, sort_idx)
-
-            # --- 5. Volumetric Normalization (Padding/Cropping) ---
-            # Ensure we don't exceed max_series_depth before padding
-            sorted_imgs = sorted_imgs[:max_depth_tf, ...]
-        
-            num_f = tf.shape(sorted_imgs)[0]
-            pad_needed = max_depth_tf - num_f
-
-            pad_before = pad_needed // 2
-            pad_after = pad_needed - pad_before
-
-            padded_vol = tf.pad(
-                sorted_imgs,
-                [[pad_before, pad_after], [0, 0], [0, 0], [0, 0]]
-            )
-        
-            # Final shape enforcement for the model*
-            # Convert single-channel MRI to 3-channel (pseudo-RGB) to match model input requirements.
-            if img_cfg[2] == 3:
-                padded_vol = tf.image.grayscale_to_rgb(padded_vol)
-
-            padded_vol.set_shape([self._max_series_depth, img_cfg[0], img_cfg[1], img_cfg[2]])
-        
-            return padded_vol, tf.cast(best_id, tf.int64), target_desc_tensor
-
-        def process_empty_series():
-            # Handle missing series by returning a zeroed tensor and a sentinel value (-1) for series_id.
-            default_id = tf.constant(-1, dtype=tf.int64)
-
-            empty_vol = tf.zeros(
-                [max_depth_tf, img_cfg[0], img_cfg[1], img_cfg[2]], 
-                dtype=all_images.dtype
-            )
-            return empty_vol, default_id, target_desc_tensor
-
-        # Execute conditional logic
-        return tf.cond(mask_has_data, process_valid_series, process_empty_series)
-
-    def _py_deserialize_and_flatten(
-        self,
-        metadata_bytes_tensor: tf.Tensor,
-        logger: Optional[logging.Logger] = None
-    ) -> List[tf.Tensor]:
-        """
-        Deserializes and flattens metadata bytes into a list of TensorFlow tensors.
-
-        This method takes a serialized metadata byte string (typically from a TFRecord)
-        and converts it into a structured list of TensorFlow tensors. The metadata is first
-        deserialized into a dictionary, then split into header tensors (scalar metadata fields)
-        and a flattened tensor for records (annotations or points of interest).
-
-        The records are padded to a fixed size (self._MAX_RECORDS * 4) to ensure
-        consistent tensor shapes for batch processing in TensorFlow pipelines.
-
-        Args:
-            metadata_bytes_tensor (tf.Tensor): A TensorFlow tensor containing the serialized
-                metadata as a byte string. This tensor is typically extracted from a TFRecord
-                and represents the 'metadata' field.
-
-        Returns:
-            list[tf.Tensor]: A list of 10 TensorFlow tensors:
-                - The first 10 tensors are scalar `tf.int32` tensors representing:
-                    0: study_id (int)
-                    1: series_id (int)
-                    2: series_min_pixel_value (int): Min pixel value into the series
-                    3: series_max_pixel_value (int): Max pixel value into the series
-                    4: instance_number (int)
-                    5: img_height (int): height of the image (in pixels)
-                    6: img_width (int): width of the image (in pixels)
-                    7: description (int, encoded category)
-                    8: nb_records (int, number of records/annotations)
-                - The 10th tensor is a 1D `tf.float32` tensor of shape (100,) representing:
-                    9: Flattened and padded records (condition_level, severity, x, y) for up to
-                       self._MAX_RECORDS records.
-                       Each record is represented by 4 values, and the tensor is padded with zeros
-                       to ensure a fixed size of 4 * self._MAX_RECORDS elements
-                       (self._MAX_RECORDS records * 4 values).
+            dict: A dictionary mapping feature names to `tf.train.Feature` objects.
 
         Raises:
-            ValueError: If the deserialized metadata structure is invalid or inconsistent.
-            Exception: If the deserialization process fails (e.g., due to corrupted metadata bytes).
-                      The exception will be logged and propagated to the caller.
-
-        Notes:
-            - This method is designed to be called within a `tf.py_function` context, allowing
-              the use of Python code inside a TensorFlow graph.
-            - The `.numpy()` call is required to convert the input tensor to a NumPy array for
-              deserialization, as TensorFlow operations are not available in this context.
-            - The padding ensures that the output tensor for records always has a fixed size,
-              which is necessary for batching in TensorFlow datasets.
+            Exception: Propagates any error encountered during DataFrame manipulation 
+                or feature conversion.
         """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
 
-        logger = logger or self._logger
-
-        try:
-            # We MUST call .numpy() here, inside the py_function boundary.
-            metadata_np = metadata_bytes_tensor.numpy()
-            deserialized_dict=SerializationManager.deserialize_metadata(metadata_np)
-
-            required_keys = ['study_id', 'series_id',
-                             'instance_number', 'description', 'nb_records']
-
-            for key in required_keys:
-                if key not in deserialized_dict:
-                    error_msg = (f"function {class_name}.{func_name} failed."
-                                 f"Missing required key in deserialized metadata: {key}")
-                    logger.critical(error_msg)
-                    raise ValueError(error_msg)
-
-            # 1. Extract header Tensors
-            header_list = [
-                int(deserialized_dict.get('study_id', 0)),
-                int(deserialized_dict.get('series_id', 0)),
-                int(deserialized_dict.get('series_min_pixel_value', 0)),
-                int(deserialized_dict.get('series_max_pixel_value', 0)),
-                int(deserialized_dict.get('instance_number', 0)),
-                int(deserialized_dict.get('img_height', 0)),
-                int(deserialized_dict.get('img_width', 0)),
-                int(deserialized_dict.get('description', 0)),
-                int(deserialized_dict.get('nb_records', 0))
-            ]
-
-            # 2. Flatten records into a 1D list of values:
-            # [level1, severity1, x1, y1, level2, severity2, x2, y2, ...]
-            # If no records, create a dummy 1x4 list of zeros.
-            records_list = deserialized_dict.get('records', [])
-
-            # Ensure that the list is sorted by condition_level value
-            records_list.sort(key=lambda x:x[0])
-
-            # Fill the gaps between 2 non consecutive records.
-            flattened_records_list = []
-            lookup_dict = {rec[0]: rec for rec in records_list}
-
-            for idx in range(self._MAX_RECORDS):
-                if idx in lookup_dict:
-                    flattened_records_list.extend([float(v) for v in lookup_dict[idx]])
-                else:
-                    # Insert a "filling" tuple
-                    flattened_records_list.extend([float(idx), 0.0, 0.0, 0.0])
-
-            # Pad the flattened list to the right size
-            # ( = self._MAX_RECORDS * 4 elements)
-            # Pad with a safe value (0.0)
-            current_length = len(flattened_records_list)
-            max_records_flat = self._MAX_RECORDS * 4
-
-            if current_length > max_records_flat :
-                error_msg = (f"Function {class_name}.{func_name} failed. "
-                             f"CORRUPTED data : Too many records ({current_length/4}"
-                             f"for study {deserialized_dict.get('study_id')}. "
-                             f"Expected max: {self._MAX_RECORDS}.")
-                logger.critical(error_msg)
-                raise ValueError(error_msg)
-
-            # Appy padding if the current length is below the required
-            # flat size
-            nb_padded_records = max_records_flat - len(flattened_records_list)
-            padded_records = (flattened_records_list + [0.0] * nb_padded_records)
-
-            # Final shape vaidation before TensorFlow injection
-            # This is fail-safe to prevent runtime shape mismatches in the GPU
-            if len(padded_records) != max_records_flat:
-                error_msg = (f"Function {class_name}.{func_name} failed. "
-                             f"STRUCTURE ERROR: Final length {len(padded_records)} "
-                             f"is inconsistent with the model (expected {max_records_flat}).")
-                logger.critical(error_msg)
-                raise RuntimeError(error_msg)
-
-            # Convert to NumPy array. 
-            # tf.py_function will automatically cast this to tf.float32 
-            # based on the Tout signature
-            records_np = np.array(padded_records, dtype=np.float32)
-            
-            # Combine header values (Python int) and record array
-            return header_list + [records_np]
-
-        except Exception as e:
-            error_msg = f"Function {class_name}.{func_name} failed: {str(e)}"
-            logger.error(
-                error_msg,
-                exc_info=True
-            )
-            
-            # Returns a default structure
-            return [0]*9 + [np.zeros(self._MAX_RECORDS*4, dtype=np.float32)]
-
-
-    @log_method()
-    def _parse_tfrecord_single_element(
-        self,
-        serialized_record_tf: tf.Tensor,
-        *,
-        logger: Optional[logging.Logger] = None
-    ) -> Tuple[tf.Tensor, Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
-    
-        """
-        Parses and pre-processes a single DICOM frame from a TFRecord.
-
-        Operations performed:
-        1. Metadata Extraction: Deserializes study/series info and pathology records 
-           using a python-wrapped helper (py_function).
-        2. Coordinate Normalization: Scales (x, y) coordinates from absolute pixel 
-           values to relative [0, 1] range based on original image dimensions.
-        3. Image Reshaping: Resizes raw DICOM frames to model-specific dimensions 
-           (e.g., 256x256) and adds channel dimension.
-        4. Intensity Normalization: Applies Min-Max scaling using series-level 
-           extrema and maps values to a configured target range (e.g., [-1, 1]).
-
-        Args:
-            serialized_record_tf: Scalar string Tensor (tf.train.Example).
-            logger: Optional logging instance.
-
-        Returns:
-            Tuple containing:
-            - normalized_image_tf (tf.float32): Processed 3D-ready image frame.
-            - metadata (dict): Core identifiers (study_id, series_id, etc.).
-            - labels (dict): Dictionary with 'records' containing normalized 
-              pathology data [condition, severity, x_norm, y_norm].
-        """
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
     
-        new_height, new_width, channels = self._config['model_2d']['img_shape']
-
         try:
-            # Define the structure of the features stored in the TFRecord.
-            feature_description = {
-                "image": tf.io.FixedLenFeature([], tf.string),
-                "metadata": tf.io.FixedLenFeature([], tf.string)
-            }
 
-            # Parse the scalar protocol buffer string into a dictionary of Tensors.
-            parsed_features_tf: Dict[str, tf.Tensor] = tf.io.parse_single_example(serialized_record_tf, feature_description)
+            # 1. Ensure condition_level is the index and we have all levels from 0 to 24 (nb_max_records - 1)
+            full_range = range(nb_max_records)
 
-            # --- 1. Deserialize the Metadata (using tf.py_function) ---
-            metadata_bytes_tf: tf.Tensor = parsed_features_tf["metadata"]
-
-            # Define the output types for the metadata deserializer:
-            # [0: study_id (int), 1: series_id (int), 2: instance_number (int),
-            # 3: description (int), 4: nb_records (int),
-            # 5: records (list of tuples -> will be tf.float32/tf.int32)]
-
-            # We call the deserializer via tf.py_function, which can execute Python code.
-            # It must return a consistent set of Tensors, not a dict.
-
-            # The metadata will be returned as individual scalar Tensors
-            # and one combined Tensor for records.
-            # We need the inner function to return a flat list/tuple of Tensors.
-
-            # To handle complex structures (the list of records), we must wrap the deserializer
-            # and parse the records list inside the tf.py_function output, returning fixed-size
-            # Tensors, which is difficult for a variable list of records.
-
-            # The cleaner solution: Return only the most complex part (records)
-            # as one flattened tensor and re-structure it later in the TF graph.
-
-            # Define the output signature for tf.py_function
-            # 9 scalar headers (tf.int32) + 1 padded records tensor (tf.float32)
-            output_types = [tf.int32] * 9 + [tf.float32]
-
-            # Call the py_function
-
-            deserialized_tensors = tf.py_function(
-                self._py_deserialize_and_flatten,
-                inp=[metadata_bytes_tf],
-                Tout=output_types
+            # 1. Set 'condition_level' as index to allow label-based reindexing
+            # 2. Reindex with full_range (0-24) to ensure all levels exist and are sorted
+            # 3. Fill missing levels with 0.0 to maintain a fixed-size, predictable structure
+            prepared_df = (
+                labels_df.set_index('condition_level')
+                .reindex(full_range, fill_value=0.0)
+                .reset_index()
             )
 
-            # Assign the results back to named Tensors
-            # As a reminder: condition = observed pathology.
-            (study_id_t, series_id_t, series_min_t, series_max_t,
-             instance_number_t, img_height_t, img_width_t,
-             description_t, nb_records_t, padded_records_t) = deserialized_tensors
+            # 4. Now the loop is simple and guaranteed to have 25 iterations in the right order
+            records_flat = []
+            for _, row in prepared_df.iterrows():
+                records_flat.extend([
+                    float(row['condition_level']),
+                    float(row['severity']),
+                    float(row['x']),
+                    float(row['y'])
+                ])
 
-            # Secure the shapes (essential)
-            study_id_t.set_shape([]) # Scalar
-            series_id_t.set_shape([])
-            series_min_t.set_shape([])
-            series_max_t.set_shape([])
-            instance_number_t.set_shape([])
-            img_height_t.set_shape([])
-            img_width_t.set_shape([])
-            description_t.set_shape([])
-            nb_records_t.set_shape([])
-            padded_records_t.set_shape([self._MAX_RECORDS * 4])
-
-            # --- 2. Deserialize and Reshape the Image Tensor (Pure TF) ---
-            image_tf: tf.Tensor = tf.io.parse_tensor(parsed_features_tf["image"], out_type=tf.uint16)
-            # NOTE: Using tf.uint16, the original Dicom type normalization
-            # to float32 happens later.
-
-            # Crucial stage: the image shape is unknown so far.
-            # It must be set before applying the "resize" command.
-            # A new dimension is added for the channel (grayscale = 1)
-            height_t = tf.cast(img_height_t, tf.int32)
-            width_t = tf.cast(img_width_t, tf.int32)
-            image_tf = tf.reshape(image_tf, [height_t, width_t, 1])
-
-            # Reshape the 1D Tensor back into its original 4D shape
-            # (e.g., [Depth, Height, Width, Channels]).
-            # The shape is assumed to be fixed for this dataset.
-            image_tf = tf.image.resize(image_tf, [new_height, new_width])
-
-            # Reshape the padded records tensor to (self._MAX_RECORDS, 4)
-            padded_records_t = tf.reshape(padded_records_t, [self._MAX_RECORDS, 4])
-
-            # Extract categorical metadata : (conditon_level, severity)
-            # We keep columns 0 and 1
-            categorical_data = padded_records_t[:, :2]
-
-            # Extract and normalize x and y coordinates:
-            # index 2 is x, index 3 is y.
-            coords_raw = padded_records_t[:, 2:]
-
-            # Denominator creation from the original dimensions, which were extracted from 
-            # the TFRecord. 
-            # Note: stack in [width, height] order to match [x, y] coordinates.
-            img_dims = tf.cast(tf.stack([img_width_t, img_height_t]), tf.float32)
-
-            # Element-wise division: x/width and y/height
-            normalized_coords = coords_raw / img_dims
-
-            # Final tensor reconstruction (condition, severity, x_norm, y_norm)
-            final_records_t = tf.concat([categorical_data, normalized_coords], axis=1)
-
-            # --- 3. Normalize the Image (Pure TF) ---
-            # The image is currently uint16. Convert to float32 and normalize.
-            image_tf = tf.cast(image_tf, dtype=tf.float32)
-
-            normalized_image_tf = self._normalize_image(image_tf, series_min_t, series_max_t)
-
-            # --- 4. Precision Reduction for Memory Optimization ---
-            # Cast to float16 immediately after normalization to reduce memory footprint by 50%.
-            # This is critical for keeping the windowing buffer (group_by_window) within 
-            # the available RAM limits (especially on machines with high memory pressure).
-            normalized_image_tf = tf.cast(normalized_image_tf, dtype=tf.float16)
-
-            metadata = {
-                "study_id": study_id_t,
-                "series_id": series_id_t,
-                "instance_number": instance_number_t,
-                "description": description_t
+            # 5. Build the feature dictionary
+            return {
+                'image': _bytes_feature(image_bytes),
+                'is_padding': _bool_feature(is_padding),
+                'file_format': _int64_list_feature([img_width, img_height]),
+                'study_id': _int64_feature(study_id),
+                'series_id': _int64_feature(series_id),
+                'series_min': _int64_feature(series_min),
+                'series_max': _int64_feature(series_max),
+                'instance_number': _int64_feature(instance_id),
+                'img_height': _int64_feature(img_height),
+                'img_width': _int64_feature(img_width),
+                'description': _int64_feature(description),
+                'records': _float_list_feature(records_flat),
+                'nb_records': _int64_feature(len(labels_df))
             }
-
-            labels = {
-                # The records are now a (self._MAX_RECORDS, 4) float32 tensor
-                "records": final_records_t
-            }
-
-            # --- 4. Return Processed Data ---
-            return_object = (normalized_image_tf, metadata, labels)
-
-            return return_object
 
         except Exception as e:
             error_msg = (
                 f"Function {class_name}.{func_name} failed: "
-                f"Error parsing TFRecord: {str(e)}"
+                f"{e}"
             )
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"status": "failed", "error": str(e)}
-            )
-
-            # Return a safe dummy structure to avoid pipeline crash
-            dummy_image = tf.zeros([new_height, new_width, channels], dtype=tf.float32)
-            dummy_records = tf.zeros([self._MAX_RECORDS, 4], dtype=tf.float32)
-
-            dummy_metadata = {
-                "study_id": tf.constant(0, dtype=tf.int32),
-                "series_id": tf.constant(0, dtype=tf.int32),
-                "instance_number": tf.constant(0, dtype=tf.int32),
-                "description": tf.constant(0, dtype=tf.int32)
-            }
-
-            dummy_label = {
-                # The records are now a (self._MAX_RECORDS, 4) float32 tensor
-                "records": dummy_records
-            }
-
-            return (dummy_image, dummy_metadata, dummy_label)
-
-    @log_method()
-    def _normalize_image(
-        self,
-        image_tf: tf.Tensor,
-        series_min_t: tf.Tensor,
-        series_max_t: tf.Tensor,
-        logger=None
-    ) -> tf.Tensor:
-        """
-        Normalizes the image intensity based on series-level extrema and config scaling.
-        """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-
-        try:
-            model_2d_config = self._config.get('model_2d', None)
-
-            if not model_2d_config:
-                error_msg = "Function normalize_error failed: key data 'model_2d' is missing in the configuration file"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            min_scaling_value = model_2d_config['min_scaling_value']
-            max_scaling_value = model_2d_config['max_scaling_value']
-
-            # Cast series-level stats to float32 for tensor arithmetic.
-            s_min = tf.cast(series_min_t, tf.float32)
-            s_max = tf.cast(series_max_t, tf.float32)
-
-            # Apply Min-Max normalization using series extrema.
-            # Add a small epsilon to denominator to avoid division by zero.
-            denom = tf.maximum(s_max - s_min, 1e-8)
-            image_tf = (image_tf - s_min) / denom
-
-            # Rescale from [0, 1] to the target range defined in config (e.g., [-1, 1]).
-            image_tf = image_tf * (max_scaling_value - min_scaling_value) + min_scaling_value
-
-            return image_tf
-
-        except Exception as e:
-            error_msg = f"Critical error in function {class_name}.{func_name}: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            logger.error(error_msg, exc_info = True)
             raise
 
-    @log_method()
-    def _calculate_max_series_depth(self, logger=None) -> int:
+    def get_max_series_depth(self) -> int:
         """
-        Calculates the maximum number of slices per series using high-performance 
-        TF dataset reduction and a localized metadata cache.
-    
-        Args:
-            logger:
-        
+        Retrieves the maximum allowed number of DICOM instances per series.
+
+        This limit is used during the processing phase to ensure memory stability 
+        and consistent input shapes across different medical series.
+
         Returns:
-            int: The maximum number of records (depth) found across all series.
+            int: The current maximum depth threshold.
         """
-
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        logger = logger or self._logger
-
-        cache_file = self._tfrecord_dir / "depth_metadata_cache.json"
-        tfrecord_files = list(self._tfrecord_dir.glob("*.tfrecord"))
-        file_count = len(tfrecord_files)
-    
-        if not tfrecord_files:
-
-            return 0
-
-        # 1. Smart Cache Management
-        if cache_file.exists():
-            try:
-                with cache_file.open('r') as f:
-                    cache_data = json.load(f)
-                    # Invalidate cache if the number of files has changed
-                    if cache_data.get('file_count') == file_count:
-                        logger.info(f"Metadata cache hit. Loading max_depth = {cache_data['max_depth']}.")
-                        return cache_data['max_depth']
-            except Exception:
-                pass
-        
-        try:
-            # 2. Optimized TensorFlow Pipeline
-            self._logger.info(f"Scanning {file_count} TFRecords for depth calculation. It might take some time.")
-            file_patterns = [str(f) for f in tfrecord_files]
-
-            def fast_parse(serial_example):
-                """Minimal parsing: only extract the metadata feature to save RAM/CPU."""
-                features = {'metadata': tf.io.FixedLenFeature([], tf.string)}
-                return tf.io.parse_single_example(serial_example, features)
-
-            # Create the optimized dataset pipeline
-            dataset = tf.data.TFRecordDataset(file_patterns).map(
-                fast_parse, 
-                num_parallel_calls=tf.data.AUTOTUNE
-            )
-
-            series_counts_dict = {}
-            series_study_dict = {}
-    
-            # 3. High-speed Counting Loop
-            # We iterate only over the metadata blobs using a numpy iterator
-            for metadata_blob in dataset.map(lambda x: x['metadata']).as_numpy_iterator():
-                study_id = int.from_bytes(metadata_blob[0:5], byteorder='big', signed=False)
-                series_id = int.from_bytes(metadata_blob[5:10], byteorder='big', signed=False)
-                series_counts_dict[series_id] = series_counts_dict.get(series_id, 0) + 1
-                series_study_dict[series_id] = study_id
-
-            if not series_counts_dict:
-                return 0
-
-            max_series = max(series_counts_dict, key = series_counts_dict.get)
-            max_depth = series_counts_dict[max_series]
-            max_study = series_study_dict[max_series]
-
-
-            # 4. Save cache with validation metadata
-            with cache_file.open('w') as f:
-                json.dump({
-                    "max_depth": int(max_depth),
-                    "study_id": max_study,
-                    "series_id": max_series,
-                    "file_count": file_count,
-                    "created_at": str(pd.Timestamp.now())
-                }, f)
-            
-            logger.info(f"Scanning completed. At most {max_depth} files were found per series. Study = {study_id} and series = {series_id}")
-
-            return int(max_depth)
-
-        except Exception as e:
-            self._logger.error(f"Function {class_name}.{func_name} failed: str{e}")
-
-    def get_max_series_depth(self):
         return self._max_series_depth
 
-    def set_series_depth(self, depth):
+    def set_series_depth(self, depth: int) -> None:
+        """
+        Updates the maximum allowed number of DICOM instances per series.
+
+        Args:
+            depth (int): The new depth limit to be applied for future 
+                processing tasks.
+        """
         self._max_series_depth = depth

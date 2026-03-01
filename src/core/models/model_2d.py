@@ -11,13 +11,16 @@ class Backbone2D:
         # On peut charger depuis Keras ou un modèle custom
         if self._model_name == "MobileNetV2":
             base = tf.keras.applications.MobileNetV2(
-                                                        input_shape=input_shape,
-                                                        include_top=False,
-                                                        weights='imagenet'
-                                                      )
+                input_shape=input_shape,
+                include_top=False,
+                weights='imagenet'
+            )
         else:
             # Import externe ou modèle custom ici
-            base = tf.keras.Sequential([layers.Conv2D(32, 3, activation='relu')])
+            base = tf.keras.Sequential([
+                layers.Input(shape=input_shape), # Define input here
+                layers.Conv2D(32, 3, activation='relu')
+            ])
             
         self._model = Model(inputs=base.input, outputs=base.output)
 

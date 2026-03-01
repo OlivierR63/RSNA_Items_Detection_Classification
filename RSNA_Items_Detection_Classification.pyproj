@@ -15,7 +15,7 @@
     <UnitTestPattern>test*.py</UnitTestPattern>
     <UnitTestRootDirectory>.</UnitTestRootDirectory>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
+    <EnableNativeCodeDebugging>True</EnableNativeCodeDebugging>
     <IsWindowsApplication>True</IsWindowsApplication>
     <InterpreterPath>C:\Users\Olivier\anaconda3\envs\airflow_env\python.exe</InterpreterPath>
   </PropertyGroup>
@@ -30,9 +30,6 @@
   <ItemGroup>
     <Compile Include="src\config\config_loader.py" />
     <Compile Include="src\config\__init__.py" />
-    <Compile Include="src\core\data_handlers\data_pipeline.py" />
-    <Compile Include="src\core\data_handlers\dicom_dataset.py" />
-    <Compile Include="src\core\data_handlers\dicom_tfrecord_dataset.py" />
     <Compile Include="src\core\data_handlers\__init__.py" />
     <Compile Include="src\core\models\conv3d_aggregator.py" />
     <Compile Include="src\core\models\model_2d.py" />
@@ -41,41 +38,38 @@
     <Compile Include="src\core\models\rnn_aggregator.py" />
     <Compile Include="src\core\models\temporal_padding_layer.py" />
     <Compile Include="src\core\models\__init__.py" />
-    <Compile Include="src\core\pipeline\airflow_pipeline.py" />
-    <Compile Include="src\core\pipeline\base_pipeline.py" />
-    <Compile Include="src\core\pipeline\lumbar_spine_pipeline.py" />
-    <Compile Include="src\core\pipeline\tfx_pipeline.py" />
-    <Compile Include="src\core\pipeline\transform.py" />
-    <Compile Include="src\core\pipeline\__init__.py" />
     <Compile Include="src\core\utils\clean_logs.py" />
+    <Compile Include="src\core\utils\dataset_utils.py" />
     <Compile Include="src\core\utils\logger.py" />
-    <Compile Include="src\core\utils\log_training_progress.py" />
+    <Compile Include="src\core\utils\log_training_callbacks.py" />
+    <Compile Include="src\core\utils\system_resource_monitor_callbacks.py" />
+    <Compile Include="src\core\utils\system_stream_tee.py" />
     <Compile Include="src\core\utils\__init__.py" />
-    <Compile Include="src\projects\lumbar_spine\csv_metadata.py" />
-    <Compile Include="src\projects\lumbar_spine\custom_losses.py" />
+    <Compile Include="src\projects\lumbar_spine\csv_metadata_handler.py" />
     <Compile Include="src\projects\lumbar_spine\lumbar_dicom_tfrecord_dataset.py" />
+    <Compile Include="src\projects\lumbar_spine\RSNA_lumbar_losses_and_metric.py" />
     <Compile Include="src\projects\lumbar_spine\pathology_mapper.py" />
-    <Compile Include="src\projects\lumbar_spine\serialization_manager.py" />
     <Compile Include="src\projects\lumbar_spine\model_trainer.py" />
     <Compile Include="src\projects\lumbar_spine\tfrecord_files_manager.py" />
     <Compile Include="src\projects\lumbar_spine\__init__.py" />
     <Compile Include="src\projects\test_content_tfrecord_file.py" />
     <Compile Include="src\RSNA_2024_Lumbar_Spine_Degenerative_Classification.py" />
+    <Compile Include="src\RSNA_input_data_survey.py" />
     <Compile Include="src\RSNA_Intracranial_Aneurysm_Detection.py" />
     <Compile Include="test\conftest.py" />
-    <Compile Include="test\test_rsna_lumbar_spine_degenerative_classification.py" />
+    <Compile Include="test\integration\test_dicom_to_tfrecord.py" />
+    <Compile Include="test\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
+    <Compile Include="test\unit\test_lumbar_spine\test_model_trainer.py" />
+    <Compile Include="test\unit\test_lumbar_spine\test_tfrecord_files_manager.py" />
+    <Compile Include="test\unit\test_models\test_model_factory.py" />
+    <Compile Include="test\unit\test_rsna_lumbar_spine_degenerative_classification.py" />
     <Compile Include="test\unit\test_config\test_config_loader.py" />
     <Compile Include="test\unit\test_config\__init__.py" />
-    <Compile Include="test\unit\test_data_handlers\test_dicom_dataset.py" />
     <Compile Include="test\unit\test_data_handlers\__init__.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_csv_metadata.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_dicom_to_tfrecord_conversion.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_encode_dataframe.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_lumbar_dicom_tfrecord_dataset.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_metadata_serialization_deserialization.py" />
-    <Compile Include="test\unit\test_lumbar_spine\test_train.py" />
+    <Compile Include="test\unit\test_lumbar_spine\test_csv_metadata_handler.py" />
     <Compile Include="test\unit\test_lumbar_spine\__init__.py" />
     <Compile Include="test\unit\test_utils\test_clean_logs.py" />
+    <Compile Include="test\unit\test_utils\test_dataset_utils.py" />
     <Compile Include="test\unit\test_utils\test_logger.py" />
     <Compile Include="test\unit\test_utils\__init__.py" />
     <Compile Include="test\unit\__init__.py" />
@@ -89,7 +83,6 @@
     <Folder Include="src\core\" />
     <Folder Include="src\core\data_handlers\" />
     <Folder Include="src\core\models\" />
-    <Folder Include="src\core\pipeline\" />
     <Folder Include="src\core\utils\" />
     <Folder Include="src\projects\" />
     <Folder Include="src\projects\intracranial_aneurysm\" />
@@ -134,8 +127,10 @@
     <Folder Include="test\fixtures\dicom_unique_sample\4003253\2448190387\" />
     <Folder Include="test\fixtures\dicom_unique_sample\4003253\702807833\" />
     <Folder Include="test\fixtures\tfrecords\" />
+    <Folder Include="test\integration\" />
     <Folder Include="test\tmp\" />
     <Folder Include="test\unit\" />
+    <Folder Include="test\unit\test_models\" />
     <Folder Include="test\unit\test_config\" />
     <Folder Include="test\unit\test_data_handlers\" />
     <Folder Include="test\unit\test_lumbar_spine\" />
