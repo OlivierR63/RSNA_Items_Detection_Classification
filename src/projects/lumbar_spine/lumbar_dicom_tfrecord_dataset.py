@@ -17,7 +17,7 @@ class LumbarDicomTFRecordDataset():
         self,
         config: dict,
         logger: Optional[logging.Logger] = None,
-        series_depth: int = 1
+        series_depth: int = 1,
     ) -> None:
 
         """
@@ -26,8 +26,7 @@ class LumbarDicomTFRecordDataset():
         Args:
             config (dict): Global configuration dictionary containing:
                 - 'max_records': Number of anatomical levels to analyze (e.g., 25).
-                - 'dataset_buffer_size_mb': Memory buffer for TFRecord reading.
-                - 'nb_cores': CPU cores to allocate for parallel processing.
+                - 'dataset_buffer_size_mb': Memory buffer for TFRecord reading..
                 - 'model_2d/img_shape': Target dimensions for image rescaling.
 
             logger (logging.Logger, optional): Custom logger instance. 
@@ -42,14 +41,25 @@ class LumbarDicomTFRecordDataset():
                    else logging.getLogger(self.__class__.__name__)
         )
         self._config = config
-        self._MAX_RECORDS = config['max_records']
+        self._MAX_RECORDS = config['data_specs']['max_records_per_frame']
         self._series_depth = series_depth
         self._logger.info("Initializing LumbarDicomTfRecordDataset")
+        
+        # We define the epoch tracker here. 
+        # Using a tf.Variable is mandatory to allow the TF Graph to pick up 
+        # changes during training without rebuilding the whole dataset.
+        self._current_epoch_var = tf.Variable(
+            0, 
+            dtype=tf.int64, 
+            trainable=False, 
+            name="dataset_epoch_counter"
+        )
 
     def generate_tfrecord_dataset(
         self,
         tfrecord_list,
-        batch_size
+        batch_size,
+        is_training=True
     ) -> tf.data.Dataset:
 
         """
@@ -57,7 +67,7 @@ class LumbarDicomTFRecordDataset():
 
         This pipeline orchestrates the transformation of raw 2D DICOM frames stored in 
         TFRecords into structured multi-input 3D volumes (T1, T2, Axial).
-
+        
         The pipeline executes the following sequence:
         1. Interleaves TFRecord files to stream individual study records.
         2. Parses TFRecord Protobuf examples into image tensors and raw metadata.
@@ -65,13 +75,14 @@ class LumbarDicomTFRecordDataset():
            the three required MRI series.
         4. Reconstructs, sorts, and validates 3D volumes to ensure spatial consistency 
            across Sagittal T1, Sagittal T2, and Axial T2 series.
-        5. Formats the processed volumes and labels into a multi-input dictionary 
+        5. Formats the processed volumes and labels into a multi-input dictionary
            signature compatible with the model's architecture.
 
         Args:
             - tfrecord_list (list): List of file paths to the TFRecord files.
             - batch_size (int): Number of studies (patients) per training batch.
             - logger (logging.Logger, optional): Logger for tracking pipeline initialization.
+            - is_training (bool): flag on the current mode : training (True) or validation (False)
 
         Returns:
             tf.data.Dataset: A dataset yielding tuples of (inputs_dict, targets_dict), 
@@ -80,7 +91,7 @@ class LumbarDicomTFRecordDataset():
         
         # Extract records from files (Flattening the nested structure)
         BYTES_PER_MIB = 1024*1024
-        buffer_mb = int(self._config.get('dataset_buffer_size_mb', 100))
+        buffer_mb = int(self._config['data_specs'].get('dataset_buffer_size_mb', 100))
         buffer_size_bytes= buffer_mb * BYTES_PER_MIB # in MiB
 
         tfrecord_files_manager = TFRecordFilesManager(self._config, self._logger)
@@ -107,7 +118,10 @@ class LumbarDicomTFRecordDataset():
         )
 
         # 5. Parse individual TFRecord elements (serialized frames)
-        dataset = dataset.map(parse_tfrecord_single_element, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.map(
+            lambda x: parse_tfrecord_single_element(x, self._current_epoch_var),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
 
         # 6. Skip corrupted records automatically
         dataset = dataset.ignore_errors() 
@@ -118,7 +132,7 @@ class LumbarDicomTFRecordDataset():
         
         # 8. Reconstruct 3D volumes (sorting and padding)
         # This is the most CPU-intensive step, distributed across cores
-        dataset = dataset.map(lambda images, metadata, labels: process_study_multi_series(images, metadata, labels),
+        dataset = dataset.map(lambda images, metadata, labels: process_study_multi_series(images, metadata, labels, is_training=is_training),
                         num_parallel_calls=tf.data.AUTOTUNE)
 
         # 9. Final formatting into model-ready dictionary

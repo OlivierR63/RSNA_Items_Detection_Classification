@@ -82,7 +82,7 @@ class ModelTrainer:
         self._process = psutil.Process(os.getpid())
 
         # Define the directory where the TFRecord files shall be stored.
-        self._tfrecord_dir = Path(config["tfrecord_dir"]).resolve()
+        self._tfrecord_dir = Path(config["paths"]["tfrecord"]).resolve()
 
         # Define the pattern to match all TFRecord files in the directory.
         self._tfrecord_pattern = str(self._tfrecord_dir / "*.tfrecord")
@@ -94,6 +94,7 @@ class ModelTrainer:
         self._nb_val = None
         self._train_dataset = None
         self._validation_dataset = None
+        self._dataset_manager = None
 
     @log_method()
     def train_model(
@@ -123,7 +124,7 @@ class ModelTrainer:
             "Loading 3D model...",
             extra={
                    "action": "load_model",
-                   "model_type": self._config['model_3d']['type']
+                   "model_type": self._config['models']['head_3d']['type']
                    }
         )
 
@@ -132,10 +133,10 @@ class ModelTrainer:
             _ = self._train_with_callbacks()
 
             logger.info(
-                f"Model saved to {self._config['checkpoint_path']}",
+                f"Model saved to {self._config['paths']['checkpoint']}",
                 extra={
                     "status": "success",
-                    "model_path": str(Path(self._config["checkpoint_path"]))
+                    "model_path": str(Path(self._config["paths"]["checkpoint"]))
                 }
             )
 
@@ -180,15 +181,32 @@ class ModelTrainer:
 
         logger = logger or self._logger
 
+        hyperparameters = self._config['training'].get('hyperparameters', None)
+        if hyperparameters is None:
+            error_msg = (
+                "Fatal error in prepare_training_and_validation_datasets: "
+                "the setting variable 'training -> hyperparameters' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
         logger.info("Setting up TensorFlow dataset pipeline...",
-                    extra={"action": "create_dataset", "batch_size": self._config["batch_size"]})
+                    extra={"action": "create_dataset", "batch_size": hyperparameters["batch_size"]})
 
         try:
-            batch_size = self._config["batch_size"]
+            batch_size = hyperparameters.get("batch_size", 0)
+
+            if batch_size == 0:
+                error_msg = (
+                    "Fatal error in prepare_training_and_validation_datasets: "
+                    "the setting variable 'training -> hyperparameters -> batch_size' is required "
+                    "but was not found. Please check your YAML file structure."
+                )
+                raise ValueError(error_msg)
 
             log_memory_usage(stage_name="Before Dataset creation", process=self._process)
 
-            dataset_object = LumbarDicomTFRecordDataset(self._config, self._logger, self._model_depth)
+            self._dataset_manager = LumbarDicomTFRecordDataset(self._config, self._logger, self._model_depth)
 
             # 1. List files and shuffle them
             all_tfrecord_files = tf.io.gfile.glob(self._tfrecord_pattern)
@@ -200,7 +218,7 @@ class ModelTrainer:
             nb_tfrecord_files = tf.shape(shuffled_tfrecord_list)[0]
 
             # 3. Define the train / validation ratio
-            train_ratio = self._config.get('train_split_ratio', 0.8)
+            train_ratio = hyperparameters.get('train_split_ratio', 0.8)
 
             # 4. Split the train and validation datasets
             split_idx = tf.cast(tf.cast(nb_tfrecord_files, tf.float32) * train_ratio, tf.int32)
@@ -209,14 +227,14 @@ class ModelTrainer:
 
             # 5. The TensorFlow world starts here
             self._nb_train = len(train_list.numpy())
-            self._train_dataset = dataset_object.generate_tfrecord_dataset(train_list, batch_size=batch_size)
+            self._train_dataset = self._dataset_manager.generate_tfrecord_dataset(train_list, batch_size=batch_size, is_training = True)
             self._nb_val = len(val_list.numpy())
-            self._validation_dataset = dataset_object.generate_tfrecord_dataset(val_list, batch_size=batch_size)
+            self._validation_dataset = self._dataset_manager.generate_tfrecord_dataset(val_list, batch_size=batch_size, is_training = False)
 
             log_memory_usage(stage_name="After Dataset creation", process=self._process)
 
             logger.info("Training and validation dataset created successfully.",
-                        extra={"status": "success", "batch_size": self._config["batch_size"]})
+                        extra={"status": "success", "batch_size": hyperparameters["batch_size"]})
 
             return 
 
@@ -250,14 +268,14 @@ class ModelTrainer:
 
         logger = logger or self._logger
 
-        Path(self._config["output_dir"]).mkdir(parents=True, exist_ok=True)
+        Path(self._config["paths"]["output"]).mkdir(parents=True, exist_ok=True)
 
         logger.info("Setting up training callbacks...", extra={"action": "setup_callbacks"})
 
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        last_path = Path(self._config.get("checkpoint_path", "checkpoints")).resolve()
+        last_path = Path(self._config["paths"].get("checkpoint", "checkpoints")).resolve()
         best_path = last_path.parent / "best_model.keras"
 
         # Initialize your custom hardware and metrics monitor
@@ -272,8 +290,23 @@ class ModelTrainer:
                 f" >>> Step {int(batch)+1:04d} | Loss: {logs['loss']:.4f}"
             ) #if (int(batch)+1) % 5 == 0 else None 
         )
+
+        # Create a callback to sync the dataset epoch with the trainer epoch
+        sync_epoch_callback = LambdaCallback(
+            on_epoch_begin=lambda epoch, logs: self._dataset_manager._current_epoch_var.assign(epoch)
+        )
+
+        hyperparameters = self._config['training'].get('hyperparameters', None)
+        if hyperparameters is None:
+            error_msg = (
+                "Fatal error in prepare_training_and_validation_datasets: "
+                "the setting variable 'training -> hyperparameters' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
         
         callbacks = [
+            sync_epoch_callback, 
             monitor_callback,
             training_progress_callback,
             print_callback,
@@ -297,14 +330,14 @@ class ModelTrainer:
             # Stop training if validation loss plateaus.
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=self._config['patience'],
+                patience=hyperparameters['patience'],
                 restore_best_weights=True,
                 verbose=1
             ),
 
             # Export log for visualization in tensorboard
             tf.keras.callbacks.TensorBoard(
-                log_dir=str((Path(self._config["output_dir"]) / "tensorboard_logs").resolve()),
+                log_dir=str((Path(self._config["paths"]["output"]) / "tensorboard_logs").resolve()),
                 histogram_freq=1,
                 profile_batch=(0)
             )
@@ -315,12 +348,12 @@ class ModelTrainer:
 
         # Calculate steps_per_epoch and validation_step, since the dataset
         # uses .repeat()  (infinite stream)
-        batch_size = self._config.get('batch_size', 1)
+        batch_size = hyperparameters.get('batch_size', 1)
 
         if batch_size <= 0:
             msg_error = (
                 f"Error in function ModelTrainer.train_with_callback(): "
-                "the configuration parameter 'batch_size' shall be strictly positive"
+                "the setting variable 'training -> hyperparameters -> batch_size' shall be strictly positive"
             )
             logger.error(msg_error)
             raise ValueError(msg_error)
@@ -331,8 +364,8 @@ class ModelTrainer:
         logger.info(
             f"Starting model training: {steps_per_epoch} steps/epoch, {validation_steps} validation steps.",
             extra={
-                "epochs": self._config.get("epochs", 1),
-                "batch_size": self._config.get("batch_size")
+                "epochs": hyperparameters.get("epochs", 1),
+                "batch_size": hyperparameters["batch_size"]
             }
         )
 
@@ -344,7 +377,7 @@ class ModelTrainer:
             # Execute the training loop
             history = self._model.fit(
                 self._train_dataset,
-                epochs=self._config["epochs"],
+                epochs=hyperparameters["epochs"],
                 steps_per_epoch=steps_per_epoch,
                 validation_data=self._validation_dataset,
                 validation_steps=validation_steps,

@@ -108,16 +108,21 @@ config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
 config: dict = config_loader.get()
 
 # 3.  Constant assignments (After functions are defined)
-MAX_RECORDS = config.get('max_records', None)
+MAX_RECORDS = config['data_specs'].get('max_records_per_frame', None)
 if MAX_RECORDS is None:
-    raise ValueError("Key 'max_records' is missing. Verify config file.")
+    error_msg = (
+            "Fatal error: the parameter 'data_specs -> max_records_per_frame' "
+            "is required but was not found. "
+            "Please check your YAML file structure."
+        )
+    raise ValueError(error_msg)
 
-MODEL_2D_HEIGHT, MODEL_2D_WIDTH, MODEL_2D_NB_CHANNELS = config['model_2d']['img_shape']
-MIN_SCALING_VALUE = config['model_2d']['min_scaling_value']
-MAX_SCALING_VALUE = config['model_2d']['max_scaling_value']
-TFRECORD_DIR = config['tfrecord_dir']
-DICOM_STUDIES_DIR = config['dicom_studies_dir']
-SERIES_DEPTH_THRESHOLD_PERCENTILE = config['series_depth_threshold_percentile']
+MODEL_2D_HEIGHT, MODEL_2D_WIDTH, MODEL_2D_NB_CHANNELS = config['models']['backbone_2d']['img_shape']
+MIN_SCALING_VALUE = config['models']['backbone_2d']['scaling']['min']
+MAX_SCALING_VALUE = config['models']['backbone_2d']['scaling']['max']
+TFRECORD_DIR = config['paths']['tfrecord']
+DICOM_STUDIES_DIR = config['paths']['dicom_studies']
+SERIES_DEPTH_THRESHOLD_PERCENTILE = config['data_specs']['series_depth_percentile']
 
 # 4. Final execution
 MAX_SERIES_DEPTH = calculate_max_series_depth()
@@ -125,6 +130,7 @@ MAX_SERIES_DEPTH = calculate_max_series_depth()
 # 5. Define the dataset mapping helper functions
 def parse_tfrecord_single_element(
     feature_tf: tf.Tensor,
+    current_epoch_tensor: tf.Tensor  # Injected from the dataset map
 ) -> Tuple[tf.Tensor, Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
 
     """
@@ -212,8 +218,6 @@ def parse_tfrecord_single_element(
     nb_records_t.set_shape([])
     padded_records_t.set_shape([MAX_RECORDS * 4])
 
-    # --- 2. Deserialize and Reshape the Image Tensor (Pure TF) ---
-    image_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.uint16)
     # NOTE: Using tf.uint16, the original Dicom type normalization
     # to float32 happens later.
     # Crucial stage: the image shape is unknown so far.
@@ -222,44 +226,45 @@ def parse_tfrecord_single_element(
     height_t = tf.cast(img_height_t, tf.int32)
     width_t = tf.cast(img_width_t, tf.int32)
 
+    # --- 2. Deserialize and Reshape the Image Tensor (Pure TF) ---
+    image_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.uint16)
+
+    # IMPORTANT: decode_raw returns a 1D vector. We MUST reshape it to (H, W, 1)
+    # before any image operation like pad or crop.
+    image_tf = tf.reshape(image_tf, [height_t, width_t, 1])
+    
+    # Static shape hint for the compiler
+    image_tf.set_shape([None, None, 1])
+
+    # Decide mode based on epoch (Even = Crop, Odd = Resize)
+    # This ensures the whole dataset switches mode at the same time
+    use_crop_epoch = tf.equal(tf.math.mod(current_epoch_tensor, 2), 0)
+
+    can_crop = tf.logical_or(height_t > MODEL_2D_HEIGHT, width_t > MODEL_2D_WIDTH)
+
+    # Create a stable seed for the random crop based on series_id
+    # This ensures all images in the SAME series get the SAME crop offsets
+    # We use stateless_random because it's deterministic given a seed
+    seed = tf.stack([
+        tf.cast(series_id_t, tf.int32),
+        tf.cast(current_epoch_tensor, tf.int32)
+    ])
+
     # Standardize to model input dimensions
     # Bilinear + Antialias is safe for BOTH 1x1 upsampling and DICOM downsampling.
-    image_tf = tf.cond(
+    image_tf, scaling_ratio_t, offset_t = tf.cond(
         tf.equal(is_padding_t, 1),
 
         # If padding image, create right now the black final image
-        lambda: tf.zeros(
-            [MODEL_2D_HEIGHT, MODEL_2D_WIDTH, 1],
-            dtype=tf.float32
-        ),
+        create_padding_image,
 
         # Otherly, follow the "normal" process
-        lambda: tf.image.resize(
-            tf.reshape(image_tf, [height_t, width_t, 1]), 
-            [MODEL_2D_HEIGHT, MODEL_2D_WIDTH],
-            method='bilinear',
-            antialias=True
+        lambda: tf.cond(
+            tf.logical_and(can_crop, use_crop_epoch),
+            # seed is passed to ensure the crop is the same for the whiole series
+            lambda: perform_deterministic_crop(image_tf, height_t, width_t, seed),
+            lambda: perform_resize(image_tf, height_t, width_t)
         )
-    )
-
-    # Resizing Ratio Calculation
-    # We create tensors for the division
-    current_dims = tf.cast(tf.stack([height_t, width_t]), tf.float32)
-    target_dims = tf.constant([MODEL_2D_HEIGHT, MODEL_2D_WIDTH], dtype=tf.float32)
-    
-    ratios = tf.cond(
-        tf.equal(is_padding_t, 1),
-        lambda: tf.constant(1, tf.float32),
-        lambda: current_dims / target_dims # Element-wise division [H_ratio, W_ratio]
-    )
-    
-    min_ratio_t = tf.reduce_min(ratios)
-    max_ratio_t = tf.reduce_max(ratios)
-    
-    scaling_ratio_t = tf.cond(
-        min_ratio_t > 1.0, 
-        lambda: min_ratio_t, 
-        lambda: max_ratio_t
     )
 
     # Reshape the padded records tensor to (MAX_RECORDS, 4)
@@ -276,30 +281,21 @@ def parse_tfrecord_single_element(
     # index 2 is x, index 3 is y.
     scaled_coords_t = coords_raw_t/scaling_ratio_t
 
-    # Calculate offsets for centering
-    # Note: using float32 for division and centering
-    canvas_width_t = tf.cast(MODEL_2D_WIDTH, tf.float32)
-    canvas_height_t = tf.cast(MODEL_2D_HEIGHT, tf.float32)
-
     # Define cropping position 
-    x_crop_t = tf.constant(0, tf.float32)
-    y_crop_t = tf.constant(0, tf.float32)
+    x_crop_t = tf.maximum(tf.constant(0, tf.float32), -offset_t[0])
+    y_crop_t = tf.maximum(tf.constant(0, tf.float32), -offset_t[1])
 
-    actual_width_after_scale_t = tf.cast(width_t, tf.float32) / scaling_ratio_t
-    actual_height_after_scale_t = tf.cast(height_t, tf.float32) / scaling_ratio_t
+    # We create tensors for the division
+    target_dims = tf.constant([MODEL_2D_WIDTH, MODEL_2D_HEIGHT], dtype=tf.float32)
 
-    offset_x_t = (canvas_width_t - actual_width_after_scale_t) / 2.0
-    offset_y_t = (canvas_height_t - actual_height_after_scale_t) / 2.0
-
-    # Stack offset [x, y] to match coordinates columns
-    offset_t = tf.stack([offset_x_t, offset_y_t])
-
-    # Apply translation
+    # Map original coordinates into the processed image's coordinate system.
+    # We subtract the crop origin (x_crop, y_crop) to 'shift' the label 
+    # so it matches the visible window sent to the backbone.
+    # (In Resize mode, scaling and centering offsets are used instead).
     updated_coords_t = scaled_coords_t + offset_t
 
     # Normalize the coordinates [0, 1] with regard to the canvas model
-    model_dims = tf.cast(tf.stack([MODEL_2D_WIDTH, MODEL_2D_HEIGHT]), tf.float32)
-    normalized_coords = updated_coords_t / model_dims
+    normalized_coords = updated_coords_t / target_dims
 
     # Rebuild final records (ensure same dtype for concat)
     final_records_t = tf.concat([
@@ -335,6 +331,134 @@ def parse_tfrecord_single_element(
     return_object = (normalized_image_tf, metadata_dict, labels_dict)
 
     return return_object
+
+def create_padding_image() -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+    """
+    Generates a blank (black) image and neutral transformation parameters.
+    
+    This is used when 'is_padding' is 1, ensuring the tensor structure 
+    remains consistent across the dataset pipeline.
+    
+    Returns:
+        A Tuple containing:
+        - padding (tf.float32): A (H, W, 1) zeroed image tensor.
+        - ratio (tf.float32): A neutral scaling ratio of 1.0.
+        - offset (tf.float32): A zero translation vector [0.0, 0.0].
+    """
+    padding = tf.zeros(
+        [MODEL_2D_HEIGHT, MODEL_2D_WIDTH, 1],
+        dtype=tf.float32
+    )
+
+    # Return neutral values to avoid affecting coordinate calculations
+    return padding, tf.constant(1.0, dtype=tf.float32), tf.constant([0.0, 0.0], dtype=tf.float32)
+
+def perform_deterministic_crop(
+    raw_image_tf: tf.Tensor, 
+    height_t: tf.Tensor, 
+    width_t: tf.Tensor,
+    seed: tf.Tensor     # Expect a tensor of shape [2] (e.g.: [series_id, epoch])
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+    """
+    Crops the image using a deterministic seed to ensure all slices in a series 
+    are cropped identically.
+
+    This function handles images larger than the target (cropping) and images 
+    smaller than the target (padding) by first ensuring the image is at least 
+    MODEL_2D size using center padding. It then picks a deterministic top-left 
+    corner based on the provided seed and extracts the crop.
+
+    Coordinate Transformation Logic:
+    The scaling ratio is 1.0 (no resizing). The offset returned is a vector of 
+    negative integers [-x_start, -y_start]. When added to the original label 
+    coordinates, it effectively translates the points to the new local 
+    coordinate system of the cropped window.
+
+    Args:
+        raw_image_tf: Original image tensor (H, W, 1) in uint16 or float32.
+        height_t: Actual height of the raw_image_tf.
+        width_t: Actual width of the raw_image_tf.
+        seed: A shape [2] int32 Tensor (e.g., [series_id, epoch]) used to 
+            guarantee spatial consistency across a series.
+
+    Returns:
+        A Tuple containing:
+        - final_img (tf.float32): The cropped (and potentially padded) image 
+          of shape (MODEL_2D_HEIGHT, MODEL_2D_WIDTH, 1).
+        - scaling_ratio (tf.float32): Always 1.0 (isometric crop).
+        - offset_vector (tf.float32): Vector [x_offset, y_offset] (float32) 
+          containing negative integers representing the crop origin.
+    """
+
+    global MODEL_2D_HEIGHT, MODEL_2D_WIDTH
+
+    # 1. Padding if the image is too small
+    # This ensures the image is AT LEAST the size of the model canvas
+    pad_h = tf.maximum(MODEL_2D_HEIGHT, height_t)
+    pad_w = tf.maximum(MODEL_2D_WIDTH, width_t)
+    
+    # We pad the bottom/right with zeros if needed
+    padded_img = tf.image.pad_to_bounding_box(
+        raw_image_tf, 0, 0, pad_h, pad_w
+    )
+
+    # 2. Calculate available slack in the (now padded) image
+    max_y = tf.maximum(0, pad_h - MODEL_2D_HEIGHT)
+    max_x = tf.maximum(0, pad_w - MODEL_2D_WIDTH)
+    
+    # 3. Generate offsets deterministically using the seed
+    # seed is [series_id, epoch]
+    off_y = tf.random.stateless_uniform([], seed=seed, minval=0, maxval=max_y + 1, dtype=tf.int32)
+
+    # We use a slightly different seed for width to avoid diagonal correlation
+    seed_w = seed + [0, 1]
+    off_x = tf.random.stateless_uniform([], seed=seed_w, minval=0, maxval=max_x + 1, dtype=tf.int32)
+    
+    # 4. Perform the crop
+    final_img = tf.image.crop_to_bounding_box(
+        padded_img, off_y, off_x, MODEL_2D_HEIGHT, MODEL_2D_WIDTH
+    )
+
+    # 5. Return results
+    scaling_ratio = tf.constant(1.0, dtype=tf.float32)
+
+    # The labels still follow the same negative offset logic
+    offset_vector = tf.stack([
+        -tf.cast(off_x, tf.float32), 
+        -tf.cast(off_y, tf.float32)
+    ])
+
+    return tf.cast(final_img, tf.float32), scaling_ratio, offset_vector
+
+def perform_resize(
+    raw_image_tf: tf.Tensor, 
+    height_t: tf.Tensor, 
+    width_t: tf.Tensor
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+    """
+    Performs isometric resizing and centering.
+    """
+    global MODEL_2D_HEIGHT, MODEL_2D_WIDTH
+
+    # Maintain [X, Y] logic for scaling calculation
+    current_dims = tf.cast(tf.stack([width_t, height_t]), tf.float32)
+    target_dims = tf.constant([MODEL_2D_WIDTH, MODEL_2D_HEIGHT], dtype=tf.float32)
+    ratios = current_dims / target_dims
+    scaling_ratio = tf.reduce_max(ratios) 
+    
+    # Calculate new dimensions
+    new_h = tf.cast(tf.cast(height_t, tf.float32) / scaling_ratio, tf.int32)
+    new_w = tf.cast(tf.cast(width_t, tf.float32) / scaling_ratio, tf.int32)
+    
+    # IMPORTANT: tf.image functions use [HEIGHT, WIDTH] order
+    resized_img = tf.image.resize(raw_image_tf, [new_h, new_w], method='bilinear', antialias=True)
+    final_img = tf.image.resize_with_pad(resized_img, MODEL_2D_HEIGHT, MODEL_2D_WIDTH)
+
+    # Offset calculation for coordinate mapping [X, Y]
+    width_offset_t = tf.cast((MODEL_2D_WIDTH - new_w) // 2, tf.float32)
+    height_offset_t = tf.cast((MODEL_2D_HEIGHT - new_h) // 2, tf.float32)
+
+    return final_img, scaling_ratio, tf.stack([width_offset_t, height_offset_t])
 
 def normalize_image(
     image_tf: tf.Tensor,
@@ -374,8 +498,9 @@ def normalize_image(
 
 def process_study_multi_series(
     images: tf.Tensor, 
-    meta: Dict[str, tf.Tensor], 
-    labels: Dict[str, tf.Tensor]
+    meta: Dict[str, tf.Tensor],
+    labels: Dict[str, tf.Tensor],
+    is_training: bool=True
 ) -> Tuple[Tuple[Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor], 
                  Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor], 
                  Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]
@@ -399,9 +524,10 @@ def process_study_multi_series(
        single study-level identifiers and diagnostics.
 
     Args:
-        images (tf.Tensor): Flattened batch of all images in the study (N, H, W, C).
-        meta (dict): Dictionary of metadata tensors (each of length N).
-        labels (dict): Dictionary of label tensors (study-wide diagnostics).
+        - images (tf.Tensor): Flattened batch of all images in the study (N, H, W, C).
+        - meta (dict): Dictionary of metadata tensors (each of length N).
+        - labels (dict): Dictionary of label tensors (study-wide diagnostics).
+        - is_training (bool): flag on the current mode : training (True) or validation (False)
 
     Returns:
         tuple: (study_data_triplet, study_id, reduced_labels)
@@ -429,21 +555,24 @@ def process_study_multi_series(
         MAX_SERIES_DEPTH,
         MODEL_2D_HEIGHT,
         MODEL_2D_WIDTH,
-        MODEL_2D_NB_CHANNELS
+        MODEL_2D_NB_CHANNELS,
+        is_training
     )
     res_t2 = process_single_description(
         images, meta, t2_code,
         MAX_SERIES_DEPTH,
         MODEL_2D_HEIGHT,
         MODEL_2D_WIDTH,
-        MODEL_2D_NB_CHANNELS
+        MODEL_2D_NB_CHANNELS,
+        is_training
     )
     res_ax = process_single_description(
         images, meta, ax_code,
         MAX_SERIES_DEPTH,
         MODEL_2D_HEIGHT,
         MODEL_2D_WIDTH,
-        MODEL_2D_NB_CHANNELS
+        MODEL_2D_NB_CHANNELS,
+        is_training
     )
 
     # --- 3. Extract Global Study Context ---
@@ -492,8 +621,9 @@ def process_single_description(
     series_depth: int,
     height: int,
     width: int,
-    nb_channels: int
-) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+    nb_channels: int,
+    is_training: bool=True
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     """
     Routes the study images to the appropriate processing logic based on anatomical view.
@@ -506,31 +636,29 @@ def process_single_description(
        placeholder if the view is missing.
 
     Args:
-        all_images (tf.Tensor): Flattened batch of images for the study (N, H, W, C).
-        all_meta (Dict[str, tf.Tensor]): Metadata containing 'description', 
+        - all_images (tf.Tensor): Flattened batch of images for the study (N, H, W, C).
+        - all_meta (Dict[str, tf.Tensor]): Metadata containing 'description', 
                                          'series_id', and 'instance_number'.
-        target_desc_tensor (tf.Tensor): The anatomical view code to filter for.
-        series_depth (int): Expected depth of the output volume.
-        height (int): Target image height.
-        width (int): Target image width.
-        nb_channels (int): Target number of channels.
+        - target_desc_tensor (tf.Tensor): The anatomical view code to filter for.
+        - series_depth (int): Expected depth of the output volume.
+        - height (int): Target image height.
+        - width (int): Target image width.
+        - nb_channels (int): Target number of channels.
+        - is_training (bool): Flag for training mode (True) or validation (False).
 
     Returns:
-        Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]: 
-            - Volume: A (series_depth, H, W, C) tensor (actual data or zeros).
-            - Metadata: A (series_depth, 5) tensor, including for each slice:
-                        - The instance number (-1 if padding image)
-                        - A padding flag (0 : "true" image, 1: padding image)
-                        - The image scaling ratio from its original size to the model one
-                        - The x_crop offset (normalized)
-                        - The y_crop offset (normalized)
-            - Best Series ID: Selected series identifier or -1 if empty.
-            - Description Code: The target view code (int32).
+        A tuple containing:
+            - final_vol (tf.Tensor): 3D volume (series_depth, H, W, 3) [float32].
+            - slice_metadata (tf.Tensor): Per-slice metadata (series_depth, 5) [float32].
+              Columns: [instance_number, is_padding, scaling_ratio, x_crop, y_crop].
+            - series_metadata (tf.Tensor): Series info vector (3,) [int32].
+              Values: [sampling_flag, first_slice_index, target_desc_tensor].
+              Note: target_desc_tensor is the encoded anatomical view.
     """
 
-    # Convert to int64 for stable comparison.
-    current_desc = tf.cast(all_meta['description'], tf.int64)
-    target_code = tf.cast(target_desc_tensor, tf.int64)
+    # Convert to int32 for stable comparison.
+    current_desc = tf.cast(all_meta['description'], tf.int32)
+    target_code = tf.cast(target_desc_tensor, tf.int32)
 
     # Create the filtering mask
     desc_mask = tf.equal(current_desc, target_code)
@@ -548,7 +676,7 @@ def process_single_description(
         mask_has_data,
         true_fn=lambda: process_valid_series(
             all_images, all_meta, desc_mask, target_desc_tensor,
-            series_depth, height, width, nb_channels
+            series_depth, height, width, nb_channels, is_training
         ),
         false_fn=lambda: process_empty_series(
             all_images, target_desc_tensor,
@@ -564,8 +692,9 @@ def process_valid_series(
     series_depth: int,
     height: int,
     width: int,
-    nb_channels: int
-) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+    nb_channels: int,
+    is_training: bool=True
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     """
     Processes and normalizes a series that contains data for the target description.
@@ -574,26 +703,29 @@ def process_valid_series(
     series_depth) has been performed during TFRecord creation. 
     It focuses on structural integrity:
     1. Filters images and metadata to isolate the target anatomical view.
-    2. Selects the most robust series if multiple candidates exist.
+    2. Selects randomly one series among those available if multiple candidates exist.
     3. Re-orders frames by instance number to ensure correct anatomical sequence.
-    4. Enforces a static 3D shape and converts grayscale to RGB if required.
+    4. Handles slice sampling (Global vs Local) during training.
+    5. Enforces a static 3D shape and converts grayscale to RGB if required.
 
     Args:
-        all_images: Full batch of images for a study (N, H, W, C).
-        all_meta: Metadata dictionary containing 'series_id' and 'instance_number'.
-        desc_mask: Boolean mask identifying images matching the target description.
-        target_desc_tensor: The description code being processed.
-        series_depth: Fixed number of slices required for the 3D volume.
-        height: Target image height.
-        width: Target image width.
-        nb_channels: Target number of channels (e.g., 3 for RGB).
+        - all_images (tf.Tensor): Full batch of images for a study (N, H, W, C).
+        - all_meta (Dict[str, tf.Tensor]): Metadata containing 'series_id', 'instance_number', etc.
+        - desc_mask (tf.Tensor): Boolean mask identifying images matching the target description.
+        - target_desc_tensor (tf.Tensor): The description code being processed.
+        - series_depth (int): Fixed number of slices required for the 3D volume.
+        - height (int): Target image height.
+        - width (int): Target image width.
+        - nb_channels (int): Target number of channels (e.g., 3 for RGB).
+        - is_training (bool): Flag for training mode to enable/disable random sampling.
 
     Returns:
        A tuple containing:
-            - padded_vol (tf.Tensor): The normalized 3D volume (series_depth, H, W, 3).
-            - slice_metadata (tf.Tensor): Per-slice flags [instance_number, is_padding, scaling_ratio, x_crop, y_crop] (series_depth, 5).
-            - best_id (tf.Tensor): The ID of the selected series (int64).
-            - target_desc (tf.Tensor): The description code (int32).
+            - final_vol (tf.Tensor): The normalized 3D volume (series_depth, H, W, 3) [float32].
+            - slice_metadata (tf.Tensor): Per-slice metadata matrix (series_depth, 4) [float32].
+              Columns: [is_padding, scaling_ratio, x_crop, y_crop].
+            - series_metadata (tf.Tensor): Series-level info vector (3,) [int32].
+              Values: [sampling_flag, first_slice_index, target_desc_tensor].
     """
 
     # --- 1. Filtering by Description ---
@@ -606,14 +738,26 @@ def process_valid_series(
     d_y_crop = tf.boolean_mask(all_meta['y_crop'], desc_mask)
 
     # --- 2. Best Series Selection (Highest Frame Count) ---
-    unique_ids, _, counts = tf.unique_with_counts(d_series_ids)
-    best_id = unique_ids[tf.argmax(counts)]
+    # Identify the number of series present for this anatomical descrition
+    unique_ids, _ = tf.unique(d_series_ids)
+
+    # Get the number of unique series found
+    nb_unique_series = tf.shape(unique_ids)[0]
+
+    # Generate a random index between 0 and num_unique_series - 1
+    random_idx = tf.random.uniform(
+        shape=[],
+        minval=0,
+        maxval=nb_unique_series,
+        dtype=tf.int32
+    )
+
+    # Select the series ID at that random position
+    selected_series_id = unique_ids[random_idx]
 
     # --- 3. Isolate the chosen series
-    series_mask = tf.equal(d_series_ids, best_id)
+    series_mask = tf.equal(d_series_ids, selected_series_id)
     series_mask = tf.cast(series_mask, tf.bool)
-    #series_mask.set_shape([None])
-    #d_images.set_shape([None, None, None, None])
 
     final_imgs = tf.boolean_mask(d_images, series_mask)
     final_instances = tf.boolean_mask(d_instances, series_mask)
@@ -631,11 +775,30 @@ def process_valid_series(
     sorted_x_crop = tf.gather(final_x_crop, sort_idx)
     sorted_y_crop = tf.gather(final_y_crop, sort_idx)
 
-    # 5. Final formatting
-    # We use a simple slice to be 100% sure of the depth for the Graph
-    final_vol = sorted_imgs[:series_depth, ...]
+    actual_count = tf.shape(sorted_imgs)[0]
+    f_actual_count = tf.cast(actual_count, tf.float32)
 
-    # 6. Final shape enforcement for the model*
+    # 5. Select image sampling mode
+    slice_sampling_flag, indices = tf.cond(
+        tf.logical_and(is_training, tf.greater(actual_count, series_depth)),
+        lambda: get_indices(actual_count, series_depth),
+        # Default: Uniform Global sampling (for Val or small series)
+        lambda: (
+            False, 
+            tf.cast(
+                tf.round(
+                    tf.linspace(0.0, f_actual_count - 1.0, series_depth)
+                ),
+                tf.int32
+            )
+        )
+    )
+
+    # 6. Final formatting
+    # We use a simple slice to be 100% sure of the depth for the Graph
+    final_vol = tf.gather(sorted_imgs, indices)
+
+    # 7. Final shape enforcement for the model*
     # Convert single-channel MRI to 3-channel (pseudo-RGB) to match model input requirements.
     nb_channels = tf.shape(final_vol)[-1]
     final_vol = tf.cond(
@@ -644,7 +807,7 @@ def process_valid_series(
         lambda: final_vol
     )
 
-    # Stack the whole volume into a single tensor.
+    # 8. Stack the whole volume into a single tensor.
     vol_shape = tf.stack([
         tf.cast(series_depth, tf.int32),
         tf.cast(height, tf.int32),
@@ -660,22 +823,77 @@ def process_valid_series(
     # Hard-set shape to finalize the contract with the model
     slice_metadata = tf.stack(
         [
-            tf.cast(sorted_instances[:series_depth], tf.float32),
-            tf.cast(sorted_padding_flags[:series_depth], tf.float32),
-            tf.cast(sorted_scaling_ratios[:series_depth], tf.float32),
-            tf.cast(sorted_x_crop[:series_depth], tf.float32),
-            tf.cast(sorted_y_crop[:series_depth], tf.float32)
+            tf.cast(tf.gather(sorted_padding_flags, indices), tf.float32),  # Padding flag
+            tf.cast(tf.gather(sorted_scaling_ratios, indices), tf.float32), # Scaling ratio
+            tf.cast(tf.gather(sorted_x_crop, indices), tf.float32),         # x offset
+            tf.cast(tf.gather(sorted_y_crop, indices), tf.float32)          # y offset
         ], 
         axis=1
     )
 
     meta_shape = tf.stack([
         tf.cast(series_depth, tf.int32), 
-        tf.constant(5, dtype=tf.int32)
+        tf.constant(4, dtype=tf.int32)
     ])
     slice_metadata = tf.reshape(slice_metadata, meta_shape)
 
-    return final_vol, slice_metadata, tf.cast(best_id, tf.int64), target_desc_tensor
+    series_metadata = tf.stack(
+        [
+            tf.cast(slice_sampling_flag, tf.int32),     # Flag on sampling performed on series slices
+            tf.cast(indices[0], tf.int32),              # Index on the first sampled slice in the series
+            tf.cast(target_desc_tensor, tf.int32)       # Encoded anatomical view (target_desc_tensor)
+        ],
+        axis=0
+    )
+
+    return final_vol, slice_metadata, series_metadata
+
+def get_indices(actual_count, series_depth):
+    """
+    Determines which slice indices to extract from a series based on a sampling strategy.
+
+    During training, this helper dynamically chooses between two sampling modes 
+    to provide the model with different anatomical perspectives:
+    
+    - Global View (False): Resamples the entire available series to fit series_depth. 
+      This captures the full anatomical extent but with a higher stride between slices.
+    - Local View (True): Selects a contiguous window of slices (stride 1). 
+      This captures fine-grained spatial details for a specific sub-section.
+
+    Args:
+        actual_count (tf.Tensor): The total number of available slices in the series (int32).
+        series_depth (int): The required number of slices for the output volume.
+
+    Returns:
+        A tuple containing:
+            - sampling_flag (tf.Tensor): Boolean flag (bool). 
+              True if Local View was used, False if Global View was used.
+            - indices (tf.Tensor): Integer vector of shape (series_depth,) 
+              containing the calculated slice indices [int32].
+    """
+    # Decide between Global Resampling or Local Window
+    # We use a random variable to choose the mode
+    use_global_view = tf.random.uniform([]) > 0.5
+    
+    return tf.cond(
+        use_global_view,
+        # MODE 1: Global View (Full anatomy, high stride)
+        lambda: (
+            False,
+            tf.cast(
+                tf.round(tf.linspace(0.0, tf.cast(actual_count - 1, tf.float32), series_depth)),
+                tf.int32
+            )
+        ),
+        
+        # MODE 2: Local View (Consecutive slices, stride ~1.0)
+        lambda: (
+            True, 
+            (lambda start_idx: tf.range(start_idx, start_idx + series_depth))(
+                tf.random.uniform([], 0, actual_count - series_depth, dtype=tf.int32)
+            )
+        )
+    )
 
 def process_empty_series(
     all_images: tf.Tensor,
@@ -683,38 +901,38 @@ def process_empty_series(
     series_depth: int,
     height: int,
     width: int,
-) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     """
     Generates a placeholder volume when no data matches the target description.
 
     This ensures that the TensorFlow Graph receives a consistent tensor shape 
-    and data type even if the specific anatomical view is missing for a study.
+    and data type even if the specific anatomical view is missing for a study. 
+    It maintains the same output signature as process_valid_series to allow 
+    conditional branching within the dataset pipeline.
 
     Args:
-        all_images: Used only to infer the correct dtype for the zero tensor.
-        target_desc_tensor: The description code that was not found.
-        series_depth: Fixed number of slices for the output volume.
-        height: Target image height.
-        width: Target image width.
+        - all_images (tf.Tensor): Source tensor used to ensure dtype consistency.
+        - target_desc_tensor (tf.Tensor): The description code that was not found.
+        - series_depth (int): Fixed number of slices for the output volume.
+        - height (int): Target image height.
+        - width (int): Target image width.
 
     Returns:
-        A tuple containing:
-            - empty_vol (tf.Tensor): A zero-filled tensor (series_depth, H, W, 3).
-            - slice_metadata (tf.Tensor): Per-slice flags 
-              [instance_number=1.0, is_padding=1.0, scaling_ratio=1.0, x_crop=0.0, y_crop=0.0] (series_depth, 5).
-            - default_id (tf.Tensor): Sentinel value -1 (int64).
-            - target_desc (tf.Tensor): The description code (int32).
+       A tuple containing:
+            - empty_vol (tf.Tensor): A zero-filled 3D volume (series_depth, H, W, 3) [float32].
+            - slice_metadata (tf.Tensor): Placeholder slice metadata (series_depth, 4) [float32].
+              Default values: [is_padding=1.0, scaling=1.0, x_crop=0.0, y_crop=0.0].
+            - series_metadata (tf.Tensor): Sentinel info vector (3,) [int32].
+              Values: [sampling_flag=0, first_slice_index=0, target_desc_tensor].
     """
 
     # 1. Constants and Type Casting
-    default_id = tf.constant(-1, dtype=tf.int64)
     s_depth = tf.cast(series_depth, tf.int32)
     h = tf.cast(height, tf.int32)
     w = tf.cast(width, tf.int32)
     channels = tf.constant(3, tf.int32)
     
-
     # 2. Build Image Volume Shape
     # Using tf.stack to create a dynamic shape tensor
     vol_shape = tf.stack([s_depth, h, w, channels])
@@ -725,11 +943,10 @@ def process_empty_series(
 
     # 3. Build Slice Metadata
     # We use tf.reshape instead of tf.ensure_shape for the same reasons
-    meta_shape = tf.stack([s_depth, tf.constant(5, tf.int32)])
+    meta_shape = tf.stack([s_depth, tf.constant(4, tf.int32)])
     
     slice_metadata = tf.stack(
         [
-            tf.fill([s_depth], -1.0),  # Dummy instance number
             tf.fill([s_depth], 1.0),   # Padding flag
             tf.fill([s_depth], 1.0),   # Scaling ratio
             tf.fill([s_depth], 0.0),   # x_crop
@@ -737,17 +954,26 @@ def process_empty_series(
         ], 
         axis=1
     )
-    
+
+    series_metadata = tf.stack(
+        [
+            tf.cast(0, tf.int32),                        # Flag on sampling performed on series slices
+            tf.cast(0, tf.int32),                        # Index on the first sampled slice in the series
+            tf.cast(target_desc_tensor, tf.int32)        # Encoded anatomical view (target_desc_tensor)
+        ],
+        axis=0
+    )
+
     # Finalize shape for the metadata tensor
     slice_metadata = tf.reshape(slice_metadata, meta_shape)
 
-    return empty_vol, slice_metadata, default_id, target_desc_tensor
+    return empty_vol, slice_metadata, series_metadata
 
 def format_for_model(
     study_volumes: Tuple[
-        Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor],
-        Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor], 
-        Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor],
+        Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
+        Tuple[tf.Tensor, tf.Tensor, tf.Tensor], 
+        Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
     ], 
     study_id_tf: tf.Tensor, 
     labels: Dict[str, tf.Tensor]
@@ -770,7 +996,8 @@ def format_for_model(
 
     # Retrieve the config of the expected shapes
     target_shape = [MAX_SERIES_DEPTH, MODEL_2D_HEIGHT, MODEL_2D_WIDTH, MODEL_2D_NB_CHANNELS]
-    meta_target_shape = [MAX_SERIES_DEPTH, 5]
+    meta_target_shape = [MAX_SERIES_DEPTH, 4]
+    series_target_shape = [3]
 
     # Unpack processed volumes from the previous study-level processing step
     sag_t1, sag_t2, axial = study_volumes
@@ -779,19 +1006,16 @@ def format_for_model(
     # These keys MUST exactly match the names defined in ModelFactory.build_multi_series_model()
     # Use tf.ensure_shape to guarantee dimensions without breaking the graph flow
     features = {
-        "study_id": tf.reshape(tf.cast(study_id_tf, tf.float32), [1]),
+        "study_id": tf.reshape(tf.cast(study_id_tf, tf.int64), [1]),
         "img_sag_t1": tf.ensure_shape(tf.cast(sag_t1[0], tf.float32), target_shape),
         "slice_metadata_t1": tf.ensure_shape(tf.cast(sag_t1[1], tf.float32), meta_target_shape),
-        "series_sag_t1": tf.reshape(tf.cast(sag_t1[2], tf.float32), [1]),
-        "desc_sag_t1": tf.reshape(tf.cast(sag_t1[3], tf.float32), [1]),
+        "series_metadata_t1": tf.reshape(tf.cast(sag_t1[2], tf.int32), series_target_shape),
         "img_sag_t2": tf.ensure_shape(tf.cast(sag_t2[0], tf.float32), target_shape),
         "slice_metadata_t2": tf.ensure_shape(tf.cast(sag_t2[1], tf.float32), meta_target_shape),
-        "series_sag_t2": tf.reshape(tf.cast(sag_t2[2], tf.float32), [1]),
-        "desc_sag_t2": tf.reshape(tf.cast(sag_t2[3], tf.float32), [1]),
+        "series_metadata_t2": tf.reshape(tf.cast(sag_t2[2], tf.int32), series_target_shape),
         "img_axial_t2": tf.ensure_shape(tf.cast(axial[0], tf.float32), target_shape),
         "slice_metadata_axial_t2": tf.ensure_shape(tf.cast(axial[1], tf.float32), meta_target_shape),
-        "series_axial_t2": tf.reshape(tf.cast(axial[2], tf.float32), [1]),
-        "desc_axial_t2": tf.reshape(tf.cast(axial[3], tf.float32), [1])
+        "series_metadata_axial_t2": tf.reshape(tf.cast(axial[2], tf.int32), series_target_shape)
     }
 
     # --- 3. Build Targets Dictionary ---
@@ -824,7 +1048,7 @@ def format_for_model(
 
     # IMPORTANT: Force float32 across the entire features dictionary.
     # This loop serves as a final safety check to prevent dtype mismatch.
-    features = {k: tf.cast(v, tf.float32) for k, v in features.items()}
+    #features = {k: tf.cast(v, tf.float32) for k, v in features.items()}
 
     # Do the same for labels to be absolutely safe
     labels_dict = {k: tf.cast(v, tf.float32) for k, v in labels_dict.items()}

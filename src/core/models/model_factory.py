@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import pandas as pd
 import tensorflow as tf
 import logging
 from pathlib import Path
@@ -40,7 +41,7 @@ class ModelFactory:
         self._logger = logger
         self._aggregator_class = aggregator_class
         self._nb_output_records = nb_output_records
-        self._tfrecord_dir = Path(self._config['tfrecord_dir'])
+        self._tfrecord_dir = Path(self._config['paths']['tfrecord'])
         
         # Calculate or retrieve max_series_depth (max slices per series)
         if series_depth == 0:
@@ -60,66 +61,67 @@ class ModelFactory:
         """
 
         # --- 1. Define Inputs for study Id ---
-        study_id_layer = layers.Input(shape=(1,), name="study_id" )
+        study_id_layer = layers.Input(shape=(1,), name="study_id", dtype='int64' )
 
         # --- 2. Define Inputs for each series ---
         # Images shapes are (self._max_series_depth, height, width, channels)
 
         self._logger.info("Start building model")
-        height, width, channels = self._config['model_2d']['img_shape']
+        height, width, channels = self._config['models']['backbone_2d']['img_shape']
 
         # Sagittal T1
         img_sag_t1 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_sag_t1")
-        slice_metadata_t1 = layers.Input(shape=(self._series_depth, 5), name="slice_metadata_t1")
-        series_sag_t1 = layers.Input(shape=(1,), name="series_sag_t1")
-        desc_sag_t1 = layers.Input(shape=(1,), name="desc_sag_t1")
+        slice_metadata_t1 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_t1")
+        series_metadata_t1 = layers.Input(shape=(3,), name="series_metadata_t1", dtype='int32')
     
         # Sagittal T2
         img_sag_t2 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_sag_t2")
-        slice_metadata_t2 = layers.Input(shape=(self._series_depth, 5), name="slice_metadata_t2")
-        series_sag_t2 = layers.Input(shape=(1,), name="series_sag_t2")
-        desc_sag_t2 = layers.Input(shape=(1,), name="desc_sag_t2")
+        slice_metadata_t2 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_t2")
+        series_metadata_t2 = layers.Input(shape=(3,), name="series_metadata_t2", dtype='int32')
     
         # Axial T2
         img_axial_t2 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_axial_t2")
-        slice_metadata_axial_t2 = layers.Input(shape=(self._series_depth, 5), name="slice_metadata_axial_t2")
-        series_axial_t2 = layers.Input(shape=(1,), name="series_axial_t2")
-        desc_axial_t2 = layers.Input(shape=(1,), name="desc_axial_t2")
+        slice_metadata_axial_t2 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_axial_t2")
+        series_metadata_axial_t2 = layers.Input(shape=(3,), name="series_metadata_axial_t2", dtype='int32')
 
         # --- 3. Shared Backbone Initialization ---
         # We use a single instance of TimeDistributed to share weights across all three branches
         backbone_obj = Backbone2D(
-            model_name=self._config['model_2d']['type'], 
-            input_shape=self._config['model_2d']['img_shape']
+            model_name=self._config['models']['backbone_2d']['type'], 
+            input_shape=self._config['models']['backbone_2d']['img_shape']
         )
         shared_td_backbone = layers.TimeDistributed(backbone_obj.get_model(), name="shared_2d_backbone")
+        nb_series_descriptions, nb_embedding_views = self._get_nb_series_descriptions()
 
         # --- 4. Process each branch independently ---
         feat_sag_t1 = self._process_branch(
             img_sag_t1,
             slice_metadata_t1,
-            series_sag_t1,
-            desc_sag_t1,
+            series_metadata_t1,
             shared_td_backbone,
-            "sag_t1"
+            "sag_t1",
+            nb_series_descriptions,
+            nb_embedding_views
         )
 
         feat_sag_t2 = self._process_branch(
             img_sag_t2,
             slice_metadata_t2,
-            series_sag_t2,
-            desc_sag_t2,
+            series_metadata_t2,
             shared_td_backbone,
-            "sag_t2"
+            "sag_t2",
+            nb_series_descriptions,
+            nb_embedding_views
         )
 
         feat_ax_t2  = self._process_branch(
             img_axial_t2,
             slice_metadata_axial_t2,
-            series_axial_t2,
-            desc_axial_t2,
+            series_metadata_axial_t2,
             shared_td_backbone,
-            "axial_t2"
+            "axial_t2",
+            nb_series_descriptions,
+            nb_embedding_views
         )
 
         # --- 5. Global Fusion with Identity Link for study_id ---
@@ -138,17 +140,25 @@ class ModelFactory:
         # --- 6. Outputs and Traceability ---
         # Traceability output: Passthrough of study_id (using T1 branch as reference)
 
-        # Predict all severities and locations in two large matrix operations.
+        # ---- SEVERITY HEAD -------.
         # Severity head: (Batch, 25, 3)
         # Note: 3 values per row, because 3 probabilities are calculated,
         # for each potential state (Normal/ Moderate/Severe).
-        severity_flat = layers.Dense(self._nb_output_records*3, name=f"severity_flat")(lay_z)
+        sev_branch = layers.Dense(256, activation='relu', name="severity_features")(lay_z)
+        sev_branch = layers.Dropout(0.3, name="severity_dropout")(sev_branch)
+        severity_flat = layers.Dense(self._nb_output_records*3, name=f"severity_flat")(sev_branch)
+
         out_severity = layers.Reshape((self._nb_output_records, 3), name="all_severities")(severity_flat)
         out_severity = layers.Activation(activation='softmax', dtype='float32', name="severity_output")(out_severity)
 
+        # ---- LOCATION HEAD ------
+        # Dedicated branch for regression with stronger regularization
         # Location head: (Batch, 25, 2)
         # Coordinates are normalized; Sigmoid activation constrains outputs between 0 and 1.
-        loc_flat = layers.Dense(self._nb_output_records * 2, name="loc_flat")(lay_z)
+        loc_branch = layers.Dense(256, activation='relu', name="location_features")(lay_z)
+        loc_branch = layers.Dropout(0.5, name="location_dropout")(loc_branch)
+        loc_flat = layers.Dense(self._nb_output_records * 2, name="loc_flat")(loc_branch)
+
         output_location = layers.Reshape((self._nb_output_records, 2), name="loc_reshape")(loc_flat)
         output_location = layers.Activation('sigmoid', dtype='float32', name="location_output")(output_location)
 
@@ -162,16 +172,13 @@ class ModelFactory:
             "study_id": study_id_layer,
             "img_sag_t1": img_sag_t1,
             "slice_metadata_t1": slice_metadata_t1,
-            "series_sag_t1": series_sag_t1,
-            "desc_sag_t1": desc_sag_t1,
+            "series_metadata_t1": series_metadata_t1,
             "img_sag_t2": img_sag_t2,
             "slice_metadata_t2": slice_metadata_t2,
-            "series_sag_t2": series_sag_t2,
-            "desc_sag_t2": desc_sag_t2,
+            "series_metadata_t2": series_metadata_t2,
             "img_axial_t2": img_axial_t2,
             "slice_metadata_axial_t2": slice_metadata_axial_t2,
-            "series_axial_t2": series_axial_t2,
-            "desc_axial_t2": desc_axial_t2
+            "series_metadata_axial_t2": series_metadata_axial_t2
         }
 
         model = Model(
@@ -187,20 +194,21 @@ class ModelFactory:
         self,
         img_input: tf.Tensor,
         slice_metadata_input: tf.Tensor,
-        series_input: tf.Tensor,
-        desc_input: tf.Tensor,
+        series_metadata_input: tf.Tensor,
         backbone: tf.keras.layers.Layer,
-        suffix: str
+        suffix: str,
+        nb_series_descriptions: int=3,
+        nb_embedding_views: int=8,
     ) -> tf.Tensor:
+
         """
         Processes a single imaging series branch by extracting visual features 
         and concatenating them with series-specific metadata.
 
         Args:
             img_input: Input tensor for the image sequence (Batch, Depth, H, W, C).
-            slice_metadata_input: Input tensor for some metadata associated with each slice (Batch, Depth, 5 )
-            series_input: Input tensor for the metadata associated with the series.
-            desc_input: Input tensor for the metadata associated with the "description" (ie. the observed pathology).
+            slice_metadata_input: Input tensor for some metadata associated with each slice (Batch, Depth, 4)
+            series_metadata_input: Input tensor for some metadata associated with the series (Batch, 3).
             backbone: The TimeDistributed backbone shared across branches.
             suffix: Identifier for naming layers (e.g., 'sag_t1').
 
@@ -222,8 +230,63 @@ class ModelFactory:
         # Flatten the slice_metadata_input tensor
         name_str = f"flatten_slice_metadata_{suffix}"
         slice_metadata_flat = layers.Flatten(name=name_str)(slice_metadata_input)
+
+        # Series flags: Slicing + Cast via Activation layer
+        # This ensures the cast to float32 is tracked by Keras
+        flags_slice = series_metadata_input[:, :2]
+        series_flags = layers.Activation('linear', dtype='float32', name=f"get_flags_{suffix}")(flags_slice)
+
+        # View code: Slicing + Identity layer
+        # We use an Activation layer to turn the slice into a formal Keras Layer output
+        x_view = series_metadata_input[:, 2:3]
+        view_code = layers.Activation('linear', name=f"get_view_code_{suffix}")(x_view)
+
+        # Add an Embedding layer for the view code
+        # input_dim = 3 (There are only 3 anatomical views)
+        # output_dim = 8 (Dimensions of the learned vector)
+        view_embedding = layers.Embedding(
+            input_dim=nb_series_descriptions,
+            output_dim=nb_embedding_views,
+            name=f"view_embed_{suffix}"
+        )(view_code)
+
+        # Flatten from (Batch, 1, 8) to (Batch, 8)
+        view_embedding = layers.Flatten(name=f"flatten_embed_{suffix}")(view_embedding)
     
         # Merge visual features with series-specific metadata
-        combined_branch = layers.concatenate([x, slice_metadata_flat, series_input, desc_input], name=f"merged_feat_{suffix}")
+        combined_branch = layers.concatenate(
+            [
+                x,
+                slice_metadata_flat,
+                series_flags,
+                view_embedding
+            ],
+            name=f"merged_feat_{suffix}"
+        )
     
         return combined_branch
+
+    def _get_nb_series_descriptions(self):
+        """
+        Determines the embedding dimensions for anatomical views based on reference data.
+        
+        Returns:
+            tuple: (vocab_size, embedding_dim)
+        """
+        # Load reference anatomical descriptions to determine the number of categories.
+        csv_description_df = pd.read_csv(self._config['paths']['csv']['description'])
+        
+        # We normalize to lower case to prevent mismatches caused by casing inconsistencies.
+        descriptions_list = csv_description_df['description'].str.lower().unique()
+        
+        # Technical vocabulary size: we add a safety margin (+2) to handle 
+        # potential unknown categories or 0-padding without index out-of-bounds.
+        nb_descriptions = len(descriptions_list) + 2
+
+        # Embedding dimension: set to 8 as a power of 2 that provides 
+        # enough expressive capacity for 3-5 views while staying lightweight.
+        output_dim = 8
+
+        return nb_descriptions, output_dim
+
+

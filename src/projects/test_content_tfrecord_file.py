@@ -6,6 +6,7 @@ raw_dataset = tf.data.TFRecordDataset(full_path_name)
 for raw_record in raw_dataset.take(1):
     example = tf.train.Example()
     example.ParseFromString(raw_record.numpy())
+
     # Extraction brute de la feature
     meta_bytes = example.features.feature['metadata'].bytes_list.value[0]
     print(f"HEXADECIMAL REEL : {meta_bytes.hex(' ')}")

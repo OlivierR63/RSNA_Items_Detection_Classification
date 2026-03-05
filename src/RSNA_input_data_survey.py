@@ -15,12 +15,16 @@ config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
 config: dict = config_loader.get()
 
 # 3.  Constant assignments (After functions are defined)
-MAX_RECORDS = config.get('max_records', None)
+MAX_RECORDS = config['data_specs'].get('max_records_per_frame', None)
 if MAX_RECORDS is None:
-    raise ValueError("Key 'max_records' is missing. Verify config file.")
+    error_msg = (
+        "Fatal error: the setting variables 'data_specs -> max_records_per_frame' "
+        "is requird but was not found. Please check your YAML file structure."
+    )
+    raise ValueError(error_msg)
 
-DICOM_STUDIES_DIR = config['dicom_studies_dir']
-CSV_LABEL_COORDINATES = config['csv_files']['label_coordinates']
+DICOM_STUDIES_DIR = config['paths']['dicom_studies']
+CSV_LABEL_COORDINATES = config['paths']['csv']['label_coordinates']
 
 # Function for printing the information messages in the console and 
 # saving them in parallel in the log file.
@@ -53,7 +57,7 @@ def main():
 
     depth_list = []
 
-    log_dir = config.get("input_data_inspection", "logs")  # use "logs" as default if not in config.
+    log_dir = config["paths"].get("inspection", "logs")  # use "logs" as default if not in config.
     log_dir += "/logs"
 
     # This file stores the coordinates of the observed pathologies (condition)

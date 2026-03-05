@@ -35,7 +35,7 @@ def _int64_list_feature(value: list[int]) -> tf.train.Feature:
 
 def _bool_feature(value: bool) -> tf.train.Feature:
     """
-    Returns an int64_feature from a boolean.
+    Returns an int32_feature from a boolean.
     The boolean is cast to int (0 or 1) for serialization.
     """
     return tf.train.Feature(int64_list=tf.train.Int64List(value=[int(value)]))
@@ -98,21 +98,27 @@ class TFRecordFilesManager:
         """
 
         class_name = self.__class__.__name__
-        path_str = config.get('tfrecord_dir', None)
+        path_str = config['paths'].get('tfrecord', None)
 
         if path_str is None:
-            error_msg = f"{class_name} initialization failed: the key 'tfrecord_dir'' is missing in the configuration file"
+            error_msg = (
+                f"[{class_name}] Configuration Error: The parameter 'paths -> tfrecord' "
+                "is required but was not found. "
+                f"Please check your YAML file structure."
+            )
             raise ValueError(error_msg)
 
         self._tfrecord_dir = Path(path_str)
         self._config = config
         self._logger = logger
 
-        self._MAX_RECORDS = self._config.get('max_records', 0)
+        self._MAX_RECORDS = self._config['data_specs'].get('max_records_per_frame', -1)
         if self._MAX_RECORDS <= 0:
             error_msg = (
-                f"{class_name} initialization failed: the 'max_record' key is missing "
-                f"or invalid (value: {self._MAX_RECORDS}) in the configuration file"
+                f"{class_name} initialization failed: the parameter "
+                "'data_specs -> max_record_per_frame' key is required but was not found "
+                f"or invalid (value: {self._MAX_RECORDS}) in the configuration file. "
+                "Please check your YAML file structure."
             )
             
             raise ValueError(error_msg)
@@ -151,6 +157,8 @@ class TFRecordFilesManager:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
+        dicom_studies_dir = self._config['paths']['dicom_studies']
+
         try:
             # Convert DICOM files to TFRecords (if needed)
             if not list(self._tfrecord_dir.glob("*.tfrecord")):
@@ -159,34 +167,31 @@ class TFRecordFilesManager:
                 self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
                 # 2. Load and merge metadata
+
                 metadata_handler = CSVMetadataHandler(
                     config = self._config,
                     logger=logger,
                     root_dir=self._config["root_dir"],
-                    dicom_studies_dir = self._config['dicom_studies_dir'],
-                    **self._config["csv_files"]
+                    dicom_studies_dir = dicom_studies_dir,
+                    **self._config["paths"]["csv"]
                 )
 
                 metadata_df = metadata_handler.generate_metadata_dataframe()
                 logger.info("Loaded metadata from CSV files",
-                            extra={"csv_files": list(self._config["csv_files"].keys())})
+                            extra={"csv": list(self._config["paths"]["csv"].keys())})
 
                 logger.info("  Creating TFRecord files...")
 
                 self._convert_dicom_to_tfrecords(
-                    studies_dir=self._config["dicom_studies_dir"],
+                    studies_dir=dicom_studies_dir,
                     metadata_df=metadata_df,
                     tfrecord_dir=str(self._tfrecord_dir)
                 )
                 logger.info("DICOM to TFRecord conversion completed.",
                             extra={"status": "success"})
 
-                #self._max_series_depth = calculate_max_series_depth(self._logger)
 
             else:
-                #if self._max_series_depth is None:
-                    #self._max_series_depth = calculate_max_series_depth(self._logger)
-
                 logger.info("Existing TFRecords found. Skipping conversion.",
                             extra={"status": "skipped"})
 

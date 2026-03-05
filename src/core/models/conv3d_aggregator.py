@@ -37,27 +37,14 @@ class Conv3DAggregator(BaseAggregator):
         return padded_tensors[:, :self._series_depth, :, :, :]
 
 
-    def _pad_and_fix_shape(self, x):
-        # Prepare static dimensions
-        input_cfg = self._config['model_3d']['input_shape']
-        height, width, channels = input_cfg[0], input_cfg[1], input_cfg[2]
-
-        # Apply the padding
-        x_padded = self._dynamic_padding(x)
-
-        # Instant forcing of the static shape
-        x_fixed = tf.ensure_shape(x_padded, [None, self._series_depth, height, width, channels])
-
-        return x_fixed
-
-
     def build(self, x, suffix=""):
         """
         Builds the 3D aggregation network architecture using purely symbolic
         TensorFlow operations to ensure graph-level compatibility.
         """
-        # 1. Prepare static dimensions 
-        input_cfg = self._config['model_3d']['input_shape']
+        # 1. Prepare static dimensions
+        model_3d = self._config['models']['head_3d']
+        input_cfg = model_3d['input_shape']
         height, width, channels = input_cfg[0], input_cfg[1], input_cfg[2]
 
         # 2. Use the custom layer instead of Lambda
@@ -73,7 +60,7 @@ class Conv3DAggregator(BaseAggregator):
         x_lay = layers.Reshape((self._series_depth, height, width, channels), name=f"shape_anchor_{suffix}")(x_lay)
 
         # 3. 3D Convolutional blocks
-        filters = self._config.get('filters', 64)
+        filters = model_3d.get('filters', 64)
 
         # Now Conv3D can safely call .as_list() on its input shape
         # First 3D convolutional layer

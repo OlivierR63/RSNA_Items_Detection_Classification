@@ -47,20 +47,20 @@ class ConfigLoader:
         self._config["root_dir"] = str(config_dir)
 
         # --- Resolve Core Relative Paths ---
-        # The paths 'dicom_root_dir' and 'output_dir' are resolved relative
-        # to the configuration file's location.
-        for key in ["dicom_studies_dir", "tfrecord_dir", "output_dir", "input_data_inspection"]:
-            if key in self._config:
+        # The paths 'dicom_studies', 'tfrecord', 'output_dir' and 'inspection'
+        # are resolved relative to the configuration file's location.
+        for key in ["dicom_studies", "tfrecord", "output", "inspection"]:
+            if key in self._config['paths']:
                 # Resolve the path and convert the resulting Path object back to a string.
-                self._config[key] = str(config_dir / self._config[key])
+                self._config['paths'][key] = str((config_dir / self._config['paths'][key]).resolve())
 
         # --- Resolve CSV File Paths ---
-        # All paths within the 'csv_files' dictionary are also resolved relative
+        # All paths within the 'csv' dictionary are also resolved relative
         # to the configuration file's location.
-        if "csv_files" in self._config:
-            for csv_key in self._config["csv_files"]:
-                self._config["csv_files"][csv_key] = str(
-                    config_dir / self._config["csv_files"][csv_key]
+        if "csv" in self._config["paths"]:
+            for csv_key in self._config["paths"]["csv"]:
+                self._config["paths"]["csv"][csv_key] = str(
+                    (config_dir / self._config['paths']["csv"][csv_key]).resolve()
                 )
 
     def get_value(self, key: str, default: str = None) -> Any:

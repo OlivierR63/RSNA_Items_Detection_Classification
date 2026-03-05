@@ -95,29 +95,55 @@ def load_model(
 
     if depth is None or depth <= 0 :
         error_msg = (
-            "Function TFRecordFilesManager.get_max_series_depth() failed. "
-            "Attribute TFRecordFilesManager._max_series_depth was not properly set."
+            "Function load_model failed. Null depth parameter"
         )
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    checkpoint_path = config.get("checkpoint_path", None)
+    checkpoint_path = config["paths"].get("checkpoint", None)
 
     if checkpoint_path is None:
         error_msg = (
-            "Fatal error: the setting variable 'checkpoint_path' is missing."
-            "Please check your configuration file."
+            "Fatal error: the parameter 'paths -> checkpoint' is required but was not found. "
+            "Please check your YAML file structure."
         )
         logger.critical(error_msg)
         raise ValueError(error_msg)
     
     checkpoint_full_path = Path(checkpoint_path).resolve()
 
+    training_settings = config.get('training', None)
+
+    if training_settings is None:
+        error_msg = (
+            "Fatal error in load_model: "
+            "the setting variable 'training' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    hyperparameters = training_settings.get('hyperparameters', None)
+    if hyperparameters is None:
+        error_msg = (
+            "Fatal error in load_model: "
+            "the setting variable 'training -> hyperparameters' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
     # Ensure types
     try:
-        max_records = int(config.get('max_records', -1))
-        learning_rate = float(config.get('learning_rate', -1))
-        clip_norm = float(config.get('clipnorm', -1))
+        max_records = int(config['data_specs'].get('max_records_per_frame', -1))
+        if max_records < 0:
+            error_msg = (
+                "Fatal error: the setting variable 'data_specs -> max_records_per_frame' "
+                "is requird but was not found. Please check your YAML file structure."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        learning_rate = float(hyperparameters.get('learning_rate', -1))
+        clip_norm = float(hyperparameters.get('clipnorm', -1))
 
     except (ValueError, TypeError) as e:
         raise ValueError(f"Configuration type error: {e}")
@@ -125,7 +151,7 @@ def load_model(
     # Explicit check to prevent logic errors later in the pipeline
     if max_records < 0 or learning_rate < 0 or clip_norm < 0:
         error_msg = (
-            "Fatal error: the setting variables 'max_records', 'learning_rate' and/or 'clipnorm' "
+            "Fatal error: the setting variables 'learning_rate' and/or 'clipnorm' "
             "were not properly defined. Please check your configuration file."
         )
         logger.error(error_msg)
@@ -165,29 +191,85 @@ def load_model(
         )
         model = factory_model.build_multi_series_model()
 
+        # --- Define Losses ---
+        # Using MSE for location to penalize large spatial errors more heavily
         losses = {
             "severity_output": rsna_weighted_log_loss,
             "location_output": "mse"
         }
 
+        # --- Define Loss Weights ---
+        # We give more weight to location (5.0) because the coordinate regression 
+        # is currently struggling to converge compared to classification.
+        
+        compilation_settings = training_settings.get('compilation', None)
+
+        if compilation_settings is None:
+            error_msg = (
+                "Fatal error in load_model: "
+                "the setting variable 'training -> compilation' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+
+            raise ValueError(error_msg)
+
+        run_eagerly_settings = compilation_settings.get('run_eagerly', False)
+
+        if run_eagerly_settings not in (True, False):
+            error_msg = (
+                "Fatal error in load_model: "
+                "the setting variable 'training -> compilation -> run_eagerly' is required "
+                "but is corrupted or was not found. Please check your YAML file structure."
+            )
+
+            raise ValueError(error_msg)
+
+        loss_weights_settings = compilation_settings.get('loss_weights', None)
+
+        if loss_weights_settings is None:
+            error_msg = (
+                "Fatal error in load_model: "
+                "the setting variable 'training -> compilation -> loss_weights' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+
+            raise ValueError(error_msg)
+
+        loss_weights = {
+            "severity_output": loss_weights_settings["severity_output"],
+            "location_output": loss_weights_settings["location_output"] 
+        }
+
+        # --- Define Metrics ---
         rsna_score = RSNAKaggleMetric()
         metrics = {
             "severity_output": [rsna_score, "accuracy"],  # Added accuracy for a quick baseline
             "location_output": [tf.keras.metrics.MeanAbsoluteError(name="mae")]
         }
 
+        # --- Model Compilation ---
+        # Adam optimizer with gradient clipping to prevent exploding gradients 
+        # during multi-task learning.
         model.compile(
             optimizer=tf.keras.optimizers.Adam(
                 learning_rate=learning_rate,
                 clipnorm=clip_norm
             ),
             loss=losses,
+            loss_weights=loss_weights,
             metrics=metrics,
-            run_eagerly=True
+            run_eagerly=run_eagerly_settings
         )
 
         model.summary()
-        logger.info("New model compiled and ready for training.", extra={"optimizer": "Adam", "learning_rate": learning_rate, "clip_norm":clip_norm})
+        logger.info(
+            "New model compiled with weighted losses.",
+            extra={
+                "optimizer": "Adam",
+                "learning_rate": learning_rate,
+                "clip_norm":clip_norm
+            }
+        )
         return model
 
     except Exception as e:
@@ -211,16 +293,16 @@ def main():
     config: dict = config_loader.get()
 
     # 2. Allow to parallelize operations on the requested number of cores
-    #nb_cores = config.get('nb_cores', 4)
+    #nb_cores = config['systems'].get('nb_cores', 0)
     #tf.config.threading.set_intra_op_parallelism_threads(nb_cores)  
     #tf.config.threading.set_inter_op_parallelism_threads(nb_cores)
 
     # Mirror all the console and error output toward a dedicated file
-    system_stream_tee_path = config.get('system_stream_mirror_path', None)
+    system_stream_tee_path = config['paths'].get('log_mirror', None)
     if system_stream_tee_path is None:
         error_msg = (
-            "Fatal error: the setting variable 'system_stream_mirror_path' is missing."
-            "Please check your configuration file."
+            "Fatal error: the parameter 'paths -> log_mirror' is required but was not found. "
+            "Please check your YAML file structure."
         )
         raise ValueError(error_msg)
     
@@ -230,7 +312,7 @@ def main():
     sys.stderr = mirror
 
     # 2. Initialize logger with process-specific context
-    log_dir = config.get("output_dir", "logs")  # use "logs" as default if not in config.
+    log_dir = config["paths"].get("output", "logs")  # use "logs" as default if not in config.
     log_dir += "/logs"
 
     with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
@@ -275,12 +357,12 @@ def main():
                         extra={"status": "completed"})
 
         # Remove log files older than 30 days
-        log_retention_days = config.get('log_retention_days', None)
+        log_retention_days = config['system'].get('log_retention_days', None)
 
         if log_retention_days is None:
             error_msg = (
-                "Fatal error: the setting variable 'log_retention_days' is missing."
-                "Please check your configuration file."
+                "Fatal error: the setting variable 'system -> log_retention_days' "
+                "is raquired but was not found. Please check your YAML file structure."
             )
             raise ValueError(error_msg)
 
