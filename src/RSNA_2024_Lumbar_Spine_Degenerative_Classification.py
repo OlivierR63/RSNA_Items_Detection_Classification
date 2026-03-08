@@ -3,14 +3,21 @@
 import os
 
 # Create a temp folder on your F: drive if it doesn't exist
-os.environ['TMPDIR'] = 'F:\\temp_tf'
-os.environ['TEMP'] = 'F:\\temp_tf'
-os.environ['TMP'] = 'F:\\temp_tf'
+#os.environ['TMPDIR'] = 'F:\\temp_tf'
+#os.environ['TEMP'] = 'F:\\temp_tf'
+#os.environ['TMP'] = 'F:\\temp_tf'
 
-os.environ['TF_NUM_INTEROP_THREADS'] = '7' # Force the number of logical cores.
-os.environ['TF_NUM_INTRAOP_THREADS'] = '7'
-os.environ["OMP_NUM_THREADS"] = '7'
-os.environ["MKL_NUM_THREADS"] = '7'
+# Identification of the environment to best fit the ressources
+is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
+
+# Use 7 threads on local PC, but limit to 4 on Kaggle to avoid CPU overload
+cpu_threads = '4' if is_kaggle else '7'
+
+
+os.environ['TF_NUM_INTEROP_THREADS'] = cpu_threads # Force the number of logical cores.
+os.environ['TF_NUM_INTRAOP_THREADS'] = cpu_threads
+os.environ["OMP_NUM_THREADS"] = cpu_threads
+os.environ["MKL_NUM_THREADS"] = cpu_threads
 
 # ---------------- Environmental configuration (before any TF import) -----------------------
 # Suppress TensorFlow C++ environmental logs
@@ -26,9 +33,47 @@ import signal
 import sys
 import logging
 import gc
+from pathlib import Path
+
+def setup_config_symlink(config_dir_path: str) -> None:
+    """
+    Automates the creation of a symbolic link for the configuration file
+    based on the execution environment (Kaggle vs. Windows).
+    
+    Args:
+        config_dir_path (str): Absolute path to the directory containing YAML files.
+    """
+    config_dir = Path(config_dir_path).resolve()
+    main_config = config_dir / "lumbar_spine_config.yaml"
+    
+    # Identify the environment
+    is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
+    target_name = "lumbar_spine_config_kaggle.yaml" if is_kaggle else "lumbar_spine_config_windows.yaml"
+    target_file = config_dir / target_name
+
+    # Safety check: does the target source file exist?
+    if not target_file.exists():
+        print(f"Warning: Source file {target_file} not found. Symlink skipped.")
+        return
+
+    # Create or update the symlink
+    try:
+        if main_config.is_symlink() or main_config.exists():
+            main_config.unlink()  # Remove existing file or broken link
+        
+        # Create the link (pointing from main_config to target_file)
+        main_config.symlink_to(target_file)
+        print(f"Environment: {'Kaggle' if is_kaggle else 'Local/Windows'}")
+        print(f"Linked: {main_config.name} -> {target_name}")
+        
+    except Exception as e:
+        print(f"Failed to create symlink: {e}")
 
 # ----------------- Project-specific utility imports (No TF here) ---------------------------
 from src.config.config_loader import ConfigLoader
+
+# Select the proper Yaml config file, depending on the current platform : WINDOWS or Kaggle
+setup_config_symlink("src/config")
 
 # 3. Load the configuration EARLY
 # This allows to use config values for OS environment variables if needed
@@ -38,8 +83,8 @@ config = config_loader.get()
 # ----------------- TensorFlow and projects imports -----------------------------------------
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(7)  
-tf.config.threading.set_inter_op_parallelism_threads(7)
+tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)  
+tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
 
 # Apply global TF settings from the config
 training_cfg = config.get('training', None)
@@ -92,7 +137,6 @@ from src.core.models.model_factory import ModelFactory
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import rsna_weighted_log_loss, RSNAKaggleMetric
 from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
-from pathlib import Path
 
 
 def handle_interrupt(signum, frame):
@@ -161,7 +205,7 @@ def load_model(
         if max_records < 0:
             error_msg = (
                 "Fatal error: the setting variable 'data_specs -> max_records_per_frame' "
-                "is requird but was not found. Please check your YAML file structure."
+                "is required but was not found. Please check your YAML file structure."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -408,7 +452,7 @@ def main():
         if log_retention_days is None:
             error_msg = (
                 "Fatal error: the setting variable 'system -> log_retention_days' "
-                "is raquired but was not found. Please check your YAML file structure."
+                "is required but was not found. Please check your YAML file structure."
             )
             raise ValueError(error_msg)
 

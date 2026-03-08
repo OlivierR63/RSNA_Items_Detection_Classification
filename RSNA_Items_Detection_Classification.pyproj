@@ -77,7 +77,6 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="logs\" />
-    <Folder Include="kaggle_data\" />
     <Folder Include="scripts\" />
     <Folder Include="src\" />
     <Folder Include="src\config\" />
