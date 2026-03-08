@@ -102,16 +102,15 @@ class LumbarDicomTFRecordDataset():
         # 1. Main Pipeline: Iterate through the list of TFRecord files
         dataset = tf.data.Dataset.from_tensor_slices(tfrecord_list)
 
+        dataset = dataset.cache()
+
         # 2. Shuffle the file list to avoid overfitting to file order.
         dataset = dataset.shuffle(buffer_size=len(tfrecord_list))
-
-        # 3. Infinite repeat for training
-        dataset = dataset.repeat()
         
         # 4. Interleave multiple TFRecord files to overlap I/O and preprocessing latency
         dataset = dataset.interleave(
             lambda x: tf.data.TFRecordDataset(x, buffer_size=buffer_size_bytes),
-            cycle_length=2,         # Read multiple TFRecord files at once
+            cycle_length=5,         # Read multiple TFRecord files at once
             block_length=total_slices_per_patient, # Read the entire patient before switching
             num_parallel_calls=tf.data.AUTOTUNE,  # Parallelize the IO
             deterministic=False      # Keep order predictable
@@ -145,6 +144,6 @@ class LumbarDicomTFRecordDataset():
         dataset = dataset.batch(batch_size, drop_remainder=True)
         
         # 11. Prefetch the next batch in the background to hide latency
-        dataset = dataset.prefetch(1)
+        dataset = dataset.prefetch(5)
 
         return dataset

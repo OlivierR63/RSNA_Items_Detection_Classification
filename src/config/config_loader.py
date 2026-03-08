@@ -46,22 +46,40 @@ class ConfigLoader:
         # Store the determined root directory (the YAML file's location)
         self._config["root_dir"] = str(config_dir)
 
+        # Reference to the paths dictionary to avoid repetitive lookups
+        paths_config = self._config.get('paths', {})
+
         # --- Resolve Core Relative Paths ---
-        # The paths 'dicom_studies', 'tfrecord', 'output_dir' and 'inspection'
-        # are resolved relative to the configuration file's location.
-        for key in ["dicom_studies", "tfrecord", "output", "inspection"]:
-            if key in self._config['paths']:
-                # Resolve the path and convert the resulting Path object back to a string.
-                self._config['paths'][key] = str((config_dir / self._config['paths'][key]).resolve())
+        # Iterate through known keys to convert relative paths (starting with '.') to absolute
+        core_keys = [
+            "dicom_studies",
+            "tfrecord",
+            "output",
+            "inspection",
+            "checkpoint",
+            "log_mirror"
+        ]
+
+        for key in core_keys:
+            if key in paths_config:
+                val = paths_config[key]
+                # Check if the value is a string and starts with a dot (relative path)
+                if isinstance(val, str) and val.startswith('.'):
+                    # Resolve path relative to the config file location
+                    resolved_path = (config_dir / val).resolve()
+                    paths_config[key] = str(resolved_path)
+                    print(f"DEBUG: Resolved {key} to {paths_config[key]}")
 
         # --- Resolve CSV File Paths ---
-        # All paths within the 'csv' dictionary are also resolved relative
-        # to the configuration file's location.
-        if "csv" in self._config["paths"]:
-            for csv_key in self._config["paths"]["csv"]:
-                self._config["paths"]["csv"][csv_key] = str(
-                    (config_dir / self._config['paths']["csv"][csv_key]).resolve()
-                )
+        # Handle nested dictionary for CSV file locations
+        if "csv" in paths_config:
+            csv_dict = paths_config["csv"]
+            for csv_key in csv_dict:
+                val = csv_dict[csv_key]
+                if isinstance(val, str) and val.startswith('.'):
+                    resolved_csv = (config_dir / val).resolve()
+                    csv_dict[csv_key] = str(resolved_csv)
+                    print(f"DEBUG: Resolved CSV {csv_key} to {csv_dict[csv_key]}")
 
     def get_value(self, key: str, default: str = None) -> Any:
         """

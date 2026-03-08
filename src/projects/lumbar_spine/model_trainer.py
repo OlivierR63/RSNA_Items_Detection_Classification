@@ -288,7 +288,7 @@ class ModelTrainer:
 
         # Initialize your custom hardware and metrics monitor
         training_progress_callback = LogTrainingCallbacks(logger)
-        monitor_callback = SystemResourceMonitorCallbacks(memory_threshold_percent=90.0)
+        monitor_callback = SystemResourceMonitorCallbacks(memory_threshold_percent=85.0)
 
         # Simplified print callback for batch monitoring
         # Since LogTrainingCallbacks already prints RAM/Time, 

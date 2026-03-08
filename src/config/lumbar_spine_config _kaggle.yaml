@@ -1,16 +1,15 @@
 # ----------------- Environmental & Paths -----------------
 paths:
-  dicom_studies: "../../data/lumbar_spine/dicom/training/"
-  tfrecord: "../../data/lumbar_spine/tfrecords"
-  output: "../../data/lumbar_spine/output/"
-  checkpoint: "../../data/lumbar_spine/output/checkpoints"
-  log_mirror: "../../data/lumbar_spine/output/logs/full_session_output.log"
-  tf_cache: "F:/tensorflow_cache/lumbar_train"
-  inspection: "../../data/lumbar_spine/input_data_inspection/"
+  dicom_studies: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_images"
+  tfrecord: "/kaggle/working/lumbar_spine/tfrecords"
+  output: "/kaggle/working/lumbar_spine/output/"
+  checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
+  log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
+  inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
   csv:
-    description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
-    label_coordinates: "../../data/lumbar_spine/csv/train_label_coordinates.csv"
-    train: "../../data/lumbar_spine/csv/train.csv"
+    description: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
+    label_coordinates: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
+    train: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -34,7 +33,7 @@ models:
 training:
   hyperparameters:
     train_split_ratio: 0.8
-    batch_size: 1
+    batch_size: 3
     epochs: 10
     patience: 5
     learning_rate: 0.0001
@@ -45,7 +44,7 @@ training:
     loss_weights:
       severity_output: 1.0
       location_output: 30.0
-    run_eagerly: True
+    run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
 system:

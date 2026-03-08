@@ -77,6 +77,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="logs\" />
+    <Folder Include="kaggle_data\" />
     <Folder Include="scripts\" />
     <Folder Include="src\" />
     <Folder Include="src\config\" />
@@ -142,6 +143,8 @@
     <Content Include="scripts\setup_environment.ps1" />
     <Content Include="src\config\brain_aneuvrysm_config.yaml" />
     <Content Include="src\config\lumbar_spine_config.yaml" />
+    <Content Include="src\config\lumbar_spine_config _kaggle.yaml" />
+    <Content Include="src\config\lumbar_spine_config_windows.yaml" />
     <Content Include="src\projects\intracranial_aneurysm\__init__.py %28brain_aneuvrysm%29" />
     <Content Include="src\__pycache__\RSNA_2024_Lumbar_Spine_Degenerative_Classification.cpython-311.pyc" />
     <Content Include="test\fixtures\csv_samples\mock_train.csv" />
