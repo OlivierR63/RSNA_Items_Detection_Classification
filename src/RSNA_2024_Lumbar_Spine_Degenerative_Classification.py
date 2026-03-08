@@ -7,8 +7,10 @@ os.environ['TMPDIR'] = 'F:\\temp_tf'
 os.environ['TEMP'] = 'F:\\temp_tf'
 os.environ['TMP'] = 'F:\\temp_tf'
 
-os.environ['TF_NUM_INTEROP_THREADS'] = '4' # Force the number of logical cores.
-os.environ['TF_NUM_INTRAOP_THREADS'] = '4'
+os.environ['TF_NUM_INTEROP_THREADS'] = '7' # Force the number of logical cores.
+os.environ['TF_NUM_INTRAOP_THREADS'] = '7'
+os.environ["OMP_NUM_THREADS"] = '7'
+os.environ["MKL_NUM_THREADS"] = '7'
 
 # ---------------- Environmental configuration (before any TF import) -----------------------
 # Suppress TensorFlow C++ environmental logs
@@ -25,13 +27,58 @@ import sys
 import logging
 import gc
 
+# ----------------- Project-specific utility imports (No TF here) ---------------------------
+from src.config.config_loader import ConfigLoader
+
+# 3. Load the configuration EARLY
+# This allows to use config values for OS environment variables if needed
+config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
+config = config_loader.get()
+
 # ----------------- TensorFlow and projects imports -----------------------------------------
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(0)  
-tf.config.threading.set_inter_op_parallelism_threads(0)
+tf.config.threading.set_intra_op_parallelism_threads(7)  
+tf.config.threading.set_inter_op_parallelism_threads(7)
 
-tf.config.run_functions_eagerly(True)
+# Apply global TF settings from the config
+training_cfg = config.get('training', None)
+if training_cfg is None:
+    error_msg = (
+        "Fatal error in load_model: "
+        "the setting variable 'training' is required "
+        "but was not found. Please check your YAML file structure."
+    )
+    raise ValueError(error_msg)
+
+compilation_cfg = training_cfg.get('compilation', None)
+if compilation_cfg is None:
+    error_msg = (
+        "Fatal error in load_model: "
+        "the setting variable 'training -> compilation' is required "
+        "but was not found. Please check your YAML file structure."
+    )
+    raise ValueError(error_msg)
+
+hyperparam_cfg = training_cfg.get('hyperparameters', None)
+if hyperparam_cfg is None:
+    error_msg = (
+        "Fatal error in load_model: "
+        "the setting variable 'training -> hyperparameters' is required "
+        "but was not found. Please check your YAML file structure."
+    )
+    raise ValueError(error_msg)
+
+run_eagerly_val = compilation_cfg.get('run_eagerly', False)
+
+if run_eagerly_val not in [True, False]:
+    error_msg = (
+        "Fatal error: the parameter 'training -> compilation -> run_eagerly' "
+        "is  not a boolean. Please check your YAML file structure."
+    )
+    raise ValueError(error_msg)
+
+tf.config.run_functions_eagerly(run_eagerly_val)
 tf.data.experimental.enable_debug_mode() # Optionnel mais aide pour tf.data
 
 # Mute Python-level TensorFlow/Keras warnings
@@ -44,9 +91,7 @@ from src.core.utils.clean_logs import clean_old_logs
 from src.core.models.model_factory import ModelFactory
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import rsna_weighted_log_loss, RSNAKaggleMetric
-from src.config.config_loader import ConfigLoader
 from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
-from src.core.models.temporal_padding_layer import TemporalPaddingLayer
 from pathlib import Path
 
 
@@ -69,28 +114,34 @@ def load_model(
 ) -> tf.keras.Model:
 
     """
-    Retrieves a pre-existing model from a checkpoint or initializes a new one.
+    Retrieves a pre-existing model from a checkpoint or initializes a new one, 
+    with an automated weight restoration fallback.
 
-    This function implements a "Resume Training" logic. It checks for a saved 
-    Keras model at the specified checkpoint path. If found, it restores the 
-    model using custom objects (layers and losses). If no checkpoint is found 
-    or if loading fails, it utilizes the ModelFactory to build and compile 
-    a fresh architecture from scratch.
+    This function implements a robust "Resume Training" logic designed to handle 
+    structural breaking changes (e.g., Lambda layer serialization issues). 
+    It operates in three priority stages:
+    1. Full Restore: Attempts to load the complete Keras model (architecture + weights + optimizer state).
+    2. Weight Salvage: If a full load fails due to serialization errors, it builds a fresh 
+       architecture from the ModelFactory and injects existing weights by name, then saves 
+       a "fixed" version of the model.
+    3. Fresh Start: If no checkpoint exists, it initializes and compiles a new model from scratch.
 
     Args:
         depth (int): The maximum number of slices per imaging series, 
             used for 3D convolution input shapes.
         config (dict): Global configuration dictionary containing paths, 
             hyperparameters, and model settings.
-        logger (logging.logger): Logger instance for status 
+        logger (logging.Logger): Logger instance for status 
             tracking and error reporting.
 
     Returns:
-        tf.keras.Model: A compiled TensorFlow Keras model ready for training.
+        tf.keras.Model: A compiled TensorFlow Keras model ready for training, 
+            potentially restored from a previous state.
 
     Raises:
-        ValueError: If the series depth is invalid (None or <= 0).
-        Exception: If a fatal error occurs during model initialization.
+        ValueError: If the series depth is invalid (None or <= 0) or if critical 
+            configuration variables are missing.
+        Exception: If a fatal error occurs during model factory building or compilation.
     """
 
     if depth is None or depth <= 0 :
@@ -100,38 +151,11 @@ def load_model(
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    checkpoint_path = config["paths"].get("checkpoint", None)
+    # Extract configs locally within the function to ensure independence
+    training_cfg = config.get('training', {})
+    hyperparam_cfg = training_cfg.get('hyperparameters', {})
+    compilation_cfg = training_cfg.get('compilation', {})
 
-    if checkpoint_path is None:
-        error_msg = (
-            "Fatal error: the parameter 'paths -> checkpoint' is required but was not found. "
-            "Please check your YAML file structure."
-        )
-        logger.critical(error_msg)
-        raise ValueError(error_msg)
-    
-    checkpoint_full_path = Path(checkpoint_path).resolve()
-
-    training_settings = config.get('training', None)
-
-    if training_settings is None:
-        error_msg = (
-            "Fatal error in load_model: "
-            "the setting variable 'training' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
-    hyperparameters = training_settings.get('hyperparameters', None)
-    if hyperparameters is None:
-        error_msg = (
-            "Fatal error in load_model: "
-            "the setting variable 'training -> hyperparameters' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
-    # Ensure types
     try:
         max_records = int(config['data_specs'].get('max_records_per_frame', -1))
         if max_records < 0:
@@ -142,8 +166,8 @@ def load_model(
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        learning_rate = float(hyperparameters.get('learning_rate', -1))
-        clip_norm = float(hyperparameters.get('clipnorm', -1))
+        learning_rate = float(hyperparam_cfg.get('learning_rate', -1))
+        clip_norm = float(hyperparam_cfg.get('clipnorm', -1))
 
     except (ValueError, TypeError) as e:
         raise ValueError(f"Configuration type error: {e}")
@@ -157,28 +181,50 @@ def load_model(
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    if checkpoint_full_path.is_file():
-        info_msg = f"Existing model found at {checkpoint_full_path}. Loading for resume..."
-        logger.info(info_msg)
+    # Select the checkpoint loading policy: 'best' for the lowest validation loss 
+    # or 'last' to continue from the most recent epoch.
+    checkpoint_dir = Path(config["paths"].get("checkpoint", "checkpoints")).resolve()
+    resume_mode = hyperparam_cfg.get("resume_mode", "last")
 
+    if resume_mode not in ["best", "last"]:
+        error_msg = (
+            "Fatal error: the parameter 'training -> hyperparameters -> resume_mode' "
+            "was not properly set. Only two values are permitted: 'best' or 'last'. "
+            "Please check your YAML file structure."
+        )
+        logger.critical(error_msg)
+        raise ValueError(error_msg)
+    
+    # Define filenames based on your ModelTrainer saving logic
+    best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
+    last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
+
+    # Select the target file
+    if resume_mode == "best" and best_path.is_file():
+        checkpoint_full_path = best_path
+    elif last_path.is_file():
+        checkpoint_full_path = last_path
+    else:
+        checkpoint_full_path = None
+
+    if checkpoint_full_path:
+        info_msg = (
+            f"Existing model found ({resume_mode} mode) at {checkpoint_full_path}. "
+            "Loading for resume..."
+        )
+        logger.info(info_msg)
+        
         try:
             tf.keras.backend.clear_session()
             model = tf.keras.models.load_model(
-                checkpoint_full_path, 
-                custom_objects={
-                    "TemporalPaddingLayer": TemporalPaddingLayer,
-                    "rsna_weighted_log_loss": rsna_weighted_log_loss,
-                    "RSNAKaggleMetric": RSNAKaggleMetric
-                },
+                checkpoint_full_path,
+                custom_objects=ModelFactory.CUSTOM_OBJECTS,
                 safe_mode=False,
             )
-
-            logger.info("Model loaded successfully", extra={"model_architecture": str(model.summary())})
             return model
 
-        except Exception as e:
-            warning_msg = f"Failed to load existing model: {e}. Falling back to factory."
-            logger.warning(warning_msg)
+        except Exception as e_1:
+            logger.warning(f"Failed to load checkpoint: {e_1}. Trying to restore weights.")
 
     try:
         info_msg = "No existing model found. Building a new model from factory."
@@ -191,6 +237,28 @@ def load_model(
         )
         model = factory_model.build_multi_series_model()
 
+    except Exception as e_2:
+        msg_error = f"Fatal error. Failed to build new model: {e_2}"
+        logger.error(msg_error, extra ={"status": "failed", "error": str({e_2})}, exc_info=True)
+        raise RuntimeError(msg_error)
+
+    try:
+        if checkpoint_full_path:
+            model.load_weights(checkpoint_full_path, skip_mismatch=True)
+            logger.info("Weights loaded directly with skip_mismatch=True")
+
+            new_file = checkpoint_dir / "model_restored_fixed.keras"
+            model.save(new_file)
+            logger.info("Model saved as 'model_restored_fixed.keras'", extra={"status": "recovered"})
+
+    except Exception as e_3:
+        msg_warning = f"Warning:  Unable to restore the weights. Falling back to factory. {e_3}"
+        logger.warning(
+            msg_warning,
+            extra={"status": "restart", "warning": str({e_3})},
+            exc_info=True)
+
+    try:
         # --- Define Losses ---
         # Using MSE for location to penalize large spatial errors more heavily
         losses = {
@@ -201,30 +269,8 @@ def load_model(
         # --- Define Loss Weights ---
         # We give more weight to location (5.0) because the coordinate regression 
         # is currently struggling to converge compared to classification.
-        
-        compilation_settings = training_settings.get('compilation', None)
 
-        if compilation_settings is None:
-            error_msg = (
-                "Fatal error in load_model: "
-                "the setting variable 'training -> compilation' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-
-            raise ValueError(error_msg)
-
-        run_eagerly_settings = compilation_settings.get('run_eagerly', False)
-
-        if run_eagerly_settings not in (True, False):
-            error_msg = (
-                "Fatal error in load_model: "
-                "the setting variable 'training -> compilation -> run_eagerly' is required "
-                "but is corrupted or was not found. Please check your YAML file structure."
-            )
-
-            raise ValueError(error_msg)
-
-        loss_weights_settings = compilation_settings.get('loss_weights', None)
+        loss_weights_settings = compilation_cfg.get('loss_weights', None)
 
         if loss_weights_settings is None:
             error_msg = (
@@ -258,7 +304,7 @@ def load_model(
             loss=losses,
             loss_weights=loss_weights,
             metrics=metrics,
-            run_eagerly=run_eagerly_settings
+            run_eagerly=run_eagerly_val
         )
 
         model.summary()
@@ -272,10 +318,10 @@ def load_model(
         )
         return model
 
-    except Exception as e:
-        critical_msg = f"Fatal error : {e}"
+    except Exception as e_4:
+        critical_msg = f"Fatal error : {e_4}"
         logger.critical(critical_msg)
-        raise e
+        raise e_4
 
 
 def main():

@@ -202,6 +202,16 @@ class CSVMetadataHandler:
         try:
             # Perform the initial merge and preprocessing upon instantiation.
             merged_df = self._merge_metadata()
+
+            if merged_df.empty:
+                error_msg = "Fatal error: empty DataFrame"
+                logger.error(
+                    error_msg,
+                    exc_info=True,
+                    extra={"status": "failed"}
+                )
+                raise ValueError(error_msg)
+
             logger.info(
                 "Metadata merged successfully",
                 extra={"merged_shape": merged_df.shape}
@@ -214,16 +224,14 @@ class CSVMetadataHandler:
 
             # Create a new feature in metadata_df, as a synthesis of the
             # features 'condition' and 'description'
-            nb_levels = encoded_metadata_df['level'].nunique()
+            nb_conditions_levels = encoded_metadata_df['condition_level'].nunique()
 
-            if nb_levels != 5: # Assuming 5 levels is the standard
+            if nb_conditions_levels != 25: # Assuming 25 levels is the standard
                 warning_msg = (
-                    f"Unexpected number of levels detected: {nb_levels}. "
+                    f"Unexpected number of levels detected: {nb_conditions_levels}. "
                     "Verify dataset integrity."
                 )
                 logger.warning(warning_msg)
-
-            encoded_metadata_df['condition_level'] = encoded_metadata_df['condition']*nb_levels + encoded_metadata_df['level'] 
 
             return encoded_metadata_df
 
@@ -462,9 +470,21 @@ class CSVMetadataHandler:
                 var_name="condition_level",
                 value_name="severity"
             )
+            
+            if tmp_train_df.empty:
+                error_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
+                self._logger.error(error_msg, exc_info=True, extra={"status": "failed"})
+                raise ValueError(error_msg)
+
             initial_count = len(tmp_train_df)
+
             tmp_train_df = tmp_train_df.dropna()
             final_count = len(tmp_train_df)
+
+            if final_count == 0:
+                error_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
+                self._logger.error(error_msg, exc_info=True, extra={"status": "failed"})
+                raise ValueError(error_msg)
 
             self._logger.info(
                 f"Dropped {initial_count - final_count} NaN rows",
@@ -475,19 +495,8 @@ class CSVMetadataHandler:
                        }
             )
 
-            # String manipulation for condition and level
-            # We ensure everything is lowercase and trimmed to match _filter_null_dataframe_values
-            tmp_train_df[['condition', 'level']] = tmp_train_df['condition_level'].apply(
-                lambda x: x[:-6] + ' ' + x[-5:]
-            ).str.split(' ', expand=True)
-
-            tmp_train_df['condition'] = tmp_train_df['condition'].str.replace('_', ' ')
-            tmp_train_df['level'] = tmp_train_df['level'].str.replace('_', '/')
-
             # Standardize severity text as well
             tmp_train_df['severity'] = tmp_train_df['severity'].str.lower().str.strip()
-
-            #tmp_train_df = tmp_train_df.drop(['condition_level'], axis=1)
 
             # CRITICAL: Force types for merging
             # This ensures study_id is an integer for subsequent joins
@@ -508,17 +517,43 @@ class CSVMetadataHandler:
         Merge the DataFrame with label coordinates.
         """
 
-        self._logger.info("Merging with label coordinates...", extra={"step": 3})
-        merged_df = df.merge(
-            self._label_coords_df,
-            on=["study_id", 'condition', 'level'],
-            how='inner'
-        )
+        try:
+            self._logger.info("Merging with label coordinates...", extra={"step": 3})
+            self._label_coords_df['condition_level'] = (
+                self._label_coords_df['condition'] + '_' + self._label_coords_df['level']
+            )
 
-        self._logger.info(
-            f"Merged with label coordinates. Shape: {merged_df.shape}",
-            extra={"step": 3, "shape": merged_df.shape}
-        )
+            self._label_coords_df['condition_level'] = (
+                self._label_coords_df['condition_level']
+                .str.replace(" ", "_", regex=False)
+                .str.replace("/", "_", regex=False)
+            )
+
+            self._label_coords_df = self._label_coords_df.drop(columns=['condition', 'level'])
+
+            merged_df = df.merge(
+                self._label_coords_df,
+                on=["study_id", 'condition_level'],
+                how='inner'
+            )
+
+            if merged_df.empty:
+                error_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+                raise ValueError(error_msg)
+
+            self._logger.info(
+                f"Merged with label coordinates. Shape: {merged_df.shape}",
+                extra={"step": 3, "shape": merged_df.shape}
+            )
+
+        except Exception as e:
+            error_msg = f"Fatal error in _merge_with_label_coordinates: {e}"
+            self._logger.error(
+                error_msg,
+                exc_info=True,
+                extra = {"status": "failed", "error": str({e})}
+            )
+            raise e
 
         return merged_df
 
@@ -527,14 +562,28 @@ class CSVMetadataHandler:
         Merge the DataFrame with series descriptions.
         """
 
-        self._logger.info("Merging with series descriptions...", extra={"step": 4})
+        try:
+            self._logger.info("Merging with series descriptions...", extra={"step": 4})
 
-        merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
+            merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
 
-        self._logger.info(
-            f"Merged with series descriptions. Final shape: {merged_df.shape}",
-            extra={"step": 4, "final_shape": merged_df.shape}
-        )
+            if merged_df.empty:
+                error_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+                raise ValueError(error_msg)
+
+            self._logger.info(
+                f"Merged with series descriptions. Final shape: {merged_df.shape}",
+                extra={"step": 4, "final_shape": merged_df.shape}
+            )
+
+        except Exception as e:
+            error_msg = f"Fatal error in _merge_with_series_descriptions: {e}"
+            self._logger.error(
+                error_msg,
+                exc_info=True,
+                extra = {"status": "failed", "error": str({e})}
+            )
+            raise e
 
         return merged_df
 
@@ -567,8 +616,8 @@ class CSVMetadataHandler:
             Args:
                 metadata_df: The DataFrame containing metadata to be converted.
                             Example column values: {
-                                                        "condition": "Spinal Canal Stenosis",
-                                                        "level": "L1-L2", ...
+                                                        "condition_level": "spinal_canal_stenosis_l1-2",
+                                                        "severity": "Normal/Mild", ...
                                                     }
 
             Returns:
@@ -581,8 +630,12 @@ class CSVMetadataHandler:
         logger.info(f"Starting function {class_name}.{func_name}")
 
         try:
+            if metadata_df.empty:
+                error_msg = "Empty DataFarme"
+                raise ValueError(error_msg)
+
             # Define columns to encode and their corresponding mapping variables
-            columns_to_encode = ["condition", "level", "description", "severity"]
+            columns_to_encode = ["condition_level", "description", "severity"]
 
             # Create mappings for each column
             mappings = self._create_mappings(metadata_df, columns_to_encode)
@@ -596,7 +649,7 @@ class CSVMetadataHandler:
 
         except Exception as e:
             error_msg = (
-                f"Error in function {class_name}.{func_name}: {str(e)}"
+                f"Fatal error in function {class_name}.{func_name}: {str(e)}"
             )
 
             logger.error(

@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from tensorflow.keras import layers, Model
 from src.core.models.conv3d_aggregator import Conv3DAggregator
+from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import rsna_weighted_log_loss, RSNAKaggleMetric
+from src.core.models.temporal_padding_layer import TemporalPaddingLayer
 from src.core.models.model_2d import Backbone2D
 from typing import Dict, Any, Type
 
@@ -25,6 +27,13 @@ class ModelFactory:
     Factory class to build and configure the multi-modal RSNA Lumbar Spine model.
     Handles dynamic depth calculation and shared backbone orchestration.
     """
+    CUSTOM_OBJECTS ={
+        "TemporalPaddingLayer": TemporalPaddingLayer,
+        "rsna_weighted_log_loss": rsna_weighted_log_loss,
+        "RSNAKaggleMetric": RSNAKaggleMetric,
+        "study_id_link": lambda x: tf.cast(x, tf.float32) * 0.0
+    }
+
     def __init__(
         self, 
         *, 
@@ -129,10 +138,14 @@ class ModelFactory:
         # This trick is especially intended to allow the user to keep study_id in the loop,
         # for debugging purpose.
         # By multiplying by 0, we ensure study_id has no impact on training.
-        id_link = layers.Lambda(lambda x: tf.cast(x, tf.float32) * 0.0, name="study_id_link")(study_id_layer)
+        study_id_link = layers.Lambda(
+            lambda x: tf.cast(x, tf.float32) * 0.0,
+            output_shape=(1,),
+            name="study_id_link"
+        )(study_id_layer)
 
         # Concatenate features from all imaging planes
-        global_features = layers.concatenate([feat_sag_t1, feat_sag_t2, feat_ax_t2, id_link], name="global_fusion")
+        global_features = layers.concatenate([feat_sag_t1, feat_sag_t2, feat_ax_t2, study_id_link], name="global_fusion")
 
         lay_z = layers.Dense(512, activation='relu')(global_features)
         lay_z = layers.Dropout(0.3)(lay_z)
@@ -234,12 +247,19 @@ class ModelFactory:
         # Series flags: Slicing + Cast via Activation layer
         # This ensures the cast to float32 is tracked by Keras
         flags_slice = series_metadata_input[:, :2]
-        series_flags = layers.Activation('linear', dtype='float32', name=f"get_flags_{suffix}")(flags_slice)
+        series_flags = layers.Activation(
+            'linear',
+            dtype='float32',
+            name=f"get_flags_{suffix}"
+        )(flags_slice)
 
         # View code: Slicing + Identity layer
         # We use an Activation layer to turn the slice into a formal Keras Layer output
         x_view = series_metadata_input[:, 2:3]
-        view_code = layers.Activation('linear', name=f"get_view_code_{suffix}")(x_view)
+        view_code = layers.Activation(
+            'linear',
+            name=f"get_view_code_{suffix}"
+        )(x_view)
 
         # Add an Embedding layer for the view code
         # input_dim = 3 (There are only 3 anatomical views)

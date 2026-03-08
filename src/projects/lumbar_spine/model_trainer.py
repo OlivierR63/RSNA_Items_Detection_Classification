@@ -54,6 +54,11 @@ class ModelTrainer:
     proactive memory monitoring to ensure stability when processing large 
     3D medical imaging volumes.
     """
+
+    # Single source of truth for filenames
+    CHECKPOINT_FILENAME = "model_checkpoint.keras"
+    BEST_MODEL_FILENAME = "best_model.keras"
+
     def __init__(
         self, 
         model: tf.keras.Model, 
@@ -133,10 +138,12 @@ class ModelTrainer:
             _ = self._train_with_callbacks()
 
             logger.info(
-                f"Model saved to {self._config['paths']['checkpoint']}",
+                f"Model saved to {self._config['paths']['checkpoint']}/model_checkpoint.keras",
                 extra={
                     "status": "success",
-                    "model_path": str(Path(self._config["paths"]["checkpoint"]))
+                    "model_path": str(
+                        Path(self._config["paths"]["checkpoint"])/"model_checkpoint.keras"
+                    )
                 }
             )
 
@@ -275,8 +282,9 @@ class ModelTrainer:
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        last_path = Path(self._config["paths"].get("checkpoint", "checkpoints")).resolve()
-        best_path = last_path.parent / "best_model.keras"
+        checkpoint_dir = Path(self._config["paths"].get("checkpoint", "checkpoints")).resolve()
+        last_path = checkpoint_dir / self.CHECKPOINT_FILENAME
+        best_path = checkpoint_dir / self.BEST_MODEL_FILENAME
 
         # Initialize your custom hardware and metrics monitor
         training_progress_callback = LogTrainingCallbacks(logger)
@@ -296,8 +304,8 @@ class ModelTrainer:
             on_epoch_begin=lambda epoch, logs: self._dataset_manager._current_epoch_var.assign(epoch)
         )
 
-        hyperparameters = self._config['training'].get('hyperparameters', None)
-        if hyperparameters is None:
+        hyperparam_cfg = self._config['training'].get('hyperparameters', None)
+        if hyperparam_cfg is None:
             error_msg = (
                 "Fatal error in prepare_training_and_validation_datasets: "
                 "the setting variable 'training -> hyperparameters' is required "
@@ -330,7 +338,7 @@ class ModelTrainer:
             # Stop training if validation loss plateaus.
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=hyperparameters['patience'],
+                patience=hyperparam_cfg['patience'],
                 restore_best_weights=True,
                 verbose=1
             ),
@@ -348,7 +356,7 @@ class ModelTrainer:
 
         # Calculate steps_per_epoch and validation_step, since the dataset
         # uses .repeat()  (infinite stream)
-        batch_size = hyperparameters.get('batch_size', 1)
+        batch_size = hyperparam_cfg.get('batch_size', 1)
 
         if batch_size <= 0:
             msg_error = (
@@ -364,8 +372,8 @@ class ModelTrainer:
         logger.info(
             f"Starting model training: {steps_per_epoch} steps/epoch, {validation_steps} validation steps.",
             extra={
-                "epochs": hyperparameters.get("epochs", 1),
-                "batch_size": hyperparameters["batch_size"]
+                "epochs": hyperparam_cfg.get("epochs", 1),
+                "batch_size": hyperparam_cfg["batch_size"]
             }
         )
 
@@ -377,7 +385,7 @@ class ModelTrainer:
             # Execute the training loop
             history = self._model.fit(
                 self._train_dataset,
-                epochs=hyperparameters["epochs"],
+                epochs=hyperparam_cfg["epochs"],
                 steps_per_epoch=steps_per_epoch,
                 validation_data=self._validation_dataset,
                 validation_steps=validation_steps,

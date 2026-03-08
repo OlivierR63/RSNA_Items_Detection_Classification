@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import tensorflow as tf
-from tensorflow.keras import layers
+from keras import layers
 from src.core.models.model_3d import BaseAggregator
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
 
@@ -17,25 +16,6 @@ class Conv3DAggregator(BaseAggregator):
         super().__init__(config, logger)
         self._series_depth = series_depth
 
-    def _dynamic_padding(self, tensor):
-        # Input shape: [Batch, Sequence, Height, Width, Channels]
-        shape = tf.shape(tensor)
-        current_sequence_length = shape[1]
-
-        # Calculate how many frames are missing
-        padding_needed = tf.maximum(0, self._series_depth - current_sequence_length)
-
-        # Pad only the 'Sequence' dimension (index 1) at the end
-        # Padding format: [[before, after], [before, after], ...]
-        paddings = [[0, 0], [0, padding_needed], [0, 0], [0, 0], [0, 0]]
-        
-        padded_tensors = tf.pad(tensor, paddings, mode='CONSTANT', constant_values=0)
-
-        padded_tensors.set_shape([None, self._series_depth, 7, 7, 1280])
-
-        # Clip the sequence if it exceeds target_depth and fix the static shape
-        return padded_tensors[:, :self._series_depth, :, :, :]
-
 
     def build(self, x, suffix=""):
         """
@@ -48,7 +28,6 @@ class Conv3DAggregator(BaseAggregator):
         height, width, channels = input_cfg[0], input_cfg[1], input_cfg[2]
 
         # 2. Use the custom layer instead of Lambda
-        # This replaces _pad_and_fix_shape and _dynamic_padding
         x_lay = TemporalPaddingLayer(
             target_depth=self._series_depth,
             height=height,
