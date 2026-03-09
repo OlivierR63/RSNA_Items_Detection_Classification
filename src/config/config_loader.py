@@ -68,7 +68,6 @@ class ConfigLoader:
                     # Resolve path relative to the config file location
                     resolved_path = (config_dir / val).resolve()
                     paths_config[key] = str(resolved_path)
-                    print(f"DEBUG: Resolved {key} to {paths_config[key]}")
 
         # --- Resolve CSV File Paths ---
         # Handle nested dictionary for CSV file locations
@@ -79,7 +78,6 @@ class ConfigLoader:
                 if isinstance(val, str) and val.startswith('.'):
                     resolved_csv = (config_dir / val).resolve()
                     csv_dict[csv_key] = str(resolved_csv)
-                    print(f"DEBUG: Resolved CSV {csv_key} to {csv_dict[csv_key]}")
 
     def get_value(self, key: str, default: str = None) -> Any:
         """

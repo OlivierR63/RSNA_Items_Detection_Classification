@@ -71,7 +71,7 @@ def calculate_max_series_depth(logger: logging.Logger=None) -> int:
         except Exception as e:
             if logger:
                 warning_msg = f"Cache read failed, recalculating: {e}"
-                logger.debug(warning_msg)
+                logger.warning(warning_msg)
             pass
     
     # Depth calculation (Only if series_depth has not been recovered from the cache)
