@@ -34,6 +34,7 @@ class CSVMetadataHandler:
         dicom_studies_dir:str,
         description: str,
         label_coordinates: str,
+        label_enriched: str,
         train: str,
         config: dict,
         logger: Optional[logging.Logger] = None
@@ -68,7 +69,7 @@ class CSVMetadataHandler:
         self._format_cache = {}
 
         # Setup file paths
-        self._setup_paths(description, label_coordinates, train)
+        self._setup_paths(description, label_coordinates, label_enriched, train)
 
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
@@ -76,6 +77,7 @@ class CSVMetadataHandler:
     def _setup_paths(self,
         description: str,
         label_coordinates: str,
+        label_enriched: str,
         train: str
     ) -> None:
         """
@@ -85,7 +87,7 @@ class CSVMetadataHandler:
             'description': self._root_dir / description,
             'train': self._root_dir / train,
             'label_raw': self._root_dir / label_coordinates,
-            'label_enriched': (self._root_dir / label_coordinates).parent.resolve() / "train_label_coordinates_format.csv"
+            'label_enriched': self._root_dir / label_enriched
         }
 
     def _load_and_cleanse_data(self) -> None:
