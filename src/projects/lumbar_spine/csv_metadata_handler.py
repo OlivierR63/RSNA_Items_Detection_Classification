@@ -59,12 +59,7 @@ class CSVMetadataHandler:
             "Initializing CSVMetadataHandler object",
             extra={
                 "action": "init",
-                "files": {
-                    "description": description_path,
-                    "label_coordinates": label_coords_path,
-                    "label_enriched": label_enriched_path,
-                    "train": train_path
-                }
+                "paths": {key: str(val) for key, val in self._paths_dict.items()}
             }
         )
 
@@ -90,17 +85,21 @@ class CSVMetadataHandler:
         Defines paths for raw data and the enriched version (cache)
         """
 
-        description_path = self._root_dir / description if description.startswith('.') else description
-        label_raw_path = self._root_dir / label_coordinates if label_coordinates.startswith('.') else label_coordinates
-        label_enriched_path = self._root_dir / label_enriched if label_enriched.startswith('.') else label_enriched
-        train_path = self._root_dir / train if train.startswith('.') else train
-
-        self._paths_dict = {
-            'description': description_path,
-            'train': train_path,
-            'label_raw': label_raw_path,
-            'label_enriched': label_enriched_path
+        raw_paths = {
+            'description': description,
+            'train': train,
+            'label_raw': label_coordinates,
+            'label_enriched': label_enriched
         }
+
+        self._paths_dict = {}
+        for key, original_path in raw_paths.items():
+            # If the path is relative (e.g., "train.csv"), it is joined with root_dir.
+            path = Path(original_path)
+
+            # If it is already an absolute path (e.g., "/kaggle/input/..."),
+            # the / operator leaves it unchanged.
+            self._paths_dict[key] = self._root_dir / path
 
     def _load_and_cleanse_data(self) -> None:
         """
