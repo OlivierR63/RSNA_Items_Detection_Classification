@@ -10,7 +10,7 @@ paths:
   csv:
     description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
     label_coordinates: "../../data/lumbar_spine/csv/train_label_coordinates.csv"
-    label_enriched: "../../data/lumbar_spine/csv/train_label_coordinates.csv"
+    label_enriched: "../../data/lumbar_spine/csv/train_label_coordinates_format.csv"
     train: "../../data/lumbar_spine/csv/train.csv"
 
 # ----------------- Data Engineering ----------------------

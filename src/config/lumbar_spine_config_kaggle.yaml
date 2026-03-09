@@ -9,7 +9,7 @@ paths:
   csv:
     description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
-    label_enriched: "/kaggle/working/csv_file/train_label_coordinates.csv"
+    label_enriched: "/kaggle/working/csv_file/train_label_coordinates_format.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
 
 # ----------------- Data Engineering ----------------------

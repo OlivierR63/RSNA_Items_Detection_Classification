@@ -50,19 +50,6 @@ class CSVMetadataHandler:
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
-        description_path = Path(root_dir) / description if description.startswith('.') else description
-        label_coords_path = Path(root_dir) / label_coordinates if label_coordinates.startswith('.') else label_coordinates
-        label_enriched_path = Path(root_dir) / label_enriched if label_enriched.startswith('.') else label_enriched
-        train_path = Path(root_dir) / train if train.startswith('.') else train
-
-        self._logger.info(
-            "Initializing CSVMetadataHandler object",
-            extra={
-                "action": "init",
-                "paths": {key: str(val) for key, val in self._paths_dict.items()}
-            }
-        )
-
         # Load and ensure all data is treated as string initially to prevent merging errors.
         self._root_dir = Path(root_dir)
         self._dicom_studies_dir = Path(dicom_studies_dir)
@@ -74,6 +61,14 @@ class CSVMetadataHandler:
 
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
+
+        self._logger.info(
+            "Initializing CSVMetadataHandler object",
+            extra={
+                "action": "init",
+                "paths": {key: str(val) for key, val in self._paths_dict.items()}
+            }
+        )
 
     def _setup_paths(self,
         description: str,
