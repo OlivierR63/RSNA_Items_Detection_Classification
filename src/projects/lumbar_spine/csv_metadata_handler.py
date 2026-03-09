@@ -90,7 +90,7 @@ class CSVMetadataHandler:
         Defines paths for raw data and the enriched version (cache)
         """
 
-        description_path = self._root_dir / description if description.starwith('.') else description
+        description_path = self._root_dir / description if description.startswith('.') else description
         label_raw_path = self._root_dir / label_coordinates if label_coordinates.startswith('.') else label_coordinates
         label_enriched_path = self._root_dir / label_enriched if label_enriched.startswith('.') else label_enriched
         train_path = self._root_dir / train if train.startswith('.') else train
