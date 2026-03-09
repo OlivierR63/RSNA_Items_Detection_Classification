@@ -63,8 +63,6 @@ def setup_config_symlink(config_dir_path: str) -> None:
         
         # Create the link (pointing from main_config to target_file)
         main_config.symlink_to(target_file)
-        print(f"Environment: {'Kaggle' if is_kaggle else 'Local/Windows'}")
-        print(f"Linked: {main_config.name} -> {target_name}")
         
     except Exception as e:
         print(f"Failed to create symlink: {e}")
