@@ -316,10 +316,12 @@ class CSVMetadataHandler:
         # 2. Retrieve file formats in parralel
         self._logger.info("Starting parallel DICOM format inspection")
 
-        bool_1 = 'actual_file_format' not in data_df
-        bool_2 = data_df['actual_file_format'].dropna().empty
+        if 'actual_file_format' not in data_df.columns:
+            must_inspect = True
+        else:
+            must_inspect = data_df['actual_file_format'].dropna().empty
 
-        if bool_1 or bool_2:
+        if must_inspect:
             # The dataframe is tranformed in a list of dictionnaries for the multithreading.
             records = data_df.to_dict('records')
 
