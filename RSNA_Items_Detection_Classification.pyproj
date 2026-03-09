@@ -141,7 +141,6 @@
     <Content Include="scripts\run_pipeline.ps1" />
     <Content Include="scripts\setup_environment.ps1" />
     <Content Include="src\config\brain_aneuvrysm_config.yaml" />
-    <Content Include="src\config\lumbar_spine_config.yaml" />
     <Content Include="src\config\lumbar_spine_config _kaggle.yaml" />
     <Content Include="src\config\lumbar_spine_config_windows.yaml" />
     <Content Include="src\projects\intracranial_aneurysm\__init__.py %28brain_aneuvrysm%29" />

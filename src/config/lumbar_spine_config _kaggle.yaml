@@ -1,15 +1,15 @@
 # ----------------- Environmental & Paths -----------------
 paths:
-  dicom_studies: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_images"
+  dicom_studies: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_images"
   tfrecord: "/kaggle/working/lumbar_spine/tfrecords"
   output: "/kaggle/working/lumbar_spine/output/"
   checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
   log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
   inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
   csv:
-    description: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
-    label_coordinates: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
-    train: "/kaggle/input/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
+    description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
+    label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
+    train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
