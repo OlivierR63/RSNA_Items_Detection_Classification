@@ -50,7 +50,7 @@ class CSVMetadataHandler:
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
-        description_path = Path(root_dir) / description if description.starwith('.') else description
+        description_path = Path(root_dir) / description if description.startwith('.') else description
         label_coords_path = Path(root_dir) / label_coordinates if label_coordinates.startwith('.') else label_coordinates
         label_enriched_path = Path(root_dir) / label_enriched if label_enriched.startwith('.') else label_enriched
         train_path = Path(root_dir) / train if train.startwith('.') else train
