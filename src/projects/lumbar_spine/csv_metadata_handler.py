@@ -50,16 +50,22 @@ class CSVMetadataHandler:
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
+        description_path = Path(root_dir) / description if description.starwith('.') else description
+        label_coords_path = Path(root_dir) / label_coordinates if label_coordinates.startwith('.') else label_coordinates
+        label_enriched_path = Path(root_dir) / label_enriched if label_enriched.startwith('.') else label_enriched
+        train_path = Path(root_dir) / train if train.startwith('.') else train
+
         self._logger.info(
             "Initializing CSVMetadataHandler object",
             extra={
-                    "action": "init",
-                    "files": {
-                                 "description": Path(root_dir) / description,
-                                 "label_coordinates": Path(root_dir) / label_coordinates,
-                                 "train": Path(root_dir) / train
-                              }
-                   }
+                "action": "init",
+                "files": {
+                    "description": description_path,
+                    "label_coordinates": label_coords_path,
+                    "label_enriched": label_enriched_path,
+                    "train": train_path
+                }
+            }
         )
 
         # Load and ensure all data is treated as string initially to prevent merging errors.
@@ -81,13 +87,19 @@ class CSVMetadataHandler:
         train: str
     ) -> None:
         """
-        Defines paths for raw data an dthe enriched version (cache)
+        Defines paths for raw data and the enriched version (cache)
         """
+
+        description_path = self._root_dir / description if description.starwith('.') else description
+        label_raw_path = self._root_dir / label_coordinates if label_coordinates.startwith('.') else label_coordinates
+        label_enriched_path = self._root_dir / label_enriched if label_enriched.startwith('.') else label_enriched
+        train_path = self._root_dir / train if train.startwith('.') else train
+
         self._paths_dict = {
-            'description': self._root_dir / description,
-            'train': self._root_dir / train,
-            'label_raw': self._root_dir / label_coordinates,
-            'label_enriched': self._root_dir / label_enriched
+            'description': description_path,
+            'train': train_path,
+            'label_raw': label_raw_path,
+            'label_enriched': label_enriched_path
         }
 
     def _load_and_cleanse_data(self) -> None:
@@ -141,7 +153,11 @@ class CSVMetadataHandler:
 
             if not self._paths_dict['label_enriched'].is_file():
                 self._label_coords_df = self._scale_series_format_locations(self._label_coords_df)
-                self._label_coords_df.to_csv(self._paths_dict['label_enriched'])
+
+                output_path = self._paths_dict['label_enriched']
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                self._label_coords_df.to_csv(output_path, index=False)
 
         except ValueError as e:
             self._logger.error(
