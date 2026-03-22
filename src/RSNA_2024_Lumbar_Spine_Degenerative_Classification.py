@@ -1,54 +1,47 @@
 # coding: utf-8
 
-import os
-
-# Create a temp folder on your F: drive if it doesn't exist
-#os.environ['TMPDIR'] = 'F:\\temp_tf'
-#os.environ['TEMP'] = 'F:\\temp_tf'
-#os.environ['TMP'] = 'F:\\temp_tf'
-
-# Identification of the environment to best fit the ressources
-is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
-
-# Use 7 threads on local PC, but limit to 4 on Kaggle to avoid CPU overload
-cpu_threads = '4' if is_kaggle else '7'
-
-
-os.environ['TF_NUM_INTEROP_THREADS'] = cpu_threads # Force the number of logical cores.
-os.environ['TF_NUM_INTRAOP_THREADS'] = cpu_threads
-os.environ["OMP_NUM_THREADS"] = cpu_threads
-os.environ["MKL_NUM_THREADS"] = cpu_threads
-
-# ---------------- Environmental configuration (before any TF import) -----------------------
-# Suppress TensorFlow C++ environmental logs
-# '0' = all logs (default), '1' = filter INFO, '2' = filter INFO & WARNING, '3' = filter all including ERROR
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-# Disable oneDNN custom operations messages
-# This prevents warnings regarding slight numerical differences due to floating-point round-off
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
 # ----------------- Standard imports --------------------------------------------------------
 import signal
 import sys
 import logging
-import gc
 from pathlib import Path
+from keras.models import load_model
+
+from src.core.utils.logger import setup_logger, get_current_logger
+from src.core.utils.system_stream_tee import SystemStreamTee
+from src.core.utils.clean_logs import clean_old_logs
+from src.core.models.model_factory import ModelFactory
+from src.projects.lumbar_spine.model_trainer import ModelTrainer
+from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
+    rsna_weighted_log_loss,
+    RSNAKaggleMetric
+)
+from src.config.config_loader import ConfigLoader
+
+# ----------------- TensorFlow and projects imports -----------------------------------------
+import tensorflow as tf
+import os
+
 
 def setup_config_symlink(config_dir_path: str) -> None:
     """
     Automates the creation of a symbolic link for the configuration file
     based on the execution environment (Kaggle vs. Windows).
-    
+
     Args:
         config_dir_path (str): Absolute path to the directory containing YAML files.
     """
     config_dir = Path(config_dir_path).resolve()
     main_config = config_dir / "lumbar_spine_config.yaml"
-    
+
     # Identify the environment
     is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
-    target_name = "lumbar_spine_config_kaggle.yaml" if is_kaggle else "lumbar_spine_config_windows.yaml"
+
+    if is_kaggle:
+        target_name = "lumbar_spine_config_kaggle.yaml"
+    else:
+        target_name = "lumbar_spine_config_windows.yaml"
+
     target_file = config_dir / target_name
 
     # Safety check: does the target source file exist?
@@ -60,15 +53,13 @@ def setup_config_symlink(config_dir_path: str) -> None:
     try:
         if main_config.is_symlink() or main_config.exists():
             main_config.unlink()  # Remove existing file or broken link
-        
+
         # Create the link (pointing from main_config to target_file)
         main_config.symlink_to(target_file)
-        
+
     except Exception as e:
         print(f"Failed to create symlink: {e}")
 
-# ----------------- Project-specific utility imports (No TF here) ---------------------------
-from src.config.config_loader import ConfigLoader
 
 # Select the proper Yaml config file, depending on the current platform : WINDOWS or Kaggle
 setup_config_symlink("src/config")
@@ -78,36 +69,21 @@ setup_config_symlink("src/config")
 config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
 config = config_loader.get()
 
-# ----------------- TensorFlow and projects imports -----------------------------------------
-import tensorflow as tf
-
-tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)  
-tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
-
 # Apply global TF settings from the config
 training_cfg = config.get('training', None)
 if training_cfg is None:
     error_msg = (
-        "Fatal error in load_model: "
+        "Fatal error: "
         "the setting variable 'training' is required "
         "but was not found. Please check your YAML file structure."
     )
     raise ValueError(error_msg)
 
-compilation_cfg = training_cfg.get('compilation', None)
+compilation_cfg = config.get('compilation', None)
 if compilation_cfg is None:
     error_msg = (
-        "Fatal error in load_model: "
+        "Fatal error: "
         "the setting variable 'training -> compilation' is required "
-        "but was not found. Please check your YAML file structure."
-    )
-    raise ValueError(error_msg)
-
-hyperparam_cfg = training_cfg.get('hyperparameters', None)
-if hyperparam_cfg is None:
-    error_msg = (
-        "Fatal error in load_model: "
-        "the setting variable 'training -> hyperparameters' is required "
         "but was not found. Please check your YAML file structure."
     )
     raise ValueError(error_msg)
@@ -122,19 +98,11 @@ if run_eagerly_val not in [True, False]:
     raise ValueError(error_msg)
 
 tf.config.run_functions_eagerly(run_eagerly_val)
-tf.data.experimental.enable_debug_mode() # Optionnel mais aide pour tf.data
+tf.data.experimental.enable_debug_mode()  # Optional but helpful for tf.data
 
 # Mute Python-level TensorFlow/Keras warnings
 # This handles warnings such as deprecated 'tf.placeholder' calls within internal Keras modules
 tf.get_logger().setLevel(logging.ERROR)
-
-from src.core.utils.logger import setup_logger, get_current_logger
-from src.core.utils.system_stream_tee import SystemStreamTee
-from src.core.utils.clean_logs import clean_old_logs
-from src.core.models.model_factory import ModelFactory
-from src.projects.lumbar_spine.model_trainer import ModelTrainer
-from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import rsna_weighted_log_loss, RSNAKaggleMetric
-from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
 
 
 def handle_interrupt(signum, frame):
@@ -149,57 +117,94 @@ def handle_interrupt(signum, frame):
     sys.exit(0)
 
 
-def load_model(
+def get_or_build_model(
     depth: int,
     config: dict,
     logger: logging.Logger
 ) -> tf.keras.Model:
 
     """
-    Retrieves a pre-existing model from a checkpoint or initializes a new one, 
+    Retrieves a pre-existing model from a checkpoint or initializes a new one,
     with an automated weight restoration fallback.
 
-    This function implements a robust "Resume Training" logic designed to handle 
-    structural breaking changes (e.g., Lambda layer serialization issues). 
+    This function implements a robust "Resume Training" logic designed to handle
+    structural breaking changes (e.g., Lambda layer serialization issues).
     It operates in three priority stages:
-    1. Full Restore: Attempts to load the complete Keras model (architecture + weights + optimizer state).
-    2. Weight Salvage: If a full load fails due to serialization errors, it builds a fresh 
-       architecture from the ModelFactory and injects existing weights by name, then saves 
+    1. Full Restore: Attempts to load the complete Keras model
+       (architecture + weights + optimizer state).
+    2. Weight Salvage: If a full load fails due to serialization errors, it builds a fresh
+       architecture from the ModelFactory and injects existing weights by name, then saves
        a "fixed" version of the model.
     3. Fresh Start: If no checkpoint exists, it initializes and compiles a new model from scratch.
 
     Args:
-        depth (int): The maximum number of slices per imaging series, 
+        depth (int): The maximum number of slices per imaging series,
             used for 3D convolution input shapes.
-        config (dict): Global configuration dictionary containing paths, 
+        config (dict): Global configuration dictionary containing paths,
             hyperparameters, and model settings.
-        logger (logging.Logger): Logger instance for status 
+        logger (logging.Logger): Logger instance for status
             tracking and error reporting.
 
     Returns:
-        tf.keras.Model: A compiled TensorFlow Keras model ready for training, 
+        tf.keras.Model: A compiled TensorFlow Keras model ready for training,
             potentially restored from a previous state.
 
     Raises:
-        ValueError: If the series depth is invalid (None or <= 0) or if critical 
+        ValueError: If the series depth is invalid (None or <= 0) or if critical
             configuration variables are missing.
         Exception: If a fatal error occurs during model factory building or compilation.
     """
 
-    if depth is None or depth <= 0 :
+    if depth is None or depth <= 0:
         error_msg = (
-            "Function load_model failed. Null depth parameter"
+            "Function get_or_build_model failed. Null depth parameter"
         )
         logger.error(error_msg)
         raise ValueError(error_msg)
 
     # Extract configs locally within the function to ensure independence
-    training_cfg = config.get('training', {})
-    hyperparam_cfg = training_cfg.get('hyperparameters', {})
-    compilation_cfg = training_cfg.get('compilation', {})
-
     try:
-        max_records = int(config['data_specs'].get('max_records_per_frame', -1))
+        optimizer_cfg = config.get('optimizer', None)
+
+        if optimizer_cfg is None:
+            error_msg = (
+                "Fatal error: the setting variable 'optimizer' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        compilation_cfg = config.get('compilation', None)
+
+        if compilation_cfg is None:
+            error_msg = (
+                "Fatal error: the setting variable 'compilation' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        callbacks_cfg = config.get('callbacks', None)
+
+        if callbacks_cfg is None:
+            error_msg = (
+                "Fatal error: the setting variable 'callbacks' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        data_specs_cfg = config.get('data_specs', None)
+
+        if data_specs_cfg is None:
+            error_msg = (
+                "Fatal error: the setting variable 'data_specs' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        max_records = int(data_specs_cfg.get('max_records_per_frame', -1))
         if max_records < 0:
             error_msg = (
                 "Fatal error: the setting variable 'data_specs -> max_records_per_frame' "
@@ -208,8 +213,8 @@ def load_model(
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        learning_rate = float(hyperparam_cfg.get('learning_rate', -1))
-        clip_norm = float(hyperparam_cfg.get('clipnorm', -1))
+        learning_rate = float(optimizer_cfg.get('learning_rate', -1))
+        clip_norm = float(optimizer_cfg.get('clipnorm', -1))
 
     except (ValueError, TypeError) as e:
         raise ValueError(f"Configuration type error: {e}")
@@ -223,10 +228,10 @@ def load_model(
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # Select the checkpoint loading policy: 'best' for the lowest validation loss 
+    # Select the checkpoint loading policy: 'best' for the lowest validation loss
     # or 'last' to continue from the most recent epoch.
     checkpoint_dir = Path(config["paths"].get("checkpoint", "checkpoints")).resolve()
-    resume_mode = hyperparam_cfg.get("resume_mode", "last")
+    resume_mode = callbacks_cfg.get("resume_mode", "last")
 
     if resume_mode not in ["best", "last"]:
         error_msg = (
@@ -236,7 +241,7 @@ def load_model(
         )
         logger.critical(error_msg)
         raise ValueError(error_msg)
-    
+
     # Define filenames based on your ModelTrainer saving logic
     best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
     last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
@@ -255,10 +260,10 @@ def load_model(
             "Loading for resume..."
         )
         logger.info(info_msg)
-        
+
         try:
             tf.keras.backend.clear_session()
-            model = tf.keras.models.load_model(
+            model = load_model(
                 checkpoint_full_path,
                 custom_objects=ModelFactory.CUSTOM_OBJECTS,
                 safe_mode=False,
@@ -266,7 +271,7 @@ def load_model(
             return model
 
         except Exception as e_1:
-            logger.warning(f"Failed to load checkpoint: {e_1}. Trying to restore weights.")
+            logger.warning(f"Failed to load existing model: {e_1}. Trying to restore weights.")
 
     try:
         info_msg = "No existing model found. Building a new model from factory."
@@ -281,7 +286,7 @@ def load_model(
 
     except Exception as e_2:
         msg_error = f"Fatal error. Failed to build new model: {e_2}"
-        logger.error(msg_error, extra ={"status": "failed", "error": str({e_2})}, exc_info=True)
+        logger.error(msg_error, extra={"status": "failed", "error": str({e_2})}, exc_info=True)
         raise RuntimeError(msg_error)
 
     try:
@@ -291,7 +296,10 @@ def load_model(
 
             new_file = checkpoint_dir / "model_restored_fixed.keras"
             model.save(new_file)
-            logger.info("Model saved as 'model_restored_fixed.keras'", extra={"status": "recovered"})
+            logger.info(
+                "Model saved as 'model_restored_fixed.keras'",
+                extra={"status": "recovered"}
+            )
 
     except Exception as e_3:
         msg_warning = f"Warning:  Unable to restore the weights. Falling back to factory. {e_3}"
@@ -309,14 +317,14 @@ def load_model(
         }
 
         # --- Define Loss Weights ---
-        # We give more weight to location (5.0) because the coordinate regression 
+        # We give more weight to location (5.0) because the coordinate regression
         # is currently struggling to converge compared to classification.
 
         loss_weights_settings = compilation_cfg.get('loss_weights', None)
 
         if loss_weights_settings is None:
             error_msg = (
-                "Fatal error in load_model: "
+                "Fatal error in get_çor_build_model: "
                 "the setting variable 'training -> compilation -> loss_weights' is required "
                 "but was not found. Please check your YAML file structure."
             )
@@ -325,21 +333,32 @@ def load_model(
 
         loss_weights = {
             "severity_output": loss_weights_settings["severity_output"],
-            "location_output": loss_weights_settings["location_output"] 
+            "location_output": loss_weights_settings["location_output"]
         }
 
         # --- Define Metrics ---
-        rsna_score = RSNAKaggleMetric()
+        rsna_score = RSNAKaggleMetric(logger=logger)
         metrics = {
             "severity_output": [rsna_score, "accuracy"],  # Added accuracy for a quick baseline
-            "location_output": [tf.keras.metrics.MeanAbsoluteError(name="mae")]
+            "location_output": [tf.keras.metrics.MeanAbsoluteError(name="mae")],
+            "study_id_output": None
         }
 
         # --- Model Compilation ---
-        # Adam optimizer with gradient clipping to prevent exploding gradients 
+        # Adam optimizer with gradient clipping to prevent exploding gradients
         # during multi-task learning.
+        optimizers = {
+            "adam": tf.keras.optimizers.Adam
+        }
+
+        optim = optimizer_cfg.get('type', None)
+        if optim not in optimizers:
+            msg_error = f"Unsupported optimizer: {optim}"
+            logger.error(msg_error, exc_info=True)
+            raise ValueError(msg_error)
+
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(
+            optimizer=optimizers[optim](
                 learning_rate=learning_rate,
                 clipnorm=clip_norm
             ),
@@ -353,9 +372,9 @@ def load_model(
         logger.info(
             "New model compiled with weighted losses.",
             extra={
-                "optimizer": "Adam",
+                "optimizer": optim,
                 "learning_rate": learning_rate,
-                "clip_norm":clip_norm
+                "clip_norm": clip_norm
             }
         )
         return model
@@ -381,57 +400,122 @@ def main():
     config: dict = config_loader.get()
 
     # 2. Allow to parallelize operations on the requested number of cores
-    #nb_cores = config['systems'].get('nb_cores', 0)
-    #tf.config.threading.set_intra_op_parallelism_threads(nb_cores)  
-    #tf.config.threading.set_inter_op_parallelism_threads(nb_cores)
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
+    # Identification of the environment to best fit the resources
+    is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
+
+    system_cfg = config.get("system", None)
+    if system_cfg is None:
+        error_msg = (
+            "Fatal error: the parameter 'system' is required but was not found. "
+            "Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+    nb_cores_config = system_cfg.get('nb_cores', 0)
+
+    # Use 7 threads on local PC, but limit to 4 on Kaggle to avoid CPU overload
+    cpu_threads = nb_cores_config if is_kaggle else 7
+
+    os.environ["OMP_NUM_THREADS"] = str(cpu_threads)
+    os.environ["MKL_NUM_THREADS"] = str(cpu_threads)
+    tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)
+    tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
+
+    # ---------------- Environmental configuration (before any TF import) -----------------------
+    # Suppress TensorFlow C++ environmental logs
+    #   '0' = all logs (default),
+    #   '1' = filter INFO,
+    #   '2' = filter INFO & WARNING,
+    #   '3' = filter all including ERROR
+
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+    # Disable oneDNN custom operations messages
+    # This prevents warnings regarding slight numerical differences due to floating-point round-off
+    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+    paths_cfg = config.get('paths', None)
+    if paths_cfg is None:
+        error_msg = (
+            "Fatal error: the parameter 'paths' is required but was not found. "
+            "Please check your YAML file structure."
+        )
 
     # Mirror all the console and error output toward a dedicated file
-    system_stream_tee_path = config['paths'].get('log_mirror', None)
+    system_stream_tee_path = paths_cfg.get('log_mirror', None)
     if system_stream_tee_path is None:
         error_msg = (
             "Fatal error: the parameter 'paths -> log_mirror' is required but was not found. "
             "Please check your YAML file structure."
         )
         raise ValueError(error_msg)
-    
+
     mirror = SystemStreamTee(system_stream_tee_path)
 
     sys.stdout = mirror
     sys.stderr = mirror
 
     # 2. Initialize logger with process-specific context
-    log_dir = config["paths"].get("output", "logs")  # use "logs" as default if not in config.
-    log_dir += "/logs"
+    log_dir = paths_cfg.get("output", None)  # use "logs" as default if not in config.
+    if log_dir is None:
+        error_msg = (
+            "Fatal error: the parameter 'paths -> output' is required but was not found. "
+            "Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    log_dir = log_dir / "logs"
 
     with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
         # The logger is now set up available globally via get_current_logger().
         # It will automatically close at the end of this block.
         logger.info(f"Configuration loaded successfully. Loaded_values: {config}")
-        
+
         try:
-            # Generate TFRecord files if they don't exist
-            file_manager = TFRecordFilesManager(config=config, logger=logger)
-            file_manager.generate_tfrecord_files()
-            depth = file_manager.get_max_series_depth()
+            if config_loader.get_value("series_depth") is None:
+                data_specs_cfg = config_loader.get_value("data_specs", {})
+                percentile_str = data_specs_cfg.get("series_depth_percentile", 95)
 
-            logger.info(f"Max TFRecord files depth (number of DICOM files per series): {depth}")
+                if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
+                    series_depth = config_loader.calculate_series_depth(
+                        tfrecord_dir=paths_cfg["tfrecord"],
+                        dicom_studies_dir=paths_cfg["dicom_studies"],
+                        percentile=int(percentile_str),
+                        logger=logger
+                    )
+                    config_loader.set_value("series_depth", series_depth)
 
-            # At this step, file_manager is no more usefull and must be removed.
-            del file_manager
-            gc.collect()
+            else:
+                series_depth = config_loader.get_value("series_depth")
 
-            # Clear any background memory from the model building phase 
+            info_msg = (
+                "Max TFRecord files depth (number of DICOM files per series): "
+                f"{series_depth}"
+            )
+
+            logger.info(info_msg)
+
+            # Clear any background memory from the model building phase
             # to free up RAM before the data pipeline starts prefetching.
             tf.keras.backend.clear_session()
 
             # Load the compiled model if it already exists. In the other case, generate
             # a new model and compile it.
-            model: tf.keras.Model = load_model(depth, config, logger)
+            model: tf.keras.Model = get_or_build_model(series_depth, config, logger)
 
-            logger.info("Starting training process.",
-                    extra={"status": "started", "log_dir": log_dir})
-            
-            trainer = ModelTrainer(config=config, logger=logger, model=model, model_depth = depth)
+            logger.info(
+                "Starting training process.",
+                extra={"status": "started", "log_dir": log_dir}
+            )
+
+            trainer = ModelTrainer(
+                config=config,
+                logger=logger,
+                model=model,
+                model_depth=series_depth
+            )
+
             trainer.prepare_training_and_validation_datasets()
             trainer.train_model()
 
@@ -445,7 +529,7 @@ def main():
                         extra={"status": "completed"})
 
         # Remove log files older than 30 days
-        log_retention_days = config['system'].get('log_retention_days', None)
+        log_retention_days = system_cfg.get('log_retention_days', None)
 
         if log_retention_days is None:
             error_msg = (
@@ -458,5 +542,5 @@ def main():
         mirror.close()
 
 
-if __name__ == "__main__":    
+if __name__ == "__main__":
     main()

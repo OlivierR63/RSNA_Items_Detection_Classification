@@ -13,11 +13,13 @@ import ast
 from pathlib import Path
 from src.core.utils.logger import log_method
 
+
 def to_tuple(val: str) -> Tuple[int, int]:
     """
     Helper function to manage str vs. tuple
     """
     return ast.literal_eval(val) if isinstance(val, str) else val
+
 
 class CSVMetadataHandler:
     """
@@ -30,9 +32,8 @@ class CSVMetadataHandler:
 
     def __init__(
         self,
-        root_dir: str,
-        dicom_studies_dir:str,
-        description: str,
+        dicom_studies_dir: str,
+        series_description: str,
         label_coordinates: str,
         label_enriched: str,
         train: str,
@@ -43,21 +44,27 @@ class CSVMetadataHandler:
         Initializes the handler by setting up paths and triggering data loading.
 
         Args:
-            description (str): Path to the CSV file containing series descriptions.
-            label_coordinates (str): Path to the CSV file containing label coordinates (x, y).
-            train (str): Path to the CSV file containing training labels (severity levels).
-            logger: Optional logger instance. If None, creates a new one.
+            dicom_studies_dir (str): Path to the DICOM files directory.
+            description (str): Path to the series descriptions CSV.
+            label_coordinates (str): Path to the label coordinates CSV.
+            label_enriched (str): Path to the enriched labels CSV.
+            train (str): Path to the training labels CSV.
+            config (dict): Configuration dictionary for processing.
+            logger (Optional[logging.Logger]): Optional logger instance.
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
         # Load and ensure all data is treated as string initially to prevent merging errors.
-        self._root_dir = Path(root_dir)
         self._dicom_studies_dir = Path(dicom_studies_dir)
         self._config = config
         self._format_cache = {}
+        self._paths_dict: dict[str, Path] = {}
+        self._series_desc_df = None
+        self._label_coords_df = None
+        self._train_df = None
 
         # Setup file paths
-        self._setup_paths(description, label_coordinates, label_enriched, train)
+        self._setup_paths(series_description, label_coordinates, label_enriched, train)
 
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
@@ -70,8 +77,9 @@ class CSVMetadataHandler:
             }
         )
 
-    def _setup_paths(self,
-        description: str,
+    def _setup_paths(
+        self,
+        series_description: str,
         label_coordinates: str,
         label_enriched: str,
         train: str
@@ -81,20 +89,28 @@ class CSVMetadataHandler:
         """
 
         raw_paths = {
-            'description': description,
+            'series_description': series_description,
             'train': train,
             'label_raw': label_coordinates,
             'label_enriched': label_enriched
         }
 
-        self._paths_dict = {}
+        root_dir_cfg = self._config.get("root_dir", None)
+        if root_dir_cfg is None:
+            error_msg = (
+                "Fatal error: the parameter 'root_dir' "
+                "is required but was not found. "
+                "Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
         for key, original_path in raw_paths.items():
             # If the path is relative (e.g., "train.csv"), it is joined with root_dir.
             path = Path(original_path)
 
             # If it is already an absolute path (e.g., "/kaggle/input/..."),
             # the / operator leaves it unchanged.
-            self._paths_dict[key] = self._root_dir / path
+            self._paths_dict[key] = Path(root_dir_cfg) / path
 
     def _load_and_cleanse_data(self) -> None:
         """
@@ -110,7 +126,7 @@ class CSVMetadataHandler:
             ValueError: If numeric columns contain non-convertible standardized strings.
         """
         # Load core metadata files
-        self._series_desc_df = pd.read_csv(self._paths_dict['description'])
+        self._series_desc_df = pd.read_csv(self._paths_dict['series_description'])
         self._train_df = pd.read_csv(self._paths_dict['train'])
 
         # Decide which coordinates file to use
@@ -132,15 +148,15 @@ class CSVMetadataHandler:
             self._series_desc_df[['study_id', 'series_id']] = (
                 self._series_desc_df[['study_id', 'series_id']].astype(int)
             )
-            
+
             # Processing coordinates and formats
             self._label_coords_df = self._filter_null_dataframe_values(self._label_coords_df)
-            
+
             int_cols = ['study_id', 'series_id', 'instance_number']
             self._label_coords_df[int_cols] = (
                 self._label_coords_df[int_cols].astype(int)
             )
-            
+
             self._label_coords_df[['x', 'y']] = (
                 self._label_coords_df[['x', 'y']].astype(float)
             )
@@ -164,8 +180,8 @@ class CSVMetadataHandler:
         if 'actual_file_format' in self._label_coords_df.columns:
             unique_formats = self._label_coords_df['actual_file_format'].unique()
             format_map = {
-                f: ast.literal_eval(f) if isinstance(f, str) else f 
-                for f in unique_formats if pd.notna(f)
+                fmt: ast.literal_eval(fmt.strip()) if isinstance(fmt, str) else fmt
+                for fmt in unique_formats if pd.notna(fmt)
             }
 
             self._label_coords_df['actual_file_format'] = (
@@ -190,22 +206,22 @@ class CSVMetadataHandler:
         """
         Orchestrates the complete metadata pipeline: cleaning, scaling, merging, and encoding.
 
-        This method acts as the central hub for metadata preparation. It processes the raw 
-        CSV files, handles the specific (608, 608) to (640, 640) coordinate translation, 
+        This method acts as the central hub for metadata preparation. It processes the raw
+        CSV files, handles the specific (608, 608) to (640, 640) coordinate translation,
         and performs feature engineering for the deep learning model.
 
         Args:
-            logger (Optional[logging.Logger]): Custom logger to track progress. 
+            logger (Optional[logging.Logger]): Custom logger to track progress.
                 Defaults to the class's internal logger.
 
         Returns:
-            pd.DataFrame: The final, fully encoded and merged DataFrame containing 
+            pd.DataFrame: The final, fully encoded and merged DataFrame containing
                 all features (including 'condition_level') and corrected coordinates.
 
         Note:
-            The feature 'condition_level' is a synthesized index combining 'condition' 
-            and 'level'. It relies on nb_levels = nunique(). This is safe here because 
-            this function is strictly applied to the full reference datasets, ensuring 
+            The feature 'condition_level' is a synthesized index combining 'condition'
+            and 'level'. It relies on nb_levels = nunique(). This is safe here because
+            this function is strictly applied to the full reference datasets, ensuring
             the presence of all possible classes and levels during processing.
         """
 
@@ -235,10 +251,10 @@ class CSVMetadataHandler:
             logger.info("Encoded categorical metadata", extra={"action": "encode_metadata"})
 
             # Create a new feature in metadata_df, as a synthesis of the
-            # features 'condition' and 'description'
+            # features 'condition' and 'series_description'
             nb_conditions_levels = encoded_metadata_df['condition_level'].nunique()
 
-            if nb_conditions_levels != 25: # Assuming 25 levels is the standard
+            if nb_conditions_levels != 25:  # Assuming 25 levels is the standard
                 warning_msg = (
                     f"Unexpected number of levels detected: {nb_conditions_levels}. "
                     "Verify dataset integrity."
@@ -258,7 +274,7 @@ class CSVMetadataHandler:
     def _filter_null_dataframe_values(
         self,
         data_df: pd.DataFrame
-        ) -> pd.DataFrame:
+    ) -> pd.DataFrame:
         """
         Removes null values and standardizes all remaining data into lowercase strings.
 
@@ -278,7 +294,7 @@ class CSVMetadataHandler:
             data_df.dropna()                                # 1. Remove actual NaN/None values
             .astype(str)                                    # 2. Convert remaining data to strings
             .apply(lambda s: s.str.lower().str.strip())     # 3. Standardize text format
-            .replace('nan', pd.NA)                          # 4. Handle cases where "nan" string appeared
+            .replace('nan', pd.NA)                          # 4. Handle cases with "nan" strings
             .dropna()                                       # 5. Final sweep of newly created nulls
         )
 
@@ -294,38 +310,38 @@ class CSVMetadataHandler:
         This method performs a multi-step cleaning and standardization process:
 
         2. Inspects DICOM file headers in parallel to retrieve actual pixel dimensions.
-        3. Identifies the target format for each series (based on the largest dimensions 
+        3. Identifies the target format for each series (based on the largest dimensions
            found within that series).
-        4. Calculates and applies a centered padding offset to (x, y) coordinates for 
+        4. Calculates and applies a centered padding offset to (x, y) coordinates for
            any file not matching the series' target format.
 
         Args:
-            data_df (pd.DataFrame): The raw metadata DataFrame containing 
+            data_df (pd.DataFrame): The raw metadata DataFrame containing
                 at least 'study_id', 'series_id', 'instance_number', 'x', and 'y'.
                 This DataFrame is supposedly cleansed
 
         Returns:
-            pd.DataFrame: A sanitized DataFrame with 'actual_file_format' and 
+            pd.DataFrame: A sanitized DataFrame with 'actual_file_format' and
                 'expected_file_format' columns, and updated unified coordinates.
 
         Note:
-            A preliminary screening session showed several DICOM file formats used 
-            in the training data. While series are usually consistent, 35 series 
-            contain mixed formats (e.g., 640x640 and 608x608 simultaneously). 
-            
-            To ensure downstream consistency, all files within a series are aligned 
-            to the largest detected format. Coordinates are updated in the DataFrame 
-            to reflect the future centered padding (e.g., a +16 pixel shift for 
-            608 to 640 conversion). 
-            
-            The physical DICOM files remain unchanged at this stage and will be 
+            A preliminary screening session showed several DICOM file formats used
+            in the training data. While series are usually consistent, 35 series
+            contain mixed formats (e.g., 640x640 and 608x608 simultaneously).
+
+            To ensure downstream consistency, all files within a series are aligned
+            to the largest detected format. Coordinates are updated in the DataFrame
+            to reflect the future centered padding (e.g., a +16 pixel shift for
+            608 to 640 conversion).
+
+            The physical DICOM files remain unchanged at this stage and will be
             reformatted during the final image processing pipeline.
         """
 
         # 1. Initial cleansing
         data_df = data_df.copy()
 
-        # 2. Retrieve file formats in parralel
+        # 2. Retrieve file formats in parallel
         self._logger.info("Starting parallel DICOM format inspection")
 
         if 'actual_file_format' not in data_df.columns:
@@ -334,7 +350,7 @@ class CSVMetadataHandler:
             must_inspect = data_df['actual_file_format'].dropna().empty
 
         if must_inspect:
-            # The dataframe is tranformed in a list of dictionnaries for the multithreading.
+            # The dataframe is transformed in a list of dictionaries for the multithreading.
             records = data_df.to_dict('records')
 
             # By default, max_workers=None use the number of processors x5
@@ -348,7 +364,7 @@ class CSVMetadataHandler:
 
         try:
             # 3. Unify format per series
-            # Determine the "expected" format (the largest) for each serie
+            # Determine the "expected" format (the largest) for each series
             series_groups = data_df.groupby('series_id')['actual_file_format']
 
             # Identify mixed series for logging purposes
@@ -398,7 +414,7 @@ class CSVMetadataHandler:
                 extra={"action": "scale_series_format", "error_type": type(e).__name__}
             )
             raise ValueError(f"Data inconsistency during coordinate scaling: {e}")
-        
+
         modified_mask = (offset_x != 0) | (offset_y != 0)
         self._logger.info(f"Coordinate unification complete. {modified_mask.sum()} labels updated.")
 
@@ -414,19 +430,14 @@ class CSVMetadataHandler:
         record: dict
     ) -> Tuple[int, int]:
         """
-        Retrieve DICOM dimensions from dictionnary record
+        Retrieve DICOM dimensions from dictionary record
         """
-        try: 
+        try:
             study_id = int(float(record['study_id']))
             series_id = int(float(record['series_id']))
             instance = int(float(record['instance_number']))
 
             # Create a unique key for this specific image
-            #cache_key = (study_id, series_id, instance)
-
-            #if cache_key in self._format_cache:
-                #return self._format_cache[cache_key]
-
             dcm_file = Path(self._dicom_studies_dir) / f"{study_id}/{series_id}/{instance}.dcm"
             reader = sitk.ImageFileReader()
             reader.SetFileName(str(dcm_file))
@@ -436,10 +447,7 @@ class CSVMetadataHandler:
             # Note : GetSize() returns a tuple (Width, Height, Depth), analog to (x, y, z)
             result = (full_size[0], full_size[1])
 
-            # Store in cache
-            #self._format_cache[cache_key] = result
-
-            return (result) # Returns (Width, Height)
+            return (result)  # Returns (Width, Height)
 
         except Exception as e:
             self._logger.error(
@@ -457,12 +465,16 @@ class CSVMetadataHandler:
 
         self._logger.info("Starting metadata merge process", extra={"action": "merge_metadata"})
         try:
+
             tmp_train_df = self._melt_and_clean_train_df()
             tmp_train_df = self._merge_with_label_coordinates(tmp_train_df)
             merged_df = self._merge_with_series_descriptions(tmp_train_df)
             merged_df = self._normalize_identifier_types(merged_df)
-            self._logger.info("Metadata merge completed successfully",
-                             extra={"status": "success", "final_shape": merged_df.shape})
+
+            self._logger.info(
+                "Metadata merge completed successfully",
+                extra={"status": "success", "final_shape": merged_df.shape}
+            )
             return merged_df
 
         except Exception as e:
@@ -484,7 +496,7 @@ class CSVMetadataHandler:
                 var_name="condition_level",
                 value_name="severity"
             )
-            
+
             if tmp_train_df.empty:
                 error_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
                 self._logger.error(error_msg, exc_info=True, extra={"status": "failed"})
@@ -565,7 +577,7 @@ class CSVMetadataHandler:
             self._logger.error(
                 error_msg,
                 exc_info=True,
-                extra = {"status": "failed", "error": str({e})}
+                extra={"status": "failed", "error": str({e})}
             )
             raise e
 
@@ -595,7 +607,7 @@ class CSVMetadataHandler:
             self._logger.error(
                 error_msg,
                 exc_info=True,
-                extra = {"status": "failed", "error": str({e})}
+                extra={"status": "failed", "error": str({e})}
             )
             raise e
 
@@ -629,10 +641,10 @@ class CSVMetadataHandler:
 
             Args:
                 metadata_df: The DataFrame containing metadata to be converted.
-                            Example column values: {
-                                                        "condition_level": "spinal_canal_stenosis_l1-2",
-                                                        "severity": "Normal/Mild", ...
-                                                    }
+                    Example of column values: {
+                                                "condition_level": "spinal_canal_stenosis_l1-2",
+                                                "severity": "Normal/Mild", ...
+                                                }
 
             Returns:
                 pd.DataFrame: The DataFrame with the specified columns converted to integer values.
@@ -645,11 +657,11 @@ class CSVMetadataHandler:
 
         try:
             if metadata_df.empty:
-                error_msg = "Empty DataFarme"
+                error_msg = "Empty DataFrame"
                 raise ValueError(error_msg)
 
             # Define columns to encode and their corresponding mapping variables
-            columns_to_encode = ["condition_level", "description", "severity"]
+            columns_to_encode = ["condition_level", "series_description", "severity"]
 
             # Create mappings for each column
             mappings = self._create_mappings(metadata_df, columns_to_encode)
@@ -692,13 +704,10 @@ class CSVMetadataHandler:
                 Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
         """
         func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
         logger = logger or self._logger
 
         mappings = {}
-
-        try: 
+        try:
             for column in columns_to_encode:
                 if column not in metadata_df.columns:
                     self._logger.warning(f"Column '{column}' not found in DataFrame. Skipping.")
@@ -706,17 +715,23 @@ class CSVMetadataHandler:
 
                 # Sort values to ensure mapping [0, 1, 2...] is always the same
                 values = sorted(metadata_df[column].dropna().unique().tolist())
-                
-                # We assume self._create_string_to_int_mapper returns an object with a .mapping attribute
+
+                # We assume self._create_string_to_int_mapper returns an object
+                # with a .mapping attribute
                 mapper = self._create_string_to_int_mapper(values)
                 mappings[column] = mapper.mapping
 
-                self._logger.info(f"Created mapping for '{column}': {len(values)} categories found.")
+                self._logger.info(
+                    f"Created mapping for '{column}': {len(values)} categories found."
+                )
 
             return mappings
 
         except Exception as e:
-            error_msg = f"Error in {self.__class__.__name__}.{func_name} while processing column '{column}': {e}"
+            error_msg = (
+                f"Error in {self.__class__.__name__}.{func_name} "
+                f"while processing column '{column}': {e}"
+            )
             self._logger.error(
                 error_msg,
                 exc_info=True
@@ -740,7 +755,9 @@ class CSVMetadataHandler:
         """
         update_metadata_df = metadata_df.copy()
         for column in columns_to_encode:
-            update_metadata_df[column] = update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
+            update_metadata_df[column] = (
+                update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
+            )
 
         return update_metadata_df
 
@@ -759,7 +776,8 @@ class CSVMetadataHandler:
             integer indices (starting from 0).
 
             Args:
-                observed_pathologies_lst (list): A list of strings to be mapped (e.g., ["Normal", "Stenosis"])
+                observed_pathologies_lst (list): A list of strings to be mapped
+                                (e.g., ["Normal", "Stenosis"])
                                 The order of the strings defines their integer value.
 
             Returns:

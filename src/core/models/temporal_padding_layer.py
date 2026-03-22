@@ -1,16 +1,17 @@
 # coding: utf-8
 
 import tensorflow as tf
-from tensorflow.keras import layers
+from keras import layers
+
 
 class TemporalPaddingLayer(layers.Layer):
     """
     Custom Keras layer that ensures a fixed temporal depth for 3D convolutional architectures.
-    
+
     This layer acts as a structural guardrail:
     1. It dynamically pads sequences that are shorter than the target depth.
     2. It truncates sequences that exceed the target depth.
-    3. It forces a static shape definition, which is required by Conv3D layers to 
+    3. It forces a static shape definition, which is required by Conv3D layers to
        initialize their weights during the model compilation phase.
     """
 
@@ -45,18 +46,19 @@ class TemporalPaddingLayer(layers.Layer):
         # Retrieve dynamic shape from the execution graph
         input_shape = tf.shape(x)
         current_depth = input_shape[1]
-        
+
         # Determine the number of zero-frames to add
         padding_needed = tf.maximum(0, self.target_depth - current_depth)
-        
+
         # Create a dynamic padding mask based on the tensor's rank.
-        # This ensures compatibility whether MobileNetV2 outputs 5D (spatial) or 3D (pooled) tensors.
+        # This ensures compatibility whether MobileNetV2 outputs 5D (spatial)
+        # or 3D (pooled) tensors.
         rank = tf.rank(x)
         paddings = tf.zeros([rank, 2], dtype=tf.int32)
-        
+
         # Update the temporal dimension (index 1) in the padding matrix.
         # Format for tf.pad: [[before_0, after_0], [before_1, after_1], ...]
-        update_indices = [[1, 1]] 
+        update_indices = [[1, 1]]
         update_values = [padding_needed]
         paddings = tf.tensor_scatter_nd_update(paddings, update_indices, update_values)
 

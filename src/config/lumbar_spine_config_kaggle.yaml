@@ -15,7 +15,6 @@ paths:
 # ----------------- Data Engineering ----------------------
 data_specs:
   series_depth_percentile: 95
-  slices_input_format: [640, 640, 1]
   max_records_per_frame: 25
   dataset_buffer_size_mb: 100
 

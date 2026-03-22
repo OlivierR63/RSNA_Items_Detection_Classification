@@ -4,13 +4,15 @@ import pandas as pd
 import tensorflow as tf
 import logging
 from pathlib import Path
-from tensorflow.keras import layers, Model
-from src.core.models.conv3d_aggregator import Conv3DAggregator
-from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import rsna_weighted_log_loss, RSNAKaggleMetric
+from keras import layers, Model
+from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
+    rsna_weighted_log_loss,
+    RSNAKaggleMetric
+)
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
-from src.core.models.model_2d import Backbone2D
+from src.core.models.backbone_2d import Backbone2D
+from src.core.models.conv3d_aggregator import Conv3DAggregator
 from typing import Dict, Any, Type
-
 
 
 def minimal_parse(proto):
@@ -22,47 +24,127 @@ def minimal_parse(proto):
     }
     return tf.io.parse_single_example(proto, feature_description)
 
+
+def study_id_zero_link(x):
+    """
+    Create a symbolic link for study_id that doesn't affect gradients.
+    Used to keep the input in the graph for traceability and debugging.
+    """
+    return tf.cast(x, tf.float32)*0.0
+
+
 class ModelFactory:
     """
     Factory class to build and configure the multi-modal RSNA Lumbar Spine model.
     Handles dynamic depth calculation and shared backbone orchestration.
     """
-    CUSTOM_OBJECTS ={
+    CUSTOM_OBJECTS = {
         "TemporalPaddingLayer": TemporalPaddingLayer,
+        "Conv3DAggregator": Conv3DAggregator,
         "rsna_weighted_log_loss": rsna_weighted_log_loss,
         "RSNAKaggleMetric": RSNAKaggleMetric,
-        "study_id_link": lambda x: tf.cast(x, tf.float32) * 0.0
+        "study_id_link": study_id_zero_link
     }
 
+    @classmethod
+    def load_trained_model(cls, model_path: str, compile: bool = True) -> Model:
+        """
+        Loads a model using a centralized custom objects
+
+        Args:
+            model_path: Path to the .keras or.h5 file.
+            compile: Whether to compile the model after loading.
+        """
+        try:
+            return tf.keras.models.load_model(
+                model_path,
+                custom_objects=cls.CUSTOM_OBJECTS,
+                compile=compile
+            )
+        except Exception as e:
+            print(f"Failed to load model from {model_path}: {e}")
+            raise
+
     def __init__(
-        self, 
-        *, 
-        config: Dict[str, Any], 
-        logger: logging.Logger, 
-        nb_output_records: int, 
-        series_depth: int = 0, 
-        num_meta: int = 3, 
-        aggregator_class: Type[tf.keras.layers.Layer] = Conv3DAggregator
+        self,
+        *,
+        config: Dict[str, Any],
+        logger: logging.Logger,
+        nb_output_records: int,
+        series_depth: int = 0,
+        aggregator3d_class: Type[tf.keras.layers.Layer] = Conv3DAggregator
     ) -> None:
 
-        self._num_meta = num_meta
         self._config = config
         self._logger = logger
-        self._aggregator_class = aggregator_class
         self._nb_output_records = nb_output_records
         self._tfrecord_dir = Path(self._config['paths']['tfrecord'])
-        
-        # Calculate or retrieve max_series_depth (max slices per series)
+
+        # Calculate or retrieve series_depth (max slices per series)
         if series_depth == 0:
             class_name = self.__class__.__name__
-            error_msg = f"{class_name} initialization failed: the argument 'series_depth' was not properly filled."
+            error_msg = (
+                f"{class_name} initialization failed: the argument 'series_depth' "
+                "was not properly filled."
+            )
             raise ValueError(error_msg)
 
         self._series_depth = series_depth
+        self._backbone2d = None
+        self._aggregator3d = None
+
+        # Define the 2D / 3D model's components
+        self._backbone2d, self._aggregator3d = (
+            self._define_2d_and_3d_main_components(aggregator3d_class)
+        )
+
+    def _define_2d_and_3d_main_components(
+        self,
+        aggregator3d_class: Type[tf.keras.layers.Layer]
+    ) -> tuple[Backbone2D, Conv3DAggregator]:
+        """
+        Initializes and orchestrates the primary feature extraction components.
+
+        This method performs the dependency injection by first building the 2D
+        backbone and then using its specific output dimensions to initialize
+        the 3D aggregator. This ensures architectural compatibility between
+        spatial extraction and temporal aggregation.
+
+        Args:
+            aggregator3d_class (Type[tf.keras.layers.Layer]): The class reference
+                used to instantiate the 3D sequence aggregator (e.g., Conv3DAggregator).
+
+        Returns:
+            tuple[Backbone2D, tf.keras.layers.Layer]: A tuple containing the initialized
+                Backbone2D instance and the constructed 3D aggregator instance.
+
+        Raises:
+            RuntimeError: If the 2D backbone or 3D aggregator fails to initialize
+                due to configuration or shape mismatch.
+        """
+        try:
+            backbone2d = Backbone2D(
+                config=self._config,
+                logger=self._logger
+            )
+
+            aggregator3d = aggregator3d_class(
+                config=self._config,
+                backbone_2d_output_shape=backbone2d.get_output_shape(),
+                series_depth=self._series_depth,
+                logger=self._logger
+            )
+
+            return backbone2d, aggregator3d
+
+        except Exception as e:
+            msg = f"Component initialization failed: {str(e)}"
+            self._logger.error(msg, exc_info=True)
+            raise RuntimeError(msg) from e
 
     def build_multi_series_model(self):
         """
-        Constructs a multi-input model capable of processing Sagittal T1, 
+        Constructs a multi-input model capable of processing Sagittal T1,
         Sagittal T2, and Axial T2 series simultaneously with their respective metadata.
 
         Returns:
@@ -70,47 +152,83 @@ class ModelFactory:
         """
 
         # --- 1. Define Inputs for study Id ---
-        study_id_layer = layers.Input(shape=(1,), name="study_id", dtype='int64' )
+        study_id_layer = layers.Input(shape=(1,), name="study_id", dtype='int64')
 
         # --- 2. Define Inputs for each series ---
-        # Images shapes are (self._max_series_depth, height, width, channels)
+        # Images shapes are (self._series_depth, height, width, channels)
 
         self._logger.info("Start building model")
         height, width, channels = self._config['models']['backbone_2d']['img_shape']
 
         # Sagittal T1
-        img_sag_t1 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_sag_t1")
-        slice_metadata_t1 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_t1")
-        series_metadata_t1 = layers.Input(shape=(3,), name="series_metadata_t1", dtype='int32')
-    
+        img_sag_t1 = layers.Input(
+            shape=(self._series_depth, height, width, channels),
+            name="img_sag_t1"
+        )
+
+        slice_metadata_t1 = layers.Input(
+            shape=(self._series_depth, 4),
+            name="slice_metadata_t1"
+        )
+
+        series_metadata_t1 = layers.Input(
+            shape=(3,),
+            name="series_metadata_t1",
+            dtype='int32'
+        )
+
         # Sagittal T2
-        img_sag_t2 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_sag_t2")
-        slice_metadata_t2 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_t2")
-        series_metadata_t2 = layers.Input(shape=(3,), name="series_metadata_t2", dtype='int32')
-    
+        img_sag_t2 = layers.Input(
+            shape=(self._series_depth, height, width, channels),
+            name="img_sag_t2"
+        )
+
+        slice_metadata_t2 = layers.Input(
+            shape=(self._series_depth, 4),
+            name="slice_metadata_t2"
+        )
+
+        series_metadata_t2 = layers.Input(
+            shape=(3,),
+            name="series_metadata_t2",
+            dtype='int32'
+        )
+
         # Axial T2
-        img_axial_t2 = layers.Input(shape=(self._series_depth, height, width, channels), name="img_axial_t2")
-        slice_metadata_axial_t2 = layers.Input(shape=(self._series_depth, 4), name="slice_metadata_axial_t2")
-        series_metadata_axial_t2 = layers.Input(shape=(3,), name="series_metadata_axial_t2", dtype='int32')
+        img_axial_t2 = layers.Input(
+            shape=(self._series_depth, height, width, channels),
+            name="img_axial_t2"
+        )
+
+        slice_metadata_axial_t2 = layers.Input(
+            shape=(self._series_depth, 4),
+            name="slice_metadata_axial_t2"
+        )
+
+        series_metadata_axial_t2 = layers.Input(
+            shape=(3,),
+            name="series_metadata_axial_t2",
+            dtype='int32'
+        )
 
         # --- 3. Shared Backbone Initialization ---
         # We use a single instance of TimeDistributed to share weights across all three branches
-        backbone_obj = Backbone2D(
-            model_name=self._config['models']['backbone_2d']['type'], 
-            input_shape=self._config['models']['backbone_2d']['img_shape']
+        shared_td_backbone = layers.TimeDistributed(
+            self._backbone2d.get_model(),
+            name="shared_2d_backbone"
         )
-        shared_td_backbone = layers.TimeDistributed(backbone_obj.get_model(), name="shared_2d_backbone")
+
         nb_series_descriptions, nb_embedding_views = self._get_nb_series_descriptions()
 
         # --- 4. Process each branch independently ---
         feat_sag_t1 = self._process_branch(
-            img_sag_t1,
-            slice_metadata_t1,
-            series_metadata_t1,
-            shared_td_backbone,
-            "sag_t1",
-            nb_series_descriptions,
-            nb_embedding_views
+            img_input=img_sag_t1,
+            slice_metadata_input=slice_metadata_t1,
+            series_metadata_input=series_metadata_t1,
+            backbone=shared_td_backbone,
+            suffix="sag_t1",
+            nb_series_descriptions=nb_series_descriptions,
+            nb_embedding_views=nb_embedding_views
         )
 
         feat_sag_t2 = self._process_branch(
@@ -123,7 +241,7 @@ class ModelFactory:
             nb_embedding_views
         )
 
-        feat_ax_t2  = self._process_branch(
+        feat_ax_t2 = self._process_branch(
             img_axial_t2,
             slice_metadata_axial_t2,
             series_metadata_axial_t2,
@@ -139,13 +257,16 @@ class ModelFactory:
         # for debugging purpose.
         # By multiplying by 0, we ensure study_id has no impact on training.
         study_id_link = layers.Lambda(
-            lambda x: tf.cast(x, tf.float32) * 0.0,
+            study_id_zero_link,
             output_shape=(1,),
-            name="study_id_link"
+            name="study_id_link_layer"
         )(study_id_layer)
 
         # Concatenate features from all imaging planes
-        global_features = layers.concatenate([feat_sag_t1, feat_sag_t2, feat_ax_t2, study_id_link], name="global_fusion")
+        global_features = layers.concatenate(
+            [feat_sag_t1, feat_sag_t2, feat_ax_t2, study_id_link],
+            name="global_fusion"
+        )
 
         lay_z = layers.Dense(512, activation='relu')(global_features)
         lay_z = layers.Dropout(0.3)(lay_z)
@@ -159,10 +280,18 @@ class ModelFactory:
         # for each potential state (Normal/ Moderate/Severe).
         sev_branch = layers.Dense(256, activation='relu', name="severity_features")(lay_z)
         sev_branch = layers.Dropout(0.3, name="severity_dropout")(sev_branch)
-        severity_flat = layers.Dense(self._nb_output_records*3, name=f"severity_flat")(sev_branch)
+        severity_flat = layers.Dense(self._nb_output_records*3, name="severity_flat")(sev_branch)
 
-        out_severity = layers.Reshape((self._nb_output_records, 3), name="all_severities")(severity_flat)
-        out_severity = layers.Activation(activation='softmax', dtype='float32', name="severity_output")(out_severity)
+        out_severity = layers.Reshape(
+            (self._nb_output_records, 3),
+            name="all_severities"
+        )(severity_flat)
+
+        out_severity = layers.Activation(
+            activation='softmax',
+            dtype='float32',
+            name="severity_output"
+        )(out_severity)
 
         # ---- LOCATION HEAD ------
         # Dedicated branch for regression with stronger regularization
@@ -172,12 +301,21 @@ class ModelFactory:
         loc_branch = layers.Dropout(0.5, name="location_dropout")(loc_branch)
         loc_flat = layers.Dense(self._nb_output_records * 2, name="loc_flat")(loc_branch)
 
-        output_location = layers.Reshape((self._nb_output_records, 2), name="loc_reshape")(loc_flat)
-        output_location = layers.Activation('sigmoid', dtype='float32', name="location_output")(output_location)
+        output_location = layers.Reshape(
+            (self._nb_output_records, 2),
+            name="loc_reshape"
+        )(loc_flat)
+
+        output_location = layers.Activation(
+            'sigmoid',
+            dtype='float32',
+            name="location_output"
+        )(output_location)
 
         pathology_level_location_output_list = {
             'severity_output': out_severity,
-            'location_output': output_location
+            'location_output': output_location,
+            'study_id_output': layers.Identity(name="study_id_output")(study_id_layer)
         }
 
         # Build the final functional model
@@ -210,18 +348,20 @@ class ModelFactory:
         series_metadata_input: tf.Tensor,
         backbone: tf.keras.layers.Layer,
         suffix: str,
-        nb_series_descriptions: int=3,
-        nb_embedding_views: int=8,
+        nb_series_descriptions: int = 3,
+        nb_embedding_views: int = 8,
     ) -> tf.Tensor:
 
         """
-        Processes a single imaging series branch by extracting visual features 
+        Processes a single imaging series branch by extracting visual features
         and concatenating them with series-specific metadata.
 
         Args:
             img_input: Input tensor for the image sequence (Batch, Depth, H, W, C).
-            slice_metadata_input: Input tensor for some metadata associated with each slice (Batch, Depth, 4)
-            series_metadata_input: Input tensor for some metadata associated with the series (Batch, 3).
+            slice_metadata_input: Input tensor for some metadata associated
+                                    with each slice (Batch, Depth, 4)
+            series_metadata_input: Input tensor for some metadata associated
+                                    with the series (Batch, 3).
             backbone: The TimeDistributed backbone shared across branches.
             suffix: Identifier for naming layers (e.g., 'sag_t1').
 
@@ -229,16 +369,12 @@ class ModelFactory:
             tf.Tensor: Merged features of visual and metadata information for the branch.
         """
         # Extract temporal/spatial features using the shared 2D backbone
-        x = backbone(img_input)
-    
+        x_backbone = backbone(img_input)
+
         # Aggregate sequence features into a single vector (3D context)
-        # This uses the aggregator class defined in your config (e.g., Conv3D, LSTM, or GlobalAverage)
-        aggregator = self._aggregator_class(
-            config=self._config,
-            series_depth=self._series_depth,
-            logger=self._logger
-        )
-        x = aggregator.build(x, suffix=suffix)
+        # This uses the aggregator class defined in the YAML config file
+        # (e.g., Conv3D, LSTM, or GlobalAverage)
+        x_aggreg3d = self._aggregator3d(x_backbone)
 
         # Flatten the slice_metadata_input tensor
         name_str = f"flatten_slice_metadata_{suffix}"
@@ -246,20 +382,16 @@ class ModelFactory:
 
         # Series flags: Slicing + Cast via Activation layer
         # This ensures the cast to float32 is tracked by Keras
-        flags_slice = series_metadata_input[:, :2]
-        series_flags = layers.Activation(
-            'linear',
-            dtype='float32',
-            name=f"get_flags_{suffix}"
-        )(flags_slice)
+        series_flags = layers.Lambda(
+            lambda m: tf.cast(m[:, :2], tf.float32),
+            name=f"get_flags_fixed_{suffix}"
+        )(series_metadata_input)
 
-        # View code: Slicing + Identity layer
-        # We use an Activation layer to turn the slice into a formal Keras Layer output
-        x_view = series_metadata_input[:, 2:3]
-        view_code = layers.Activation(
-            'linear',
-            name=f"get_view_code_{suffix}"
-        )(x_view)
+        # 4. View Code (Slicing via Lambda)
+        view_code = layers.Lambda(
+            lambda m: m[:, 2:3],
+            name=f"get_view_code_fixed_{suffix}"
+        )(series_metadata_input)
 
         # Add an Embedding layer for the view code
         # input_dim = 3 (There are only 3 anatomical views)
@@ -272,41 +404,39 @@ class ModelFactory:
 
         # Flatten from (Batch, 1, 8) to (Batch, 8)
         view_embedding = layers.Flatten(name=f"flatten_embed_{suffix}")(view_embedding)
-    
+
         # Merge visual features with series-specific metadata
         combined_branch = layers.concatenate(
             [
-                x,
+                x_aggreg3d,
                 slice_metadata_flat,
                 series_flags,
                 view_embedding
             ],
             name=f"merged_feat_{suffix}"
         )
-    
+
         return combined_branch
 
     def _get_nb_series_descriptions(self):
         """
         Determines the embedding dimensions for anatomical views based on reference data.
-        
+
         Returns:
             tuple: (vocab_size, embedding_dim)
         """
         # Load reference anatomical descriptions to determine the number of categories.
-        csv_description_df = pd.read_csv(self._config['paths']['csv']['description'])
-        
+        csv_description_df = pd.read_csv(self._config['paths']['csv']['series_description'])
+
         # We normalize to lower case to prevent mismatches caused by casing inconsistencies.
-        descriptions_list = csv_description_df['description'].str.lower().unique()
-        
-        # Technical vocabulary size: we add a safety margin (+2) to handle 
+        descriptions_list = csv_description_df['series_description'].str.lower().unique()
+
+        # Technical vocabulary size: we add a safety margin (+2) to handle
         # potential unknown categories or 0-padding without index out-of-bounds.
         nb_descriptions = len(descriptions_list) + 2
 
-        # Embedding dimension: set to 8 as a power of 2 that provides 
+        # Embedding dimension: set to 8 as a power of 2 that provides
         # enough expressive capacity for 3-5 views while staying lightweight.
         output_dim = 8
 
         return nb_descriptions, output_dim
-
-

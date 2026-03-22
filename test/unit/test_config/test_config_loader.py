@@ -1,99 +1,223 @@
+# coding: utf-8
+
 import pytest
-from pathlib import Path
 import yaml
+import logging
+import time
+from pathlib import Path
 from src.config.config_loader import ConfigLoader
+from unittest.mock import patch
 
 
-@pytest.fixture
-def valid_config_path(tmp_path):
-    """Create a temporary valid YAML config file."""
-    config = {
-        "dicom_root_dir": "data/dicom",
-        "output_dir": "output",
-        "csv_files": {
-            "train": "data/train.csv",
-            "test": "data/test.csv"
-        }
-    }
-    config_file = tmp_path / "valid_config.yaml"
-    with open(config_file, 'w') as f:
-        yaml.dump(config, f)
-    return config_file
-
-
-@pytest.fixture
-def invalid_config_path(tmp_path):
-    """Create a temporary invalid YAML config file (missing key)."""
-    config = {
-        "dicom_root_dir": "data/dicom",
-        "output_dir": "output",
-        "csv_files": {
-            "train": "data/train.csv"
-            # Missing 'test' key
-        }
-    }
-    config_file = tmp_path / "invalid_config.yaml"
-    with open(config_file, 'w') as f:
-        yaml.dump(config, f)
-    return config_file
-
-
-def test_load_valid_config(valid_config_path):
-    """Test loading a valid YAML config file."""
-    loader = ConfigLoader(str(valid_config_path))
-    config = loader.get()
-
-    # Check if paths are resolved correctly
-    assert Path(config["dicom_root_dir"]).name == "dicom"
-    assert Path(config["output_dir"]).name == "output"
-    assert Path(config["csv_files"]["train"]).name == "train.csv"
-    assert Path(config["csv_files"]["test"]).name == "test.csv"
-
-
-def test_get_value(valid_config_path):
-    """Test retrieving a single value from the config."""
-
-    loader = ConfigLoader(str(valid_config_path))
-    path = loader.get_value("dicom_root_dir")
-
-    # Convert the path to a Path object to normalize separators
-    path_obj = Path(path)
-
-    # Check that the last two components are "data" and "dicom"
-    assert path_obj.parts[-2:] == ("data", "dicom")
-
-    # Check that a non-existent key returns the default value
-    assert loader.get_value("nonexistent_key", "default") == "default"
-
-
-def test_get_all_config(valid_config_path):
+class TestConfigLoader:
     """
-        Test retrieving the entire config.
+    Comprehensive unit tests for ConfigLoader.
+    Covers initialization, path resolution, and robust cache management
+    including edge cases and exception handling.
     """
-    loader = ConfigLoader(str(valid_config_path))
-    config = loader.get()
 
-    assert "dicom_root_dir" in config
-    assert "csv_files" in config
+    @pytest.fixture
+    def yaml_config_path(self, tmp_path, mock_config):
+        """
+        Helper to create a real YAML file from the mock_config fixture.
+        """
+        def path_to_str(obj):
+            if isinstance(obj, dict):
+                return {k: path_to_str(v) for k, v in obj.items()}
+            elif isinstance(obj, Path):
+                return str(obj)
+            return obj
 
+        config_file = tmp_path / "test_config.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(path_to_str(mock_config), f)
+        return config_file
 
-def test_missing_config_file():
-    """Test loading a non-existent config file."""
-    with pytest.raises(FileNotFoundError):
-        ConfigLoader("nonexistent_path.yaml")
+    # --- SECTION 1: Initialization & YAML Exceptions ---
 
+    def test_init_raises_file_not_found_error(self):
+        """
+        Checks if FileNotFoundError is raised for missing config file.
+        """
+        with pytest.raises(FileNotFoundError):
+            ConfigLoader("non_existent_path.yaml")
 
-def test_invalid_yaml(tmp_path):
-    """Test loading a malformed YAML file."""
-    config_file = tmp_path / "invalid.yaml"
-    with open(config_file, 'w') as f:
-        f.write("invalid: yaml: file")  # Not valid YAML
-    with pytest.raises(ValueError):
-        ConfigLoader(str(config_file))
+    def test_init_raises_value_error_on_malformed_yaml(self, tmp_path):
+        """
+        Tests the catch of yaml.YAMLError and re-raising as ValueError.
+        """
+        bad_yaml = tmp_path / "malformed.yaml"
 
+        # Invalid YAML syntax (duplicated mapping key with illegal structure)
+        bad_yaml.write_text("paths:\n  dicom_studies: : invalid")
 
-def test_missing_key_behavior(valid_config_path):
-    """Test behavior when a key is missing in the config."""
-    loader = ConfigLoader(str(valid_config_path))
-    assert loader.get_value(key="nonexistent_key") is None
-    assert loader.get_value("nonexistent_key", "default") == "default"
+        with pytest.raises(ValueError, match="Error loading YAML configuration file"):
+            ConfigLoader(str(bad_yaml))
+
+    # --- SECTION 2: Path Resolution (Blocks 2 & 3) ---
+
+    def test_init_resolves_relative_paths(self, tmp_path):
+        """
+        Ensure dots (./) in core and CSV paths are resolved to absolute paths.
+        """
+        config_dir = tmp_path / "project"
+        config_dir.mkdir()
+
+        custom_yaml = {
+            "paths": {
+                "dicom_studies": "./data/dicom",  # Core key
+                "csv": {
+                    "train": "./data/train.csv"   # Nested CSV key
+                }
+            }
+        }
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(yaml.dump(custom_yaml))
+
+        loader = ConfigLoader(str(config_file))
+        paths = loader.get()["paths"]
+
+        assert paths["dicom_studies"] == str((config_dir / "data/dicom").resolve())
+        assert paths["csv"]["train"] == str((config_dir / "data/train.csv").resolve())
+
+    # --- SECTION 3: Cache Management & Logical Blocks ---
+
+    def test_calculate_depth_returns_zero_on_empty_dir(self, tmp_path, mock_logger):
+        """
+        Returns 0 if no studies are found.
+        """
+        empty_dir = tmp_path / "empty_dicom"
+        empty_dir.mkdir()
+        tfr_dir = tmp_path / "tfrecord"
+        tfr_dir.mkdir()
+
+        # Dummy config for initialization
+        dummy_config = tmp_path / "dummy.yaml"
+        dummy_config.write_text("paths: {}")
+        loader = ConfigLoader(str(dummy_config))
+
+        depth = loader.calculate_series_depth(
+            tfrecord_dir=str(tfr_dir),
+            dicom_studies_dir=str(empty_dir),
+            percentile=95,
+            logger=mock_logger
+        )
+        assert depth == 0
+
+    def test_calculate_series_depth_handles_corrupt_cache_file(
+        self,
+        yaml_config_path,
+        setup_dicom_tree_structure,
+        mock_logger,
+        caplog
+    ):
+        """
+        Tests handling of a corrupt JSON cache file during read.
+        """
+        loader = ConfigLoader(str(yaml_config_path))
+        paths = loader.get()["paths"]
+        tfr_dir = Path(paths["tfrecord"])
+        tfr_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a corrupt cache file (invalid JSON)
+        cache_file = tfr_dir / "depth_metadata_cache.json"
+        cache_file.write_text("INVALID_JSON_CONTENT")
+
+        with caplog.at_level(logging.WARNING):
+            depth = loader.calculate_series_depth(
+                tfrecord_dir=str(tfr_dir),
+                dicom_studies_dir=paths["dicom_studies"],
+                percentile=95,
+                logger=mock_logger
+            )
+
+        assert depth == 5  # Calculation logic should proceed normally
+        assert "Cache read failed, recalculating" in caplog.text
+
+    def test_calculate_depth_cache_invalidation_mtime(
+        self,
+        yaml_config_path,
+        setup_dicom_tree_structure,
+        mock_logger
+    ):
+        """
+        Tests cache loading and invalidation via directory modification (mtime).
+        """
+        loader = ConfigLoader(str(yaml_config_path))
+        paths = loader.get()["paths"]
+        tfr_dir = paths["tfrecord"]
+        dicom_dir = Path(paths["dicom_studies"])
+
+        # 1. First run: Save cache
+        loader.calculate_series_depth(tfr_dir, str(dicom_dir), 95, mock_logger)
+        cache_file = Path(tfr_dir) / "depth_metadata_cache.json"
+        mtime_initial = cache_file.stat().st_mtime
+
+        # 2. Modify a study directory to trigger invalidation
+        time.sleep(0.1)
+        (dicom_dir / "1010" / "new_file.dcm").write_text("update")
+
+        # 3. Recalculate: Should detect stale cache
+        loader.calculate_series_depth(tfr_dir, str(dicom_dir), 95, mock_logger)
+        assert cache_file.stat().st_mtime > mtime_initial
+
+    def test_calculate_series_depth_handles_cache_write_permission_error(
+        self,
+        yaml_config_path,
+        setup_dicom_tree_structure,
+        mock_logger,
+        caplog
+    ):
+        """
+        Tests the exception handling when the cache file cannot be saved
+        (e.g., due to permission issues).
+        """
+        # Initialize loader with the provided YAML fixture
+        loader = ConfigLoader(str(yaml_config_path))
+        paths = loader.get()["paths"]
+        tfr_dir = Path(paths["tfrecord"])
+
+        # Ensure the directory exists before attempting to restrict it
+        tfr_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use a mock to simulate a PermissionError during file writing.
+        # This is necessary because os.chmod does not reliably restrict
+        # directory write access on Windows.
+        with patch("pathlib.Path.open") as mock_open:
+            # Define a side effect that raises an error only when opening for writing
+            def side_effect(file_instance, mode='r', *args, **kwargs):
+                if 'w' in mode:
+                    raise PermissionError("Mocked Access Denied Error")
+                # Fallback to the real open method for other operations (like reading)
+                return original_open(file_instance, mode, *args, **kwargs)
+
+            # Store the original method to use it inside the side effect
+            original_open = Path.open
+            mock_open.side_effect = side_effect
+
+            # Capture logs at WARNING level to verify the error message
+            with caplog.at_level(logging.WARNING):
+                depth = loader.calculate_series_depth(
+                    tfrecord_dir=str(tfr_dir),
+                    dicom_studies_dir=paths["dicom_studies"],
+                    percentile=95,
+                    logger=mock_logger
+                )
+
+        # Assertions
+        # 1. Check if the function still returns the correct depth despite the save failure
+        assert depth == 5
+
+        # 2. Check if the warning message from 'except Exception' (Block 6) is present in logs
+        assert "Unable to save the cache file" in caplog.text
+
+    # --- SECTION 4: General Utilities ---
+
+    def test_get_and_set_value(self, yaml_config_path):
+        """
+        Verifies standard getter and setter methods.
+        """
+        loader = ConfigLoader(str(yaml_config_path))
+        loader.set_value("dynamic_key", "value")
+        assert loader.get_value("dynamic_key") == "value"
+        assert loader.get_value("non_existent", "default") == "default"

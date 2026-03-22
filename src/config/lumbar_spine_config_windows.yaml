@@ -1,3 +1,7 @@
+
+# ----------------- Root directory of the application -----------
+#root_dir : config["root_dir"] is defined dynamically by the class ConfigLoader.
+
 # ----------------- Environmental & Paths -----------------
 paths:
   dicom_studies: "../../data/lumbar_spine/dicom/training/"
@@ -8,7 +12,7 @@ paths:
   tf_cache: "F:/tensorflow_cache/lumbar_train"
   inspection: "../../data/lumbar_spine/input_data_inspection/"
   csv:
-    description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
+    series_description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
     label_coordinates: "../../data/lumbar_spine/csv/train_label_coordinates.csv"
     label_enriched: "../../data/lumbar_spine/csv/train_label_coordinates_format.csv"
     train: "../../data/lumbar_spine/csv/train.csv"
@@ -16,41 +20,49 @@ paths:
 # ----------------- Data Engineering ----------------------
 data_specs:
   series_depth_percentile: 95
-  slices_input_format: [640, 640, 1]
   max_records_per_frame: 25
   dataset_buffer_size_mb: 100
 
 # ----------------- Model Architectures -------------------
 models:
   backbone_2d:
-    type: "MobileNetV2"
+    #type: "MobileNetV2"
+    type: "ResNet50"
     img_shape: [224, 224, 3]
-    scaling: { max: 1, min: -1 }
+    freeze: True
+    scaling: {"min": -1.0, "max": 1.0}
+
   head_3d:
     type: "cnn3d"
-    input_shape: [7, 7, 1280]
     filters: 64
 
 # ----------------- Training & Compilation ----------------
 training:
-  hyperparameters:
-    train_split_ratio: 0.8
-    batch_size: 1
-    epochs: 10
-    patience: 5
-    learning_rate: 0.0001
-    clipnorm: 1.0
-    resume_mode: last # 2 modes: "best" or "last" 
-  
-  compilation:
-    loss_weights:
-      severity_output: 1.0
-      location_output: 30.0
-    run_eagerly: True
+  batch_size: 1
+  epochs: 10
+  train_split_ratio: 0.8
+
+optimizer:
+  type: adam
+  learning_rate: 0.0001
+  clipnorm: 1.0
+
+callbacks:
+  patience: 5
+  resume_mode: last # 2 modes: "best" or "last" 
+
+compilation:
+  loss_weights:
+    severity_output: 1.0
+    location_output: 30.0
+  run_eagerly: True
 
 # ----------------- Hardware & Maintenance ----------------
 system:
   nb_cores: 0  # 0 = all cores
   log_retention_days: 30
+  seed: 42
 
+#--- Actual series depth (do not confuse with the percentile) --
+# series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader. 
 

@@ -3,8 +3,9 @@
 import pytest
 import tensorflow as tf
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from src.core.models.model_factory import ModelFactory
+
 
 class TestModelFactory:
     """
@@ -21,7 +22,7 @@ class TestModelFactory:
             config=mock_config,
             logger=mock_logger,
             nb_output_records=25,
-            series_depth=16
+            series_depth=10
         )
 
     # --- 1. Initialization Tests ---
@@ -38,31 +39,29 @@ class TestModelFactory:
                 series_depth=0
             )
 
-    def test_init_path_resolution(self, mock_config, mock_logger):
+    def test_init_path_resolution(self, factory, mock_config, mock_logger):
         """
         Verifies that the TFRecord directory path is correctly converted to Path object.
         """
-        factory = ModelFactory(
-            config=mock_config,
-            logger=mock_logger,
-            nb_output_records=25,
-            series_depth=16
-        )
         assert isinstance(factory._tfrecord_dir, Path)
 
     # --- 2. Architecture & Weight Sharing Tests ---
 
-    def test_shared_backbone_identity(self, factory):
+    def test_shared_backbone_identity(self, factory, setup_csv_files):
         """
         Critical: Verifies that only one TimeDistributed backbone instance is created
         and shared across all branches to ensure weight sharing.
         """
         model = factory.build_multi_series_model()
-        
+
         # In Keras functional API, a shared layer appears only once in model.layers
-        td_layers = [lay for lay in model.layers if isinstance(lay, tf.keras.layers.TimeDistributed)]
-        
-        assert len(td_layers) == 1, "Backbone should be shared (found multiple TimeDistributed layers)"
+        td_layers = [
+            lay for lay in model.layers
+            if isinstance(lay, tf.keras.layers.TimeDistributed)
+        ]
+
+        assert_msg = "Backbone should be shared (found multiple TimeDistributed layers)"
+        assert len(td_layers) == 1, assert_msg
         assert td_layers[0].name == "shared_2d_backbone"
 
     def test_aggregator_instantiation(self, mock_config, mock_logger):
@@ -70,35 +69,34 @@ class TestModelFactory:
         Verifies that the aggregator class is instantiated with correct parameters.
         """
 
-        # 1. Create a dummy tensor that looks like the output of an aggregator
-        # Shape: (Batch, Features) -> (None, 64 for example)
-        dummy_output = tf.keras.layers.Input(shape=(64,))
-
-        # 2. Setup the mock aggregator instance
+        # 1. Setup the mock aggregator instance
         mock_agg_instance = MagicMock()
-        mock_agg_instance.build.return_value = dummy_output
 
-        # 3. Setup the mock class to retrun our instance
-        mock_agg_class = MagicMock(return_value = mock_agg_instance)
+        def side_effect_action(x):
+            return tf.keras.layers.Lambda(lambda t: tf.reduce_mean(t, axis=[1, 2, 3])[:, :64])(x)
+
+        mock_agg_instance.side_effect = side_effect_action
+
+        # 2. Setup the mock class to return our instance
+        mock_agg_class = MagicMock(return_value=mock_agg_instance)
         factory = ModelFactory(
             config=mock_config,
             logger=mock_logger,
             nb_output_records=25,
             series_depth=10,
-            aggregator_class=mock_agg_class
+            aggregator3d_class=mock_agg_class
         )
-        
+
         factory.build_multi_series_model()
-        
-        # 4. Verifications
+
+        # 3. Verifications
         # Should be called 3 times (Sag T1, Sag T2, Axial T2)
-        assert mock_agg_class.call_count == 3
+        assert mock_agg_instance.call_count == 3
         _, kwargs = mock_agg_class.call_args
         assert kwargs['series_depth'] == 10
         assert kwargs['logger'] == mock_logger
 
-    # --- 3. Output Shape & Consistency Tests ---
-
+    # --- 4. Output Shape & Consistency Tests ---
     @pytest.mark.parametrize("nb_records", [1, 25])
     def test_output_shapes(self, mock_config, mock_logger, nb_records):
         """
@@ -112,18 +110,16 @@ class TestModelFactory:
         )
         model = factory.build_multi_series_model()
 
-        outputs_dict = dict(zip(model.output_names, model.output_shape))
-        
         # Check Severity Output: (Batch, nb_records, 3 classes)
-        assert outputs_dict['severity_output'] == (None, nb_records, 3)
-        
-        # Check Location Output: (Batch, nb_records, 2 coordinates)
-        assert outputs_dict['location_output'] == (None, nb_records, 2)
-        
-        # Check Study ID Passthrough
-        assert outputs_dict['study_id_output'] == (None, 1)
+        assert model.output_shape['severity_output'] == (None, nb_records, 3)
 
-    # --- 4. Functional Inshight (Dry Run) ---
+        # Check Location Output: (Batch, nb_records, 2 coordinates)
+        assert model.output_shape['location_output'] == (None, nb_records, 2)
+
+        # Check Study ID Passthrough
+        assert model.output_shape['study_id_output'] == (None, 1)
+
+    # --- 4. Functional Insight (Dry Run) ---
 
     def test_model_forward_pass(self, factory):
         """
@@ -131,22 +127,23 @@ class TestModelFactory:
         occur during tensor flow.
         """
         model = factory.build_multi_series_model()
-        
+
         # Generate dummy data for all inputs
         depth = factory._series_depth
-        height, width, channels = factory._config['model_2d']['img_shape']
-        
+        height, width, channels = factory._config['models']['backbone_2d']['img_shape']
+
+        batch = 1
         dummy_inputs = {
-            "study_id": tf.zeros((1, 1)),
-            "img_sag_t1": tf.zeros((1, depth, height, width, channels)),
-            "series_sag_t1": tf.zeros((1, 1)),
-            "desc_sag_t1": tf.zeros((1, 1)),
-            "img_sag_t2": tf.zeros((1, depth, height, width, channels)),
-            "series_sag_t2": tf.zeros((1, 1)),
-            "desc_sag_t2": tf.zeros((1, 1)),
-            "img_axial_t2": tf.zeros((1, depth, height, width, channels)),
-            "series_axial_t2": tf.zeros((1, 1)),
-            "desc_axial_t2": tf.zeros((1, 1))
+            "study_id": tf.zeros((batch, 1)),
+            "img_sag_t1": tf.zeros((batch, depth, height, width, channels)),
+            "series_metadata_t1": tf.zeros((batch, 3), dtype='int32'),
+            "slice_metadata_t1": tf.zeros((batch, depth, 4)),
+            "img_sag_t2": tf.zeros((batch, depth, height, width, channels)),
+            "series_metadata_t2": tf.zeros((batch, 3), dtype='int32'),
+            "slice_metadata_t2": tf.zeros((batch, depth, 4)),
+            "img_axial_t2": tf.zeros((batch, depth, height, width, channels)),
+            "series_metadata_axial_t2": tf.zeros((batch, 3), dtype='int32'),
+            "slice_metadata_axial_t2": tf.zeros((batch, depth, 4))
         }
 
         # Predict (Forward pass)
@@ -169,8 +166,8 @@ class TestModelFactory:
         Verifies that the study_id_output is exactly the same as the input study_id.
         """
         model = factory.build_multi_series_model()
-        
-        test_ids = tf.constant([[101.0], [202.0]], dtype=tf.float32)
+
+        test_ids = tf.constant([[101], [202]], dtype=tf.int64)
 
         # Create a dict with all inputs to satisfy the model
         # We use the mapped names and shapes
@@ -186,7 +183,7 @@ class TestModelFactory:
                 shape = list(tensor.shape)
                 shape[0] = 2  # Set batch size to 2
                 inputs[name] = tf.zeros(shape)
-        
+
         # Forward pass
         outputs = model(inputs, training=False)
 
@@ -196,7 +193,6 @@ class TestModelFactory:
         else:
             # Fallback if outputs is a list
             output_results = dict(zip(model.output_names, outputs))
-        
+
         # Final Verification
         tf.debugging.assert_equal(output_results['study_id_output'], test_ids)
-
