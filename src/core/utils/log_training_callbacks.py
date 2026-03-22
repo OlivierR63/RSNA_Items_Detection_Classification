@@ -4,7 +4,7 @@ import tensorflow as tf
 import psutil
 import os
 from time import time
-from datetime import datetime
+
 
 class LogTrainingCallbacks(tf.keras.callbacks.Callback):
     """
@@ -35,12 +35,12 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
             nb_steps = int(steps_param) if steps_param is not None else 0
 
         except (ValueError, TypeError):
-            nb_epochs = epochs_param # fallback to '?' or 0
+            nb_epochs = epochs_param  # fallback to '?' or 0
             nb_steps = steps_param
 
         print("\n" + "="*50)
         print("    Training session started!")
-        
+
         # Proper pluralization logic
         epoch_str = "epoch" if nb_epochs == 1 else "epochs"
         step_str = "step" if nb_steps == 1 else "steps"
@@ -50,13 +50,13 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
 
     def on_train_batch_begin(self, batch, logs=None):
         # Force conversion to python int to avoid EagerTensor conflicts
-        batch_int = int(batch)
+        # batch_int = int(batch)
 
         # Record the start time of the current batch
         self.batch_start_time = time()
 
         # We use datetime for the human-readable display
-        current_time = datetime.now().strftime("%H:%M:%S")
+        # current_time = datetime.now().strftime("%H:%M:%S")
 
     def on_train_batch_end(self, batch, logs=None):
 
@@ -66,10 +66,10 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         # Calculate time spent on this step
         step_time = time() - self.batch_start_time
         self.step_times.append(step_time)
-        
+
         # Get current RAM usage
         ram_usage = self._process.memory_info().rss / (1024 ** 3)  # Convert to GB
-        
+
         # Log the performance metrics
         print(f"\n >>> Step {batch_int + 1:03d} | Time: {step_time:.2f}s | RAM: {ram_usage:.2f} GB")
 
@@ -92,7 +92,10 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         else:
             avg_step_time = 0
 
-        summary_msg = f"\n\nEpoch {epoch + 1} finished: \n\t - {metrics_str} | Avg Step Time: {avg_step_time:.2f}s"
+        summary_msg = (
+            f"\n\nEpoch {epoch + 1} finished: \n\t - {metrics_str} | "
+            "Avg Step Time: {avg_step_time:.2f}s"
+        )
         print(f"\n >>> {summary_msg}")
 
         self.logger.info(

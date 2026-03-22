@@ -4,6 +4,7 @@ import psutil
 import os
 import tensorflow as tf
 
+
 class SystemResourceMonitorCallbacks(tf.keras.callbacks.Callback):
     """
     Monitor RAM and CPU usage at the end of each batch to prevent OOM (Out of Memory)
@@ -20,12 +21,12 @@ class SystemResourceMonitorCallbacks(tf.keras.callbacks.Callback):
 
         # 1. Get system-wide memory usage
         mem = psutil.virtual_memory()
-        
+
         # 2. Get current process memory usage (RSS)
         process_mem_gb = self.process.memory_info().rss / (1024 ** 3)
-        
+
         # 3. Log the status
-        #if batch_int % 5 == 0: # Log every 5 batches to avoid cluttering
+        # if batch_int % 5 == 0: # Log every 5 batches to avoid cluttering
         print(f"\t\t[System Monitor] Batch {batch_int:03d}: "
               f"System RAM: {mem.percent}% | "
               f"Process RAM: {process_mem_gb:.2f} GB")

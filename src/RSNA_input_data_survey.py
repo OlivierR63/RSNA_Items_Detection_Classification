@@ -52,7 +52,6 @@ def main():
     Verifies the format consistency.
     Verifies if the pixel spacing remains constant on every files or not.
     """
-    global DICOM_STUDIES_DIR
 
     dicom_studies_dir = Path(DICOM_STUDIES_DIR).resolve()
     nb_dicom_files = len(list(dicom_studies_dir.rglob('*.dcm')))
