@@ -7,61 +7,47 @@ RSNA_Items_Detection_Classification/
 │
 ├── src/
 │   │
-│   ├── config/                    # Configurations globales et par défaut
+│   ├── config/                    # Default global settings
 │   │   ├── __init__.py
-│   │   ├── config_loader_.py
-│   │   ├── brain_aneuvrysm_config.yaml       # Configuration par défaut
-│   │   └── lumbar_spine_config_.yaml         # Chargeur de configuration
+│   │   ├── config_loader_.py                   # settings loader
+|   |   ├── lumbar_spine_config_kaggle.yaml     # kaggle environment default setting
+│   │   ├── lumbar_spine_config_windows.yaml    # Windows environment default setting
+│   │   └── lumbar_spine_config.yaml            # Current setting
 │   │
-│   ├── core/                     # Classes de base génériques (abstraites)
+│   ├── core/
 │   │   │
-│   │   ├── data_handlers_/                 # Gestion des données (DICOM, CSV, métadonnées)
+│   │   ├── models/               # Deep learning models (2D/3D)
 │   │   │   ├── __init__.py
-│   │   │   ├── data_pipeline.py
-│   │   │   ├── dicom_dataset_.py            # Classe `DicomDataset` (abstraite + implémentations)
-│   │   │   └── dicom_tfrecord_dataset.py    # Classe `DicomTFRecordDataset` (abstraite + implémentations)
+│   │   │   ├── backbone_2d.py             # 2D models (YOLO, ResNet, MobileNetV2 ...)
+│   │   │   ├── conv3d_aggregator.py       # 3D aggregation logic
+│   │   │   ├── temporal_padding_layer.py  # Custom Keras layers
+│   │   │   └── model_factory.py           # Factory pattern for model instantiation
 │   │   │
-│   │   ├── models/               # Modèles de deep learning (2D/3D)
-│   │   │   ├── __init__.py
-│   │   │   ├── base_model.py     # Classe `BaseSegmentationModel` (abstraite)
-│   │   │   ├── model_2d.py       # Modèles 2D (YOLO, ResNet)
-│   │   │   ├── model_3d.py       # Modèles 3D (CNN 3D)
-│   │   │   └── model_factory.py  # Fabrique pour instancier les modèles
-│   │   │
-│   │   ├── pipeline/              # Pipeline de traitement (TFX, orchestration)
-│   │   │   ├── __init__.py
-│   │   │   ├── base_pipeline.py  # Classe `BasePipeline` (abstraite)
-│   │   │   ├── tfx_pipeline.py   # Intégration avec TFX
-│   │   │   └── airflow_pipeline.py # Intégration avec Airflow (optionnel)
-│   │   │
-│   │   └── utils/                 # Utilitaires (logs, helpers)
+│   │   └── utils/                 # Shared helpers
 │   │       ├── __init__.py
-│   │       ├── clean_logs.py      
-│   │       ├── logger.py          # Gestion des logs
-│   │       ├── packing_utils.py      
-│   │       └── visualization.py   # Visualisation des résultats
+│   │       ├── clean_logs.py                   # Log rotation: automates deletion of outdated logs (>30 days)
+│   │       ├── dataset_utils.py                        # TFRecord parsing, Normalization, Augmentation
+│   │       ├── log_training_callbacks.py    # Training monitor: logs metrics (Loss/Acc), RAM usage, and step timing
+│   │       ├── logger.py                               # Unified_logging_system
+│   │       ├── system_resource_monitor_callbacks.py    # Safety circuit: monitors RAM/CPU to trigger emergency stop (OOM prevention)
+│   │       └── system_stream_tee.py                    # Redirect both standard and error output toward a log file
 │   │
-│   ├── projects/                  # Implémentations spécifiques par projet
+│   ├── projects/                  # Project-specific implementations
 │   │    │
-│   │    ├── lumbar_spine/          # Projet colonne vertébrale
-│   │    │   ├── __init__.py
-│   │    │   ├── csv_metadata.py                                # Classe `CSVMetadata` (fusion des CSV)
-│   │    │   ├── lumbar_dicom_tfrecord__dataset.py            # Implémentation de `DicomDataset` pour ce projet
-│   │    │   ├── pipeline.py                                    # Implémentation de `BasePipeline`
-│   │    │   └── train.py                                    # Script d'entraînement
-│   │    │
-│   │    └── brain_aneurysm/        # Projet anévrismes cérébraux
-│   │        └── __init__.py
+│   │    └── lumbar_spine/          # Lumbar_spine_project
+│   │        ├── __init__.py
+│   │        ├── csv_metadata_handler.py                     # Data orchestrator (Joins CSV/Labels)
+│   │        ├── lumbar_dicom_tfrecord_dataset.py            # Data pipeline: 3D volumes builder from TFRecords
+│   │        ├── model_trainer.py                            # Training & Validation loops
+|   |        ├── RSNA_lumbar_losses_and_metric.py            # Optimization: Weighted Log Loss & Kaggle competition metrics
+|   |        └── tfrecord_files_manager.py            # I/O & Sharding manager
 │   │
 │   ├── RSNA_2024_Lumbar_Spine_Degenerative_Classification.py  # Main script  
-│    └── RSNA_Intracranial_Aneurysm_Detection.py
+│   └── RSNA_input_data_survey.py  # Data Profiler: analyzes DICOM consistency (spacing, format) and series depth
 │
-├── data/                          # Lien symbolique vers les données (non versionné)
+├── data/                          # Symlink to data (not versioned)
 │
-├── tests/                         # Tests (structure miroir de `src/`)
-│   │
-│   ├── e2e/ 
-│   │   └── test_submission/
+├── tests/                         # Tests repository
 │   │
 │   ├── fixtures/
 │   │   ├── csv_samples_/
@@ -74,30 +60,27 @@ RSNA_Items_Detection_Classification/
 │   │
 │   ├── unit/
     │   ├── __init__.py
-│   │   ├── test_data/
+│   │   ├── test_data_handlers/
 │   │   │   └──test_dicom_dataset.py
 │   │   ├── test_models/
 │   │   ├── test_utils/
 │   │   │   └── test_logger.py
-│   │   └── test_lumbar_spine_/
-│   │       ├── test_lumbar_dicom_tfrecord_dataset.py
-│   │       └── test_train.py
-│   ├── test_rsna_lumbar_spine_degenerative_classification.py  # Test du script principal
-│   └── conftest.py  # Fixtures partagées  
+│   │   ├── test_lumbar_spine_/
+│   │   ├── test_lumbar_dicom_tfrecord_dataset.py
+│   │   │       └── test_train.py
+│   │   └── test_rsna_lumbar_spine_degenerative_classification.py  # Test du script principal
+|   |
+│   └── conftest.py  # Shared fixtures
 │
-├── logs/                          # Logs (exclus du versioning)
+├── logs/                          # Logs (not versioned)
 │
-├── scripts/                       # Scripts utilitaires
-│   ├── create_symlink.ps1        # Crée le lien symbolique `data`
-│   ├── setup_environment.ps1     # Configure l'environnement
-│   └── run_pipeline.ps1          # Lance le pipeline
+├── scripts/                      # 
+│   ├── create_symlink.ps1        # 
+│   ├── setup_environment.ps1     # 
+│   └── run_pipeline.ps1          #
 │
-├── .gitignore                     # Exclut `data/`, `logs/`, `.vs/`, etc.
-├── .vsconfig                      # Exclut `data/` de l'indexation Visual Studio
-├── README.md                      # Documentation du projet
-├── RSNA_2024_Lumbar_Spine_Degenerative_Classification.pyproj  # Projet Visual Studio
-└── RSNA_2024_Lumbar_Spine_Degenerative_Classification.slnx
+├── .gitignore                     # Exclude `data/`, `logs/`, `.vs/`, etc.
+└── README.md                      # Project documentation
 
-
-### **Description of the files and folders**
+### **Files and folders description**
 TBD
