@@ -332,8 +332,30 @@ class ModelTrainer:
         best_path = checkpoint_dir / self.BEST_MODEL_FILENAME
 
         # Initialize your custom hardware and metrics monitor
+        system_cfg = self._config.get("system", None)
+        if system_cfg is None:
+            error_msg = (
+                "Fatal error in _train_with_callbacks: "
+                "the setting variable 'system' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        memory_threshold_percent_str = system_cfg.get("memory_threshold_percent", None)
+        if memory_threshold_percent_str is None:
+            error_msg = (
+                "Fatal error in _train_with_callbacks: "
+                "the setting variable 'system -> memory_threshold_percent' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        memory_threshold_percent = float(memory_threshold_percent_str)
+
         training_progress_callback = LogTrainingCallbacks(logger)
-        monitor_callback = SystemResourceMonitorCallbacks(memory_threshold_percent=85.0)
+        monitor_callback = SystemResourceMonitorCallbacks(
+            memory_threshold_percent=float(memory_threshold_percent)
+        )
 
         # Simplified print callback for batch monitoring
         # Since LogTrainingCallbacks already prints RAM/Time,

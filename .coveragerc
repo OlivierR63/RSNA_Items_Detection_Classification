@@ -1,0 +1,6 @@
+# coding: utf-8
+
+[run]
+# List of files to omit during the coverage calculation step
+omit =
+    src/RSNA_input_data_survey.py

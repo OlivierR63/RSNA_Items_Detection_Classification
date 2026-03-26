@@ -82,7 +82,7 @@ def test_parse_tfrecord_single_element(
         # Mock normalize_image to return the input as float32
         normalize_image_path = 'src.core.utils.dataset_utils.normalize_image'
         mock_normalize = stack.enter_context(patch(normalize_image_path))
-        mock_normalize.side_effect = lambda image, mini, maxi: image
+        mock_normalize.side_effect = lambda **kwargs: kwargs.get('image_tf')
 
         # 2. Execution
         current_epoch_tf = tf.constant(1, dtype=tf.int64)
@@ -133,9 +133,9 @@ def test_normalization_call_args(mock_tfrecord_example, mock_config):
 
         # Verify that normalization bounds (0 and 1000) match
         # the mock_tfrecord_example definition.
-        args, kwargs = mock_norm.call_args
-        assert args[1].numpy() == 0
-        assert args[2].numpy() == 1000
+        _, kwargs = mock_norm.call_args
+        assert kwargs['series_min_t'].numpy() == 0
+        assert kwargs['series_max_t'].numpy() == 1000
 
 
 @pytest.fixture
@@ -218,7 +218,7 @@ def mock_study_env():
         mock_proc_single_desc = stack.enter_context(
             patch.object(
                 ds_utils,
-                'process_single_description'
+                'process_single_series_description'
             )
         )
 
@@ -242,7 +242,7 @@ class TestProcessStudyMultiSeries:
             mock_proc_single_desc = stack.enter_context(
                 patch.object(
                     ds_utils,
-                    'process_single_description'
+                    'process_single_series_description'
                 )
             )
 
@@ -294,7 +294,7 @@ class TestProcessStudyMultiSeries:
             mock_proc_single_desc = stack.enter_context(
                 patch.object(
                     ds_utils,
-                    'process_single_description'
+                    'process_single_series_description'
                 )
             )
 
@@ -339,7 +339,7 @@ class TestProcessStudyMultiSeries:
             mock_proc_single_desc = stack.enter_context(
                 patch.object(
                     ds_utils,
-                    'process_single_description'
+                    'process_single_series_description'
                 )
             )
 
@@ -477,7 +477,7 @@ class TestProcessSingleDescription:
         }
         return images, meta, series_depth, img_height, img_width, img_channels
 
-    def test_routing_to_valid_series(self, sample_data):
+    def test_routing_to_valid_series(self, sample_data, mock_config):
         """
         Tests that the function routes to process_valid_series when a match is found.
         """
@@ -511,7 +511,8 @@ class TestProcessSingleDescription:
                 series_depth,
                 img_height,
                 img_width,
-                img_channels
+                img_channels,
+                mock_config
             )
 
             # IMPORTANT - Force execution by evaluating one of the tensors
@@ -522,7 +523,7 @@ class TestProcessSingleDescription:
             mock_valid.assert_called_once()
             mock_empty.assert_not_called()
 
-    def test_routing_to_empty_series(self, sample_data):
+    def test_routing_to_empty_series(self, sample_data, mock_config):
         """
         Tests that the function routes to process_empty_series when no match is found.
         """
@@ -533,7 +534,7 @@ class TestProcessSingleDescription:
         # Mocking sub-functions to verify routing
         with ExitStack() as stack:
 
-            # Patch the functions inside the module where process_single_description lives
+            # Patch the functions inside the module where process_single_series_description lives
             # Replace 'src.core.utils.dataset_utils' with the actual import path if different
 
             # Enter multiple contexts without backslashes
@@ -553,7 +554,8 @@ class TestProcessSingleDescription:
                 series_depth,
                 img_height,
                 img_width,
-                img_channels
+                img_channels,
+                mock_config
             )
 
             # IMPORTANT - Force execution by evaluating one of the tensors
@@ -564,7 +566,7 @@ class TestProcessSingleDescription:
             mock_empty.assert_called_once()
             mock_valid.assert_not_called()
 
-    def test_type_resilience_casting(self, sample_data):
+    def test_type_resilience_casting(self, sample_data, mock_config):
         """
         Verifies that the function correctly handles mixed integer types (int32 vs int64).
         """
@@ -593,7 +595,8 @@ class TestProcessSingleDescription:
                 series_depth,
                 img_height,
                 img_width,
-                img_channels
+                img_channels,
+                mock_config
             )
 
             # IMPORTANT - Force execution by evaluating one of the tensors
@@ -603,7 +606,7 @@ class TestProcessSingleDescription:
             # If casting fails, tf.equal would raise an error before this
             assert mock_valid.called
 
-    def test_graph_compatibility_smoke(self, sample_data):
+    def test_graph_compatibility_smoke(self, sample_data, mock_config):
         """
         Checks if the conditional logic is traceable by tf.function.
         """
@@ -620,7 +623,8 @@ class TestProcessSingleDescription:
                 series_depth,
                 img_height,
                 img_width,
-                img_channels
+                img_channels,
+                mock_config
             )
 
         # We don't mock sub-functions here to ensure the full graph is valid
@@ -692,7 +696,7 @@ class TestProcessValidSeries:
             ),
         }
 
-        # Mask to keep all 15 images
+        # Mask to keep all the images of the series
         desc_mask = tf.ones((15,), dtype=tf.bool)
         target_desc = tf.constant(1, dtype=tf.int32)
 
@@ -706,23 +710,28 @@ class TestProcessValidSeries:
         Verifies that frames are sorted by instance_number.
         """
         (
-            imgs, meta, nb_images, img_height,
-            img_width, nb_channels, mask, target_desc
+            imgs, meta, _, img_height,
+            img_width, nb_channels, _, target_desc
         ) = mock_sample_data
+
+        # Update the mask to keep only all the images of the series 20
+        # Therefore, the series depth will be set to 4 images
+        mask = tf.equal(meta['series_id'], 20)
+        nb_images = 4
 
         target_channels = 1
 
         # For series 20, instance_numbers are [9, 8, ..., 0] (reversed order)
         # After sorting, the first frame in padded_vol should be the one that was at index 14
         padded_vol, _, _ = process_valid_series(
-            imgs,
-            meta,
-            mask,
-            target_desc,
-            nb_images,
-            img_height,
-            img_width,
-            target_channels
+            all_images=imgs,
+            all_meta=meta,
+            desc_mask=mask,
+            target_desc_tensor=target_desc,
+            series_depth=nb_images,
+            height=img_height,
+            width=img_width,
+            nb_channels=target_channels
         )
 
         # The last image of the stack (idx 14) had instance_number 0
@@ -733,42 +742,76 @@ class TestProcessValidSeries:
             expected_first_frame
         )
 
-    def test_symmetric_padding(self, mock_sample_data):
+    def test_grayscale_to_rgb_conversion(self, mock_sample_data):
         """
-        Tests if padding is applied equally before and after
-        when nb frames per series < max_depth
+        Validates channel expansion from 1 to 3.
         """
         (
-            imgs, meta, _, img_height,
+            imgs, meta, nb_images, img_height,
             img_width, nb_channels, mask, target_desc
         ) = mock_sample_data
 
-        num_frames = 4
-        max_depth = 10  # 6 frames to pad -> 3 before, 3 after
+        padded_vol, _, _ = process_valid_series(
+            all_images=imgs,
+            all_meta=meta,
+            desc_mask=mask,
+            target_desc_tensor=target_desc,
+            series_depth=nb_images,
+            height=img_height,
+            width=img_width,
+            nb_channels=3
+        )
 
-        imgs = tf.random.uniform((num_frames, img_height, img_width, 1))
-        meta = {
-            'series_id': tf.constant(
-                [1]*num_frames, dtype=tf.int64
+        # English comment: Shape must be (Depth, Height, Width, 3)
+        assert padded_vol.shape == (nb_images, img_height, img_width, 3)
+
+
+class TestProcessEmptySeries:
+
+    @pytest.fixture
+    def mock_sample_data(self, mock_config):
+        # Create 15 mock images (N=15)
+        nb_images = 15
+        nb_channels = 1
+        img_shape = mock_config['models']['backbone_2d']['img_shape']
+        img_height = img_shape[0]
+        img_width = img_shape[1]
+
+        all_images = tf.random.uniform(
+            shape=(nb_images, img_height, img_width, nb_channels),
+            minval=0,
+            maxval=256,
+            seed=42,
+            dtype=tf.int32
+        )
+
+        all_meta = {
+            # 15 images total, we'll mask some later
+            'series_description': tf.constant(
+                [idx % 3 for idx in range(nb_images)],
+                dtype=tf.int32
             ),
 
+            'series_id': tf.constant([5]*2 + [10]*4 + [15]*5 + [20]*4, dtype=tf.int64),
+
             'instance_number': tf.constant(
-                list(range(num_frames)), dtype=tf.int32
+                [idx for idx in reversed(range(nb_images))],
+                dtype=tf.int32
             ),
 
             'is_padding': tf.constant(
-                [0 if idx % 3 == 0 else 1 for idx in range(num_frames)],
+                [0 if idx % 3 == 0 else 1 for idx in range(nb_images)],
                 dtype=tf.int32
             ),
 
             'scaling_ratio': tf.random.uniform(
-                shape=(num_frames,),
+                shape=(nb_images,),
                 seed=42,
                 dtype=tf.float32
             ),
 
             'x_crop': tf.random.uniform(
-                shape=(num_frames,),
+                shape=(nb_images,),
                 minval=0,
                 maxval=256,
                 seed=42,
@@ -776,332 +819,241 @@ class TestProcessValidSeries:
             ),
 
             'y_crop': tf.random.uniform(
-                shape=(num_frames,),
+                shape=(nb_images,),
                 minval=0,
                 maxval=256,
                 seed=42,
                 dtype=tf.int32
             ),
         }
-        mask = tf.ones((num_frames,), dtype=tf.bool)
 
-        padded_vol, _, _ = process_valid_series(
-            all_images=imgs,
-            all_meta=meta,
-            desc_mask=mask,
-            target_desc_tensor=tf.constant(1),
-            series_depth=max_depth,
-            height=img_height,
-            width=img_width,
-            nb_channels=nb_channels,
-            is_training=True
+        # Mask to keep all the images of the series
+        desc_mask = tf.ones((15,), dtype=tf.bool)
+        target_desc = tf.constant(1, dtype=tf.int32)
+
+        return (
+            all_images, all_meta, nb_images, img_height,
+            img_width, nb_channels, desc_mask, target_desc
         )
 
-        # Check that frames 0, 1, 2 are zero (padding before)
-        assert tf.reduce_sum(padded_vol[0:3]) == 0
-
-        # Check that frames 3 to 6 are the "real" frames
-        for idx in range(3, 7):
-            assert tf.reduce_sum(padded_vol[idx]) > 0
-
-        # Check that frames 7, 8, 9 are zero (padding after)
-        assert tf.reduce_sum(padded_vol[7:10]) == 0
-
-    def test_grayscale_to_rgb_conversion(self, mock_sample_data):
+    def test_output_shapes_and_normalization_values(self, mock_sample_data, mock_config):
         """
-        Validates channel expansion from 1 to 3.
+        Verify that the function returns the correct tensor shapes and
+        uses -1.0 as the filler value (Black for MobileNetV2 normalization).
         """
+        # 1. Extract dimensions from the mock fixture
         (
-            imgs, meta, _, img_height,
-            img_width, nb_channels, mask, target_desc
+            _, _, _, img_height,
+            img_width, _, _, _
         ) = mock_sample_data
 
-        padded_vol, _, _ = process_valid_series(
-            imgs,
-            meta,
-            mask,
-            target_desc,
-            TEST_DEPTH,
-            TEST_HEIGHT,
-            TEST_WIDTH,
-            3
+        # Test parameters
+        target_series_desc = tf.constant(5, dtype=tf.int32)
+        series_depth = 10
+
+        # 2. Call the function under test
+        empty_vol, slice_meta, series_meta = process_empty_series(
+            target_desc_tensor=target_series_desc,
+            series_depth=series_depth,
+            img_height=img_height,
+            img_width=img_width,
+            config=mock_config
         )
 
-        # English comment: Shape must be (Depth, Height, Width, 3)
-        assert padded_vol.shape == (TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3)
+        # 3. Assertions for Shapes
+        # Standard Python assert is fine for shape tuples
+        assert empty_vol.shape == (series_depth, img_height, img_width, 3)
+        assert slice_meta.shape == (series_depth, 4)
+        assert series_meta.shape == (3,)
 
+        # 4. Assertions for Values (Normalization Check)
+        # The 'black' pixels value after normalization depends on the chosen 2D backbone model.
+        # Example: or MobileNetV2, 'black' pixels must be -1.0 after normalization.
+        # This value is set in the config parameters.
+        # We calculate the expected sum of all pixels in the volume.
+        black_pixel_value = mock_config.get('models').get('backbone_2d').get('scaling').get('min')
+        num_pixels = tf.cast(series_depth * img_height * img_width * 3, tf.float32)
+        expected_total_sum = num_pixels * black_pixel_value
 
-class TestProcessEmptySeries:
-
-    def test_output_shapes_and_values(self):
-        """
-        Checks if the function returns the correct shapes and sentinel values.
-        """
-        # Create dummy input with specific dtype
-        all_images = tf.zeros((1, 512, 512, 1), dtype=tf.float32)
-        target_code = tf.constant(5, dtype=tf.int32)
-        channels = 1
-
-        empty_vol, default_id, target_desc = process_empty_series(
-            all_images,
-            target_code,
-            TEST_DEPTH,
-            TEST_HEIGHT,
-            TEST_WIDTH,
-            channels
+        # Use tf.debugging to handle tensor comparisons accurately
+        tf.debugging.assert_near(
+            tf.reduce_sum(empty_vol),
+            expected_total_sum,
+            atol=1e-3,
+            message="The empty volume must be filled with -1.0 (MobileNetV2 Black)."
         )
 
-        # Assertions for shapes
-        assert empty_vol.shape == (TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, channels)
-
-        # Assertions for values
-        tf.debugging.assert_equal(tf.reduce_sum(empty_vol), 0.0)  # Should be all zeros
-        assert default_id == -1
-        assert target_desc == 5
-        assert default_id.dtype == tf.int64
-
-    def test_dtype_propagation(self):
-        """
-        Verifies that the output volume matches the input images' dtype.
-        """
-
-        # Test with float16 to ensure the function adapts
-        all_images_f16 = tf.zeros((1, 64, 64, 1), dtype=tf.float16)
-
-        empty_vol, _, _ = process_empty_series(
-            all_images_f16,
-            tf.constant(1),
-            TEST_DEPTH,
-            TEST_HEIGHT,
-            TEST_WIDTH,
-            1
+        # 5. Assertions for Metadata (Sentinel Values)
+        # Column 0 of slice_meta is 'is_padding', which should be 1.0 (True)
+        padding_flags = slice_meta[:, 0]
+        tf.debugging.assert_equal(
+            padding_flags,
+            tf.ones([series_depth], dtype=tf.float32),
+            message="All slices in an empty series must have is_padding=1.0"
         )
 
-        assert empty_vol.dtype == tf.float16
+        # Check if the target description is correctly propagated
+        tf.debugging.assert_equal(
+            series_meta[2],
+            target_series_desc,
+            message="The series metadata must contain the requested target_desc."
+        )
 
-    def test_rgb_channel_configuration(self):
+        # Check if sampling_flag is 0 (No real sampling performed)
+        tf.debugging.assert_equal(
+            series_meta[0],
+            0,
+            message="Sampling flag must be 0 for empty series."
+        )
+
+    def test_rgb_channel_configuration(self, mock_sample_data, mock_config):
         """
         Ensures the function handles the request for 3 channels correctly.
         """
+        (
+            imgs, meta, nb_images, img_height,
+            img_width, nb_channels, mask, target_desc
+        ) = mock_sample_data
 
-        all_images = tf.zeros((1, 64, 64, 1), dtype=tf.float32)
         channels = 3
 
         empty_vol, _, _ = process_empty_series(
-            all_images,
-            tf.constant(1),
-            TEST_DEPTH,
-            TEST_HEIGHT,
-            TEST_WIDTH,
-            channels
+            target_desc_tensor=tf.constant(5),
+            series_depth=nb_images,
+            img_height=img_height,
+            img_width=img_width,
+            nb_channels=channels,
+            config=mock_config
         )
 
         # Check the last dimension specifically
         assert empty_vol.shape[-1] == 3
-        assert empty_vol.shape == (TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3)
+        assert empty_vol.shape == (nb_images, img_height, img_width, 3)
 
-    def test_target_desc_passthrough(self):
+    def test_target_desc_passthrough(
+        self,
+        mock_sample_data,
+        mock_config
+    ):
         """
-        Confirms that the target description code is returned unchanged.
+        Verify that the target anatomical description code is correctly
+        propagated to the series metadata output without any modification.
         """
-        all_images = tf.zeros((1, 8, 8, 1))
+        # 1. Extract dimensions from the mock fixture
+        (
+            _, _, _, img_height,
+            img_width, nb_channels, _, _
+        ) = mock_sample_data
+
+        # Define various description codes to ensure robust passthrough
+        # including edge cases like zero or negative values.
         codes_to_test = [0, 99, -1]
+        series_depth = 10
 
         for code in codes_to_test:
+            # 2. Setup input tensor for the specific anatomical view
             target_tensor = tf.constant(code, dtype=tf.int32)
-            _, _, returned_desc = process_empty_series(
-                all_images,
-                target_tensor,
-                TEST_DEPTH,
-                TEST_HEIGHT,
-                TEST_WIDTH,
-                1
+
+            # 3. Call the function under test
+            # We focus on the third returned element: series_metadata
+            _, _, series_meta = process_empty_series(
+                target_desc_tensor=target_tensor,
+                series_depth=series_depth,
+                img_height=img_height,
+                img_width=img_width,
+                nb_channels=nb_channels,
+                config=mock_config
             )
-            assert returned_desc == code
+
+            # 4. Assertions
+            # In process_empty_series, target_desc_tensor is stored at index 2
+            # of the series_metadata vector.
+            returned_code = series_meta[2]
+
+            tf.debugging.assert_equal(
+                returned_code,
+                target_tensor,
+                message=f"Failed to passthrough description code: {code}"
+            )
 
 
 class TestFormatForModel:
+    """
+    Unit tests for the format_for_model function to ensure proper
+    mapping of inputs and targets for multi-series spine models.
+    """
 
-    @pytest.fixture
-    def mock_study_data(self):
+    def test_format_output_structure_and_sorting(self, mock_config):
         """
-        Generates a complete set of mock study data.
+        Verify that the function returns correct shapes, sorts records by
+        condition_level_id, and applies correct One-Hot encoding.
         """
-        # Function to create a volume triplet (images, series_id, desc_id)
-        def create_vol_triplet(desc_id):
-            img = tf.zeros((TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3))
-            series_id = tf.constant(100 + desc_id, dtype=tf.int64)
-            description_id = tf.constant(desc_id, dtype=tf.int32)
-            return (img, series_id, description_id)
+        # 1. Setup dimensions from config
+        series_depth = mock_config["series_depth"]
+        img_shape = mock_config["models"]["backbone_2d"]["img_shape"]
+        h, w, c = img_shape
+        max_records = mock_config["data_specs"]["max_records_per_frame"]
 
-        study_volumes = (
-            create_vol_triplet(1),  # Sag T1
-            create_vol_triplet(2),  # Sag T2
-            create_vol_triplet(3)  # Axial T2
+        # Helper to create volumes filled with -1.0 (MobileNetV2 Black)
+        def create_mock_volume():
+            img_vol = tf.fill((series_depth, h, w, c), -1.0)
+            slice_meta = tf.zeros((series_depth, 4), dtype=tf.float32)
+            series_meta = tf.constant([1, 0, 15], dtype=tf.int32)
+            return (img_vol, slice_meta, series_meta)
+
+        study_volumes = (create_mock_volume(), create_mock_volume(), create_mock_volume())
+        study_id = tf.constant(98765, dtype=tf.int64)
+
+        # 2. Setup unsorted labels to test sorting logic
+        # records format: [condition_level_id, severity, x, y]
+        labels = {
+            "records": tf.constant([
+                [5.0, 2.0, 0.5, 0.5],  # ID 5, Severity 2 (One-hot [0,0,1])
+                [2.0, 0.0, 0.1, 0.1],  # ID 2, Severity 0 (One-hot [1,0,0])
+            ] + [[0.0]*4] * (max_records - 2), dtype=tf.float32)
+        }
+
+        # 3. Execute formatting
+        features, targets = format_for_model(
+            study_volumes_tf=study_volumes,
+            study_id_tf=study_id,
+            labels=labels,
+            config=mock_config
         )
 
-        study_id = tf.constant(12345, dtype=tf.int64)
+        # 4. Assertions: Feature Dictionary
+        # Check image shapes
+        assert features["img_sag_t1"].shape == (series_depth, h, w, c)
+        # Check study_id shape [1]
+        assert features["study_id"].shape == (1,)
+        # Verify MobileNetV2 Black normalization (-1.0)
+        tf.debugging.assert_equal(features["img_sag_t1"][0, 0, 0, 0], -1.0)
 
-        records_np = np.zeros((MAX_RECORDS, 4), dtype=np.float32)
+        # 5. Assertions: Target Dictionary (Sorting & One-Hot)
+        # IDs were [5, 2]. After ascending sort, index 0 should be ID 2.
+        # Condition ID 2 had severity 0.0 -> One-hot [1.0, 0.0, 0.0]
+        expected_first_severity = tf.constant([1.0, 0.0, 0.0], dtype=tf.float32)
 
-        # Generate a unique random permutation of IDs from 0 to 24
-        random_ids = np.random.permutation(MAX_RECORDS)
+        tf.debugging.assert_equal(
+            targets["severity_output"][0],
+            expected_first_severity,
+            message="Records were not correctly sorted by condition_level_id."
+        )
 
-        # Assign the shuffled IDs to the first column
-        records_np[:, 0] = random_ids
+        # Ensure all targets are cast to float32
+        assert targets["severity_output"].dtype == tf.float32
+        assert targets["location_output"].dtype == tf.float32
 
-        # Locate the row where the first element (ID) is 1
-        # and update its values to [1, 0, 0.1, 0.1]
-        row_idx_01 = np.where(records_np[:, 0] == 1.0)[0][0]
-        records_np[row_idx_01] = [1.0, 0.0, 0.1, 0.1]
-
-        # Locate the row where the first element (ID) is 10
-        # and update its values to [10, 2, 0.5, 0.5]
-        row_idx_10 = np.where(records_np[:, 0] == 10.0)[0][0]
-        records_np[row_idx_10] = [10.0, 2.0, 0.5, 0.5]
-
-        labels = {"records": tf.constant(records_np)}
-
-        return study_volumes, study_id, labels
-
-    def test_input_dictionary_keys_and_shapes(self, mock_study_data):
+    def test_config_validation_raises_value_error(self):
         """
-        Tests the formatting logic by patching global dimensions to match
-        the fixture's shape [10, 512, 270, 3].
+        Confirms that missing configuration keys trigger explicit ValueErrors.
         """
-        volumes, study_id, labels = mock_study_data
+        invalid_config = {"series_depth": 15}  # Missing 'models' key
 
-        # Use ExitStack to manage multiple global variable patches
-        with ExitStack() as stack:
-
-            # Patch globals to match the fixture dimensions:
-            #  [TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3]
-            # This prevents the tf.ensure_shape InvalidArgumentError
-            stack.enter_context(patch.object(ds_utils, 'MAX_SERIES_DEPTH', TEST_DEPTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_HEIGHT', TEST_HEIGHT))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_WIDTH', TEST_WIDTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_NB_CHANNELS', 3))
-            stack.enter_context(patch.object(ds_utils, 'MAX_RECORDS', 25))
-
-            # Execute the formatting with the patched environment
-            # Note: format_for_model returns (records, features, labels_dict)
-            records_out, features, labels_dict = format_for_model(
-                volumes,
-                study_id,
-                labels
+        with pytest.raises(ValueError, match="models' is required"):
+            format_for_model(
+                study_volumes_tf=None,
+                study_id_tf=None,
+                labels={"records": tf.zeros((25, 4))},
+                config=invalid_config
             )
-
-            # --- Assertions ---
-            # Verify that 'img_sag_t1' exists and has the patched shape
-            assert "img_sag_t1" in features
-            assert features["img_sag_t1"].shape == (10, 512, 270, 3)
-
-            # Verify that metadata are correctly cast to float32 and reshaped to (1,)
-            assert features["series_sag_t1"].dtype == tf.float32
-            assert features["series_sag_t1"].shape == (1,)
-
-            # Verify the labels sorting and one-hot encoding
-            assert "severity_output" in labels_dict
-            assert labels_dict["severity_output"].shape == (25, 3)
-
-    def test_labels_sorting_logic(self, mock_study_data):
-        """
-        Ensures that records are sorted by condition_id (index 0).
-        """
-        volumes, study_id, labels = mock_study_data
-
-        with ExitStack() as stack:
-
-            # Patch globals to match the fixture dimensions:
-            #  [TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3]
-            # This prevents the tf.ensure_shape InvalidArgumentError
-            stack.enter_context(patch.object(ds_utils, 'MAX_SERIES_DEPTH', TEST_DEPTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_HEIGHT', TEST_HEIGHT))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_WIDTH', TEST_WIDTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_NB_CHANNELS', 3))
-            stack.enter_context(patch.object(ds_utils, 'MAX_RECORDS', 25))
-
-            # The function returns (records, features, labels_dict)
-            records_out, _, _ = format_for_model(volumes, study_id, labels)
-
-            # In our mock, condition_level_id 1 and condition 10 were randomly
-            # distributed along the column.
-            # After sorting, condition_level_id 1 must be at index 1; condition_level_id_10
-            # must be at index 10.
-            for idx in range(MAX_RECORDS):
-                # English comment: Convert the tensor row to numpy for reliable comparison
-                actual_row = records_out[idx, :].numpy()
-
-                if idx == 1:
-                    # English comment: Use np.array().astype() or specify dtype in constructor
-                    expected = np.array([1, 0, 0.1, 0.1], dtype=np.float32)
-                    np.testing.assert_array_almost_equal(actual_row, expected)
-
-                elif idx == 10:
-                    expected = np.array([10, 2, 0.5, 0.5], dtype=np.float32)
-                    np.testing.assert_array_almost_equal(actual_row, expected)
-
-                else:
-                    # English comment: Compare single element by casting idx to float32
-                    assert actual_row[0] == np.float32(idx)
-
-            # Verify strictly ascending order
-            condition_level_ids = records_out[:, 0].numpy()
-            assert np.all(np.diff(condition_level_ids) >= 0)
-
-    def test_severity_one_hot_encoding(self, mock_study_data):
-        """
-        Checks if severity labels are correctly converted to one-hot (depth=3).
-        """
-        volumes, study_id, labels = mock_study_data
-
-        with ExitStack() as stack:
-
-            # Patch globals to match the fixture dimensions:
-            #  [TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3]
-            # This prevents the tf.ensure_shape InvalidArgumentError
-            stack.enter_context(patch.object(ds_utils, 'MAX_SERIES_DEPTH', TEST_DEPTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_HEIGHT', TEST_HEIGHT))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_WIDTH', TEST_WIDTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_NB_CHANNELS', 3))
-            stack.enter_context(patch.object(ds_utils, 'MAX_RECORDS', 25))
-
-            _, _, labels_dict = format_for_model(volumes, study_id, labels)
-
-            severity_output = labels_dict["severity_output"]
-
-            # Expected shape (MAX_RECORDS, 3)
-            assert severity_output.shape == (MAX_RECORDS, 3)
-
-            # Our condition 1 (now at index 0) had severity 0 -> [1, 0, 0]
-            tf.debugging.assert_equal(severity_output[1], [1.0, 0.0, 0.0])
-
-            # Our condition 10 (now at index 1) had severity 2 -> [0, 0, 1]
-            tf.debugging.assert_equal(severity_output[10], [0.0, 0.0, 1.0])
-
-    def test_location_output_shape(self, mock_study_data):
-        """
-        Verifies coordinates output (X, Y).
-        """
-        volumes, study_id, labels = mock_study_data
-
-        with ExitStack() as stack:
-
-            # Patch globals to match the fixture dimensions:
-            #  [TEST_DEPTH, TEST_HEIGHT, TEST_WIDTH, 3]
-            # This prevents the tf.ensure_shape InvalidArgumentError
-            stack.enter_context(patch.object(ds_utils, 'MAX_SERIES_DEPTH', TEST_DEPTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_HEIGHT', TEST_HEIGHT))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_WIDTH', TEST_WIDTH))
-            stack.enter_context(patch.object(ds_utils, 'MODEL_2D_NB_CHANNELS', 3))
-            stack.enter_context(patch.object(ds_utils, 'MAX_RECORDS', 25))
-
-            _, _, labels_dict = format_for_model(volumes, study_id, labels)
-
-            location_output = labels_dict["location_output"]
-
-            # Should be (25, 2) for X and Y
-            assert location_output.shape == (MAX_RECORDS, 2)
-
-            # Verify specific values for condition_level 1 (moved to index 0)
-            tf.debugging.assert_near(location_output[1], [0.1, 0.1])

@@ -1,0 +1,1 @@
+New-Item -Path "C:\Users\Olivier\Desktop\Projet_Kaggle\RSNA_Items_Detection_Classification\src\config\lumbar_spine_config.yaml" -ItemType HardLink -Value "C:\Users\Olivier\Desktop\Projet_Kaggle\RSNA_Items_Detection_Classification\src\config\lumbar_spine_config_windows.yaml" -Force

@@ -146,7 +146,7 @@ class CSVMetadataHandler:
         # 2. Convert identifiers with error handling
         try:
             self._series_desc_df[['study_id', 'series_id']] = (
-                self._series_desc_df[['study_id', 'series_id']].astype(int)
+                self._series_desc_df[['study_id', 'series_id']].astype('int64')
             )
 
             # Processing coordinates and formats
@@ -154,7 +154,7 @@ class CSVMetadataHandler:
 
             int_cols = ['study_id', 'series_id', 'instance_number']
             self._label_coords_df[int_cols] = (
-                self._label_coords_df[int_cols].astype(int)
+                self._label_coords_df[int_cols].astype('int64')
             )
 
             self._label_coords_df[['x', 'y']] = (
@@ -526,7 +526,7 @@ class CSVMetadataHandler:
 
             # CRITICAL: Force types for merging
             # This ensures study_id is an integer for subsequent joins
-            tmp_train_df['study_id'] = tmp_train_df['study_id'].astype(int)
+            tmp_train_df['study_id'] = tmp_train_df['study_id'].astype('int64')
 
             return tmp_train_df
 

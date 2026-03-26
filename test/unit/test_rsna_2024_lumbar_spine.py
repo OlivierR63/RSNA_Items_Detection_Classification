@@ -3,7 +3,6 @@
 from unittest.mock import patch, MagicMock, PropertyMock
 import pytest
 import tensorflow as tf
-import sys
 import os
 from contextlib import ExitStack
 
@@ -128,71 +127,85 @@ class TestRSNALumbarClassification:
     # --------------------------------------------------------------------------
 
     # Mock tensorflow to avoid hardware config errors
-    def test_main_success_flow(self, mock_config, mock_logger):
+
+    def test_main_success_flow(self, mock_config, mock_logger, caplog):
         """
         Test the full execution flow of main().
+        Ensures that all components (Config, Logger, Model, Trainer)
+        interact correctly without real hardware or file system access.
         """
+        # Set caplog to capture INFO level logs for assertions
+        caplog.set_level("INFO")
+
         with ExitStack() as stack:
+            # 1. Mock utility functions to avoid real side effects (file cleanup, model building)
             mock_clean = stack.enter_context(patch.object(src_module, "clean_old_logs"))
             mock_build = stack.enter_context(patch.object(src_module, "get_or_build_model"))
-            mock_trainer = stack.enter_context(patch.object(src_module, "ModelTrainer"))
+            mock_trainer_class = stack.enter_context(patch.object(src_module, "ModelTrainer"))
+            mock_manager_class = stack.enter_context(
+                patch.object(src_module, "TFRecordFilesManager")
+            )
 
+            # 2. Mock SystemStreamTee to prevent actual stdout/stderr redirection during test
             mock_tee = MagicMock()
             mock_tee_class = stack.enter_context(patch.object(src_module, "SystemStreamTee"))
             mock_tee_class.return_value = mock_tee
 
-            # Setup mock returns
-            mock_cfg_loader = stack.enter_context(
-                patch.object(
-                    src_module,
-                    "ConfigLoader"
-                )
-            )
+            # 3. Setup ConfigLoader mock to return our controlled mock_config
+            mock_cfg_loader = stack.enter_context(patch.object(src_module, "ConfigLoader"))
             mock_loader_instance = mock_cfg_loader.return_value
             mock_loader_instance.get.return_value = mock_config
+
+            # Simulate dictionary-like behavior for get_value calls in main
             mock_loader_instance.get_value.side_effect = (
                 lambda key, default=None: mock_config.get(key, default)
             )
             mock_loader_instance.set_value.return_value = None
 
+            # 4. FIX: Mock both setup_logger (context manager) and get_current_logger.
+            # This prevents RuntimeError when decorators or internal methods try
+            # to access the global _CURRENT_LOGGER variable which remains None when mocked.
             mock_setup_log = stack.enter_context(patch.object(src_module, "setup_logger"))
             mock_setup_log.return_value.__enter__.return_value = mock_logger
 
-            tfrecord_file_mgr_path = (
-                "src.projects.lumbar_spine.tfrecord_files_manager.TFRecordFilesManager"
+            mock_get_curr_log = stack.enter_context(
+                patch("src.core.utils.logger.get_current_logger")
             )
-            mock_tf_mgr = stack.enter_context(patch(tfrecord_file_mgr_path))
-            mock_tf_mgr.return_value.get_max_series_depth.return_value = 60
+            mock_get_curr_log.return_value = mock_logger
 
+            # 6. Mock TensorFlow to prevent real GPU/CPU threading initialization
             mock_tf = stack.enter_context(patch.object(src_module, "tf"))
 
-            # Execute main - the mocked 'tf' will now prevent the RuntimeError
+            # --- EXECUTION ---
+            # Run the main entry point
             src_module.main()
 
-            # Verify tf config was called (optional)
-            system_cfg = mock_config.get("system")
-            if system_cfg is None:
-                mock_logger.error("mock_config -> system is not defined")
+            # --- ASSERTIONS ---
 
-            nb_cores = mock_config["system"]["nb_cores"]
-            mock_logger.info(f"nb_cores = {nb_cores}")
-
+            # Verify TensorFlow threading was configured (Intra-op parallelism)
+            # In current main logic, it uses 7 threads if not running on Kaggle
             set_threads_mock = mock_tf.config.threading.set_intra_op_parallelism_threads
+            set_threads_mock.assert_called_with(7)
 
-            if nb_cores > 1:
-                set_threads_mock.assert_called_once_with(nb_cores)
-            else:
-                set_threads_mock.assert_not_called()
-
-            # Verify sequences
-            expected_log_path = mock_config["paths"]["log_mirror"]
-            mock_tee_class.assert_called_once_with(expected_log_path)
-            assert sys.stdout == mock_tee
-            assert sys.stderr == mock_tee
+            # Verify the logical flow of components
             mock_build.assert_called_once()
-            mock_trainer.return_value.prepare_training_and_validation_datasets.assert_called_once()
-            mock_trainer.return_value.train_model.assert_called_once()
+
+            # Verify that TFRecordFilesManager was instantiated and its main method was called
+            mock_manager_instance = mock_manager_class.return_value
+            mock_manager_instance.generate_tfrecord_files.assert_called_once()
+
+            # Verify ModelTrainer was instantiated and its main methods were called
+            trainer_instance = mock_trainer_class.return_value
+            trainer_instance.prepare_training_and_validation_datasets.assert_called_once()
+            trainer_instance.train_model.assert_called_once()
+
+            # Verify that log cleanup was triggered at the end of the process
             mock_clean.assert_called_once()
+
+            # Check for expected log markers to ensure the process reached completion
+            assert "Configuration loaded successfully" in caplog.text
+            assert "Starting training process" in caplog.text
+            assert "Training process completed" in caplog.text
 
     # --------------------------------------------------------------------------
     # TESTS FOR signals

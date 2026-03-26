@@ -1,14 +1,14 @@
 # coding: utf-8
 
 import tensorflow as tf
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
 
 # Define the dataset mapping helper functions
 def parse_tfrecord_single_element(
     feature_tf: tf.Tensor,
     current_epoch_tensor: tf.Tensor,  # Injected from the dataset map
-    config: Dict[str, str]
+    config: Dict[str, Any]
 ) -> Tuple[tf.Tensor, Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
 
     """
@@ -43,7 +43,7 @@ def parse_tfrecord_single_element(
         - metadata_dict (dict): Tensors for identifiers (study_id, series_id, etc.)
           and spatial context (scaling_ratio, x_crop, y_crop).
         - labels_dict (dict): Dictionary with a 'records' key containing
-          a (MAX_RECORDS, 4) float32 tensor of [condition, severity, x_norm, y_norm].
+          a (MAX_RECORDS, 4) float32 tensor of [condition_level, severity, x_norm, y_norm].
     """
     model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
     max_records = config["data_specs"]["max_records_per_frame"]
@@ -71,7 +71,6 @@ def parse_tfrecord_single_element(
     )
 
     # Assign the results back to named Tensors
-    # As a reminder: condition = observed pathology.
     study_id_t = parsed_features_tf['study_id']
     is_padding_t = parsed_features_tf['is_padding']
     file_format_t = parsed_features_tf['file_format']
@@ -137,14 +136,14 @@ def parse_tfrecord_single_element(
         tf.equal(is_padding_t, 1),
 
         # If padding image, create right now the black final image
-        create_padding_image,
+        true_fn=lambda: create_padding_image(config),
 
         # Otherly, follow the "normal" process
-        lambda: tf.cond(
+        false_fn=lambda: tf.cond(
             tf.logical_and(can_crop, use_crop_epoch),
             # seed is passed to ensure the crop is the same for the whole series
-            lambda: perform_deterministic_crop(image_tf, height_t, width_t, seed, config),
-            lambda: perform_resize(image_tf, height_t, width_t, config)
+            true_fn=lambda: perform_deterministic_crop(image_tf, height_t, width_t, seed, config),
+            false_fn=lambda: perform_resize(image_tf, height_t, width_t, config)
         )
     )
 
@@ -188,7 +187,12 @@ def parse_tfrecord_single_element(
     # Cast to float16 to save RAM with no detrimental effect
     # on the intermediate calculation
     normalized_image_tf = tf.cast(
-        normalize_image(image_tf, series_min_t, series_max_t),
+        normalize_image(
+            image_tf=image_tf,
+            series_min_t=series_min_t,
+            series_max_t=series_max_t,
+            config=config
+        ),
         tf.float16
     )
 
@@ -352,7 +356,7 @@ def normalize_image(
     image_tf: tf.Tensor,
     series_min_t: tf.Tensor,
     series_max_t: tf.Tensor,
-    config: Dict[str, str]
+    config: Dict[str, Any]
 ) -> tf.Tensor:
 
     """
@@ -462,6 +466,7 @@ def process_study_multi_series(
         - images (tf.Tensor): Flattened batch of all images in the study (N, H, W, C).
         - meta (dict): Dictionary of metadata tensors (each of length N).
         - labels (dict): Dictionary of label tensors (study-wide diagnostics).
+        - config (dict): Dictionary of project settings
         - is_training (bool): flag on the current mode : training (True) or validation (False)
 
     Returns:
@@ -530,6 +535,7 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
+        config,
         is_training
     )
 
@@ -541,6 +547,7 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
+        config,
         is_training
     )
 
@@ -552,6 +559,7 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
+        config,
         is_training
     )
 
@@ -604,11 +612,13 @@ def process_single_series_description(
     height: int,
     width: int,
     nb_channels: int,
-    is_training: bool = True
+    config: dict,
+    is_training: bool = True,
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     """
-    Routes the study images to the appropriate processing logic based on anatomical view.
+    Routes the study images to the appropriate processing logic based on anatomical view
+    (the "series description").
 
     This function acts as a high-level router that:
     1. Filters the study-level collection for a specific series description (e.g., Axial T2).
@@ -626,6 +636,7 @@ def process_single_series_description(
         - height (int): Target image height.
         - width (int): Target image width.
         - nb_channels (int): Target number of channels.
+        - config (dict): Dictionary of project settings.
         - is_training (bool): Flag for training mode (True) or validation (False).
 
     Returns:
@@ -661,8 +672,7 @@ def process_single_series_description(
             series_depth, height, width, nb_channels, is_training
         ),
         false_fn=lambda: process_empty_series(
-            all_images, target_desc_tensor,
-            series_depth, height, width
+            target_desc_tensor, series_depth, height, width, config
         )
     )
 
@@ -880,11 +890,12 @@ def get_indices(actual_count, series_depth):
 
 
 def process_empty_series(
-    all_images: tf.Tensor,
     target_desc_tensor: tf.Tensor,
     series_depth: int,
-    height: int,
-    width: int,
+    img_height: int,
+    img_width: int,
+    config: dict,
+    nb_channels: int = 3
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     """
@@ -896,11 +907,11 @@ def process_empty_series(
     conditional branching within the dataset pipeline.
 
     Args:
-        - all_images (tf.Tensor): Source tensor used to ensure dtype consistency.
         - target_desc_tensor (tf.Tensor): The description code that was not found.
         - series_depth (int): Fixed number of slices for the output volume.
         - height (int): Target image height.
         - width (int): Target image width.
+        - config (dict): project settings dictionary
 
     Returns:
        A tuple containing:
@@ -913,16 +924,22 @@ def process_empty_series(
 
     # 1. Constants and Type Casting
     s_depth = tf.cast(series_depth, tf.int32)
-    h = tf.cast(height, tf.int32)
-    w = tf.cast(width, tf.int32)
-    channels = tf.constant(3, tf.int32)
+    height = tf.cast(img_height, tf.int32)
+    width = tf.cast(img_width, tf.int32)
+    channels = tf.constant(nb_channels, tf.int32)
 
     # 2. Build Image Volume Shape
     # Using tf.stack to create a dynamic shape tensor
-    vol_shape = tf.stack([s_depth, h, w, channels])
+    vol_shape = tf.stack([s_depth, height, width, channels])
+
+    models_cfg = config.get('models')
+    backbone_2d_cfg = models_cfg.get('backbone_2d')
+    scaling_cfg = backbone_2d_cfg.get('scaling')
+    black_pixel_value = scaling_cfg.get('min')
 
     # Create and force shape via reshape (Graph safe)
-    empty_vol = tf.zeros(vol_shape, dtype=tf.float32)
+    empty_vol = tf.fill(vol_shape, black_pixel_value)
+    empty_vol = tf.cast(empty_vol, tf.float32)
     empty_vol = tf.reshape(empty_vol, vol_shape)
 
     # 3. Build Slice Metadata
@@ -955,7 +972,7 @@ def process_empty_series(
 
 
 def format_for_model(
-    study_volumes: Tuple[
+    study_volumes_tf: Tuple[
         Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
         Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
         Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
@@ -969,8 +986,8 @@ def format_for_model(
     to the specific multi-input/multi-output signature of the model.
 
     Args:
-        study_volumes (tuple): Tensors for (Sagittal T1, Sagittal T2, Axial T2)
-                               each with shape (self._series_depth, H, W, C).
+        study_volumes_tf (tuple): Tensors for (Sagittal T1, Sagittal T2, Axial T2)
+                                each with shape (self._series_depth, H, W, C).
         study_id_tf (tf.Tensor): The unique identifier for the study.
         labels (dict): Dictionary containing the 'records' tensor for diagnosis.
 
@@ -1039,7 +1056,7 @@ def format_for_model(
     series_target_shape = [3]
 
     # Unpack processed volumes from the previous study-level processing step
-    sag_t1, sag_t2, axial = study_volumes
+    sag_t1, sag_t2, axial = study_volumes_tf
 
     # --- 2. Build Inputs Dictionary ---
     # These keys MUST exactly match the names defined in ModelFactory.build_multi_series_model()
@@ -1068,12 +1085,12 @@ def format_for_model(
     # labels_dict["study_id_output"] = tf.reshape(tf.cast(study_id_tf, tf.float32), [1])
 
     # Diagnosis: Reshape and map the 25 level records
-    # records shape: (MAX_RECORDS, 4) -> [condition_id, severity, x, y]
+    # records shape: (MAX_RECORDS, 4) -> [condition_level, severity, x, y]
     records_raw = tf.reshape(labels["records"], (max_records, 4))
 
-    # Sorting: use condition_id (col 0) as integer for stable sorting
-    condition_ids = tf.cast(records_raw[:, 0], tf.int32)
-    sort_indices = tf.argsort(condition_ids, direction="ASCENDING")
+    # Sorting: use condition_level (col 0) as integer for stable sorting
+    condition_level_ids = tf.cast(records_raw[:, 0], tf.int32)
+    sort_indices = tf.argsort(condition_level_ids, direction="ASCENDING")
 
     # 2. Reorder the entire records tensor using these indices
     sorted_records = tf.gather(records_raw, sort_indices)

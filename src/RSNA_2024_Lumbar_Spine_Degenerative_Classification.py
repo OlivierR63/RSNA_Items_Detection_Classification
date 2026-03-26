@@ -5,6 +5,7 @@ import signal
 import sys
 import logging
 from pathlib import Path
+import gc
 from keras.models import load_model
 
 from src.core.utils.logger import setup_logger, get_current_logger
@@ -12,6 +13,7 @@ from src.core.utils.system_stream_tee import SystemStreamTee
 from src.core.utils.clean_logs import clean_old_logs
 from src.core.models.model_factory import ModelFactory
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
+from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
     rsna_weighted_log_loss,
     RSNAKaggleMetric
@@ -451,8 +453,8 @@ def main():
         )
         raise ValueError(error_msg)
 
+    # Initialize the system tee to capture stdout/stderr
     mirror = SystemStreamTee(system_stream_tee_path)
-
     sys.stdout = mirror
     sys.stderr = mirror
 
@@ -465,7 +467,7 @@ def main():
         )
         raise ValueError(error_msg)
 
-    log_dir = log_dir / "logs"
+    log_dir = Path(log_dir) / "logs"
 
     with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
         # The logger is now set up available globally via get_current_logger().
@@ -509,6 +511,11 @@ def main():
                 extra={"status": "started", "log_dir": log_dir}
             )
 
+            # Extract DICOM images and metadata from source directories
+            # and serialize them into dedicated TFRecord files (one per patient)
+            tfrecord_files_manager = TFRecordFilesManager(config, logger)
+            tfrecord_files_manager.generate_tfrecord_files()
+
             trainer = ModelTrainer(
                 config=config,
                 logger=logger,
@@ -518,6 +525,10 @@ def main():
 
             trainer.prepare_training_and_validation_datasets()
             trainer.train_model()
+
+            # Force Keras to close properly before the end of the script
+            tf.keras.backend.clear_session()
+            gc.collect()
 
         except Exception as e:
             logger.error(f"Critical error during training: {str(e)}", exc_info=True,

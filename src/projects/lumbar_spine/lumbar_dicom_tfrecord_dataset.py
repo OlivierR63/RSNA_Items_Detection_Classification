@@ -2,8 +2,7 @@
 
 import tensorflow as tf
 import logging
-from typing import Optional
-from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
+from typing import Optional, List
 from src.core.utils.dataset_utils import (
     parse_tfrecord_single_element,
     process_study_multi_series,
@@ -46,7 +45,6 @@ class LumbarDicomTFRecordDataset():
         self._config = config
         self._MAX_RECORDS = config['data_specs']['max_records_per_frame']
         self._series_depth = series_depth
-        self._logger.info("Initializing LumbarDicomTfRecordDataset")
 
         # We define the epoch tracker here.
         # Using a tf.Variable is mandatory to allow the TF Graph to pick up
@@ -58,11 +56,13 @@ class LumbarDicomTFRecordDataset():
             name="dataset_epoch_counter"
         )
 
+        self._logger.info("LumbarDicomTFRecordDataset initialized")
+
     def generate_tfrecord_dataset(
         self,
-        tfrecord_list,
-        batch_size,
-        is_training=True
+        tfrecord_list: List[str],
+        batch_size: int,
+        is_training: bool = True
     ) -> tf.data.Dataset:
 
         """
@@ -85,6 +85,7 @@ class LumbarDicomTFRecordDataset():
             - tfrecord_list (list): List of file paths to the TFRecord files.
             - batch_size (int): Number of studies (patients) per training batch.
             - logger (logging.Logger, optional): Logger for tracking pipeline initialization.
+            - config (dict): project's settings
             - is_training (bool): flag on the current mode : training (True) or validation (False)
 
         Returns:
@@ -105,15 +106,31 @@ class LumbarDicomTFRecordDataset():
         buffer_mb = int(self._config['data_specs'].get('dataset_buffer_size_mb', 100))
         buffer_size_bytes = buffer_mb * BYTES_PER_MIB  # in MiB
 
-        tfrecord_files_manager = TFRecordFilesManager(self._config, self._logger)
-        tfrecord_files_manager.set_series_depth(self._series_depth)
-
         total_slices_per_patient = 3*self._series_depth
+
+        steering_cfg = self._config.get('dataset_steering')
+
+        interleave_cfg = steering_cfg.get('interleave')
+        cycle_length = interleave_cfg.get('parallel_files')
+        block_length = interleave_cfg.get('block_per_file') * total_slices_per_patient
+        deterministic = interleave_cfg.get('deterministic')
+
+        num_parallel_calls = (
+            tf.data.AUTOTUNE if steering_cfg.get('num_parallel_calls') == -1
+            else steering_cfg.get('num_parallel_calls')
+        )
+        group_studies = steering_cfg.get('group_studies') * total_slices_per_patient
+        prefetch_batches = steering_cfg.get('prefetch_batches')
+        use_cache = steering_cfg.get('use_cache')
 
         # 1. Main Pipeline: Iterate through the list of TFRecord files
         dataset = tf.data.Dataset.from_tensor_slices(tfrecord_list)
 
-        dataset = dataset.cache()
+        if use_cache:
+            dataset = dataset.cache()
+            self._logger.info("Dataset caching ENABLED")
+        else:
+            self._logger.info("Dataset caching DISABLED")
 
         # 2. Shuffle the file list to avoid overfitting to file order.
         dataset = dataset.shuffle(buffer_size=len(tfrecord_list))
@@ -121,16 +138,16 @@ class LumbarDicomTFRecordDataset():
         # 4. Interleave multiple TFRecord files to overlap I/O and preprocessing latency
         dataset = dataset.interleave(
             lambda x: tf.data.TFRecordDataset(x, buffer_size=buffer_size_bytes),
-            cycle_length=5,         # Read multiple TFRecord files at once
-            block_length=total_slices_per_patient,  # Read the entire patient before switching
-            num_parallel_calls=tf.data.AUTOTUNE,  # Parallelize the IO
-            deterministic=False      # Keep order predictable
+            cycle_length=cycle_length,         # Read multiple TFRecord files at once
+            block_length=block_length,  # Read the entire patient before switching
+            num_parallel_calls=num_parallel_calls,  # Parallelize the IO
+            deterministic=deterministic     # Keep order predictable
         )
 
         # 5. Parse individual TFRecord elements (serialized frames)
         dataset = dataset.map(
             lambda x: parse_tfrecord_single_element(x, self._current_epoch_var, self._config),
-            num_parallel_calls=tf.data.AUTOTUNE
+            num_parallel_calls=num_parallel_calls
         )
 
         # 6. Skip corrupted records automatically
@@ -138,7 +155,7 @@ class LumbarDicomTFRecordDataset():
 
         # 7. Group all records found in the file (1 file = 1 patient)
         # We don't drop remainder here to catch all available frames
-        dataset = dataset.batch(total_slices_per_patient)
+        dataset = dataset.batch(group_studies)
 
         # 8. Reconstruct 3D volumes (sorting and padding)
         # This is the most CPU-intensive step, distributed across cores
@@ -146,7 +163,7 @@ class LumbarDicomTFRecordDataset():
             lambda images, metadata, labels: process_study_multi_series(
                 images, metadata, labels, config=self._config, is_training=is_training
             ),
-            num_parallel_calls=tf.data.AUTOTUNE
+            num_parallel_calls=num_parallel_calls
         )
 
         # 9. Final formatting into model-ready dictionary
@@ -155,14 +172,17 @@ class LumbarDicomTFRecordDataset():
             lambda volumes, study_id, label: format_for_model(
                 volumes, study_id, label, self._config
             ),
-            num_parallel_calls=tf.data.AUTOTUNE
+            num_parallel_calls=num_parallel_calls
         )
 
         # 10. Batching several studies (patients) together.
         # Note: Set batch_size carefully based on GPU VRAM (3D volumes are heavy).
         dataset = dataset.batch(batch_size, drop_remainder=True)
 
-        # 11. Prefetch the next batch in the background to hide latency
-        dataset = dataset.prefetch(5)
+        # 11. Ensure the dataset provides an infinite stream of batches
+        dataset = dataset.repeat()
+
+        # 12. Prefetch the next batch in the background to hide latency
+        dataset = dataset.prefetch(prefetch_batches)
 
         return dataset

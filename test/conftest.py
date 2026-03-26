@@ -81,7 +81,18 @@ def mock_config(tmp_path, setup_csv_files):
             "seed": 42
         },
 
-        "series_depth": 5
+        "series_depth": 5,
+
+        "dataset_steering": {
+            "interleave": {
+                "parallel_files": 1,
+                "block_per_file": 1,
+                "deterministic": False
+            },
+            "group_studies": 1,
+            "prefetch_batches": 1,
+            "num_parallel_calls": 1
+        }
     }
 
 

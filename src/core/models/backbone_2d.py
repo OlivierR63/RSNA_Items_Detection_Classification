@@ -116,7 +116,11 @@ class Backbone2D:
 
         output = base_model(input_tensor, training=not self._freeze)
 
-        return Model(inputs=input_tensor, outputs=output, name="backbone_2d_model")
+        return Model(
+            inputs=input_tensor,
+            outputs=output,
+            name="backbone_2d_model"
+        )
 
     def _build_resnet50(self):
 
