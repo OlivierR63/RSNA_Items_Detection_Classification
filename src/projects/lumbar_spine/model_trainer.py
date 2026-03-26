@@ -351,19 +351,15 @@ class ModelTrainer:
             raise ValueError(error_msg)
 
         memory_threshold_percent = float(memory_threshold_percent_str)
-
-        training_progress_callback = LogTrainingCallbacks(logger)
         monitor_callback = SystemResourceMonitorCallbacks(
             memory_threshold_percent=float(memory_threshold_percent)
         )
 
         # Simplified print callback for batch monitoring
-        # Since LogTrainingCallbacks already prints RAM/Time,
-        # we only print metrics here every 5 steps.
         print_callback = LambdaCallback(
             on_batch_end=lambda batch, logs: print(
                 f" >>> Step {int(batch)+1:04d} | Loss: {logs['loss']:.4f}"
-            )  # if (int(batch)+1) % 5 == 0 else None
+            )
         )
 
         # Create a callback to sync the dataset epoch with the trainer epoch
@@ -371,6 +367,38 @@ class ModelTrainer:
             on_epoch_begin=lambda epoch,
             logs: self._dataset_manager._current_epoch_var.assign(epoch)
         )
+
+        # Calculate steps_per_epoch and validation_step, since the dataset
+        # uses .repeat()  (infinite stream)
+        training_cfg = self._config.get('training', None)
+        if training_cfg is None:
+            error_msg = (
+                "Fatal error in _train_with_callbacks: "
+                "the setting variable 'training' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        batch_size = training_cfg.get('batch_size', None)
+
+        if (batch_size is None) or (batch_size <= 0):
+            msg_error = (
+                "Error in function _train_with_callbacks: "
+                "the setting variable 'training -> batch_size' is missing or invalid. "
+                "It must be a strictly positive integer. Please check your YAML configuration."
+            )
+            logger.error(msg_error)
+            raise ValueError(msg_error)
+
+        steps_per_epoch = max(1, self._nb_train // batch_size)
+        validation_steps = max(1, self._nb_val // batch_size)
+
+        logger.info(
+            f"Starting model training: {steps_per_epoch} steps/epoch, "
+            f"{validation_steps} validation steps."
+        )
+
+        training_progress_callback = LogTrainingCallbacks(logger, validation_steps)
 
         callbacks_cfg = self._config.get('callbacks', None)
         if callbacks_cfg is None:
@@ -430,36 +458,6 @@ class ModelTrainer:
 
         logger.info("Training callbacks configured.",
                     extra={"callbacks": [callback.__class__.__name__ for callback in callbacks]})
-
-        # Calculate steps_per_epoch and validation_step, since the dataset
-        # uses .repeat()  (infinite stream)
-        training_cfg = self._config.get('training', None)
-        if training_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'training' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
-
-        batch_size = training_cfg.get('batch_size', None)
-
-        if (batch_size is None) or (batch_size <= 0):
-            msg_error = (
-                "Error in function _train_with_callbacks: "
-                "the setting variable 'training -> batch_size' is missing or invalid. "
-                "It must be a strictly positive integer. Please check your YAML configuration."
-            )
-            logger.error(msg_error)
-            raise ValueError(msg_error)
-
-        steps_per_epoch = max(1, self._nb_train // batch_size)
-        validation_steps = max(1, self._nb_val // batch_size)
-
-        logger.info(
-            f"Starting model training: {steps_per_epoch} steps/epoch, "
-            f"{validation_steps} validation steps."
-        )
 
         # Clear session and collect garbage to maximize available VRAM before fitting
         gc.collect()

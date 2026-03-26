@@ -14,7 +14,7 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
     including a visual progress bar, high-resolution step timing using
     perf_counter(), and a global Estimated Time of Arrival (ETA).
     """
-    def __init__(self, logger):
+    def __init__(self, logger, validation_steps=0):
         """
         Initializes the callback with a specific application logger.
 
@@ -26,6 +26,7 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         self.logger = logger
         self.step_times = []
         self._process = psutil.Process(os.getpid())
+        self._val_steps_fixed = validation_steps
 
         # Initialize attributes with default values to avoid AttributeErrors
         self.nb_steps = 0
@@ -46,26 +47,14 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         self.step_times = []
 
         # Safely retrieve parameters
-        epochs_param = self.params.get('epochs', 0)
-        steps_param = self.params.get('steps', 0)
+        self.nb_epochs = self.params.get('epochs', 0)
+        self.nb_steps = self.params.get('steps', 0)
+        self.total_batches = self.nb_epochs * self.nb_steps
 
         # Ensure we have integers for comparison
-        try:
-            nb_epochs = int(epochs_param) if epochs_param is not None else 0
-            nb_steps = int(steps_param) if steps_param is not None else 0
-
-        except (ValueError, TypeError):
-            nb_epochs = epochs_param  # fallback to '?' or 0
-            nb_steps = steps_param
-
         print("\n" + "="*50)
         print("    Training session started!")
-
-        # Proper pluralization logic
-        epoch_str = "epoch" if nb_epochs == 1 else "epochs"
-        step_str = "step" if nb_steps == 1 else "steps"
-
-        print(f"    Targeting {nb_epochs} {epoch_str} with {nb_steps} {step_str} each.")
+        print(f"    Targeting {self.nb_epochs} epochs with {self.nb_steps} steps each.")
         print("="*50 + "\n")
 
     def on_epoch_begin(self, epoch, logs=None):
@@ -133,7 +122,7 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         """
         # Retrieve validation steps from Keras params
         # Note: 'validation_steps' is often stored as 'steps' in the test context
-        val_steps = self.params.get('validation_steps') or self.params.get('steps', 0)
+        val_steps = self._val_steps_fixed
 
         print("\n" + "-"*30)
         print(f" >>> Starting Validation Phase ({val_steps} steps)")

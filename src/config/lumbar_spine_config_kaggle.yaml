@@ -24,31 +24,61 @@ models:
     type: "MobileNetV2"
     img_shape: [224, 224, 3]
     scaling: { max: 1, min: -1 }
+
   head_3d:
     type: "cnn3d"
-    input_shape: [7, 7, 1280]
     filters: 64
 
 # ----------------- Training & Compilation ----------------
 training:
-  hyperparameters:
-    train_split_ratio: 0.8
-    batch_size: 3
-    epochs: 10
-    patience: 5
-    learning_rate: 0.0001
-    clipnorm: 1.0
-    resume_mode: last # 2 modes: "best" or "last" 
-  
-  compilation:
-    loss_weights:
-      severity_output: 1.0
-      location_output: 30.0
-    run_eagerly: False
+  batch_size: 8
+  epochs: 1
+  train_split_ratio: 0.8
+
+optimizer:
+  type: adam
+  learning_rate: 0.0001
+  clipnorm: 1.0
+
+callbacks:
+  patience: 5
+  resume_mode: last # 2 modes: "best" or "last" 
+
+compilation:
+  loss_weights:
+    severity_output: 1.0
+    location_output: 30.0
+  run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
 system:
   nb_cores: 0  # 0 = all cores
   log_retention_days: 30
+  seed: 42
+  memory_threshold_percent: 90
+
+# -------------------- Dataset steering -------------------
+# Steering values: 1 unit = 1 full TFRecord file (1 patient study)
+dataset_steering:
+  interleave:
+    parallel_files: 1       # Equivalent to cycle_length
+    block_per_file: 1       # 1 means the entire file is read before switching
+    deterministic: False
+  
+  # How many patient studies to group before 3D reconstruction
+  # (Usually 1, as 1 TFRecord already contains 1 full study)
+  group_studies: 1          
+  
+  # Number of final training batches to keep in the pipeline buffer
+  prefetch_batches: 1
+
+  # Use -1 for tf.data.AUTOTUNE
+  num_parallel_calls: 1
+
+  # Use the cache or not
+  use_cache: false
+
+#--- Actual series depth (do not confuse with the percentile) --
+# series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader.
 
 

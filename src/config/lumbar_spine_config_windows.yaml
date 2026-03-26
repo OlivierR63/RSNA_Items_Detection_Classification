@@ -38,8 +38,8 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 1
-  epochs: 10
+  batch_size: 2
+  epochs: 2
   train_split_ratio: 0.8
 
 optimizer:
@@ -55,11 +55,11 @@ compilation:
   loss_weights:
     severity_output: 1.0
     location_output: 30.0
-  run_eagerly: True
+  run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
 system:
-  nb_cores: 6  # 0 = all cores
+  nb_cores: 7 # 0 = all cores
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
@@ -68,19 +68,19 @@ system:
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 1       # Equivalent to cycle_length
+    parallel_files: 2       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   
   # How many patient studies to group before 3D reconstruction
   # (Usually 1, as 1 TFRecord already contains 1 full study)
-  group_studies: 1          
+  group_studies: 2          
   
   # Number of final training batches to keep in the pipeline buffer
-  prefetch_batches: 1
+  prefetch_batches: 2
 
   # Use -1 for tf.data.AUTOTUNE
-  num_parallel_calls: 1
+  num_parallel_calls: 2
 
   # Use the cache or not
   use_cache: false
