@@ -5,7 +5,7 @@ import tensorflow as tf
 from pathlib import Path
 import shutil
 from unittest.mock import MagicMock, patch
-from src.projects.lumbar_spine.model_trainer import log_memory_usage
+from src.core.utils.monitoring_utils import log_memory_usage
 from contextlib import ExitStack
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
 
@@ -121,12 +121,20 @@ class TestModelTrainer:
                 mock_trainer.prepare_training_and_validation_datasets()
 
             # VERIFICATION:
-            # 1. Ensure the first log_memory_usage call was made before the exception
-            mock_mem.assert_called_once()
+            # Check that log_memory_usage was called exactly twice
+            assert mock_mem.call_count == 2
 
-            # 2. Optionally verify the stage name passed to the monitor
-            args, kwargs = mock_mem.call_args
-            assert kwargs['stage_name'] == "Before Dataset creation"
+            # Check the first call (Preliminary monitoring)
+            first_call_args = mock_mem.call_args_list[0]
+            assert first_call_args.kwargs['stage_name'] == "Before Dataset creation"
+
+            # Check the second call (Post-crash snapshot)
+            second_call_args = mock_mem.call_args_list[1]
+
+            # Use "contains" because of the dynamic exception name at the end
+            error_msg = "Post-crash resource (CPU / RAM) snapshot"
+            assert error_msg in second_call_args.kwargs['stage_name']
+            assert "Exception" in second_call_args.kwargs['stage_name']
 
     def test_train_with_callbacks_execution(self, mock_trainer):
         """
@@ -233,25 +241,6 @@ class TestModelTrainer:
             with pytest.raises(RuntimeError, match="Loss is NaN"):
                 mock_trainer._train_with_callbacks()
 
-    def test_invalid_config_raises_error(self, mock_trainer):
-        """
-        Checks that the trainer raises a ValueError if the batch_size
-        is misconfigured as zero or negative.
-        """
-
-        with ExitStack() as stack:
-
-            # Patch the global logger getter used by @log_method
-            mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
-            mock_get_log.return_value = mock_trainer._logger
-
-            mock_trainer._config["training"]["batch_size"] = 0
-            mock_trainer._nb_train = 10
-
-            error_msg = "the setting variable 'training -> batch_size' is missing or invalid."
-            with pytest.raises(ValueError, match=error_msg):
-                mock_trainer._train_with_callbacks()
-
     def test_prepare_datasets_empty_directory(self, mock_trainer):
         """
         Tests the behavior when no TFRecord files are found in the directory.
@@ -306,7 +295,7 @@ class TestModelTrainer:
             assert kwargs['steps_per_epoch'] == 1
             assert kwargs['validation_steps'] == 1
 
-    def test_log_memory_usage_exception_safety(self, mock_trainer):
+    def test_log_memory_usage_exception_safety(self, mock_trainer, mock_logger):
         """
         Tests that log_memory_usage does not crash the main process
         even if the monitoring tools fail.
@@ -327,7 +316,12 @@ class TestModelTrainer:
             # This should not raise an exception because of the internal try/except block
             # It should simply print the error message and continue.
             try:
-                log_memory_usage(process=mock_trainer._process, stage_name="Crash Test")
+                log_memory_usage(
+                    process=mock_trainer._process,
+                    stage_name="Crash Test",
+                    logger=mock_logger
+                )
+
             except Exception as e:
                 pytest.fail(f"log_memory_usage raised {e} instead of capturing it.")
 

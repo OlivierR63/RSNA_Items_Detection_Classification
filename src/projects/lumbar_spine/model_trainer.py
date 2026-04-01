@@ -2,41 +2,21 @@
 
 import os
 import gc
+import math
 import psutil
 import logging
-import tensorflow as tf
-
+import sys
 from pathlib import Path
 from typing import Optional, Any
+from keras.callbacks import LambdaCallback, ProgbarLogger
+
+import tensorflow as tf
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from src.core.utils.logger import get_current_logger, log_method
 from src.core.utils.log_training_callbacks import LogTrainingCallbacks
 from src.core.utils.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
-from keras.callbacks import LambdaCallback, ProgbarLogger
-
-
-def log_memory_usage(*, process, stage_name=""):
-    """
-    Logs the current RAM usage of the Python process and the overall system.
-    Useful for monitoring memory leaks during 3D medical imaging pipelines.
-    """
-    try:
-        # Get the current process ID and its memory information
-        mem_info = process.memory_info()
-
-        # Convert Resident Set Size (RSS) to Megabytes (MB)
-        # RSS represents the portion of memory occupied by a process that is held in RAM
-        mem_mb = mem_info.rss / (1024 * 1024)
-
-        # Retrieve the total percentage of system RAM currently in use
-        total_ram_percent = psutil.virtual_memory().percent
-
-        # Output the memory snapshot to the console
-        print(f">>> [RAM] {stage_name} | Process: {mem_mb:.2f} MB | System: {total_ram_percent}%")
-
-    except Exception as e:
-        print(f"Memory monitoring failed: {e}")
+from src.core.utils.monitoring_utils import log_memory_usage
 
 
 class ModelTrainer:
@@ -123,9 +103,9 @@ class ModelTrainer:
         logger.info(
             "Loading 3D model...",
             extra={
-                   "action": "load_model",
-                   "model_type": self._config['models']['head_3d']['type']
-                   }
+                "action": "load_model",
+                "model_type": self._config['models']['head_3d']['type']
+            }
         )
 
         try:
@@ -143,6 +123,11 @@ class ModelTrainer:
             )
 
         except Exception as e:
+            log_memory_usage(
+                stage_name="Pre-fit memory state",
+                process=self._process,
+                logger=self._logger
+            )
             logger.error(
                 f"Error in train_model: {str(e)}",
                 exc_info=True,
@@ -182,37 +167,19 @@ class ModelTrainer:
 
         logger = logger or self._logger
 
-        training_cfg = self._config.get('training', None)
-        if training_cfg is None:
-            error_msg = (
-                "Fatal error in prepare_training_and_validation_datasets: "
-                "the setting variable 'training' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        training_cfg = self._config['training']
 
         logger.info("Setting up TensorFlow dataset pipeline...",
                     extra={"action": "create_dataset"})
 
         try:
-            batch_size = training_cfg.get("batch_size", None)
+            batch_size = training_cfg["batch_size"]
 
-            if batch_size is None:
-                error_msg = (
-                    "Fatal error in prepare_training_and_validation_datasets: "
-                    "the setting variable 'training -> batch_size' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                raise ValueError(error_msg)
-
-            if batch_size <= 0:
-                error_msg = (
-                    "Fatal error in prepare_training_and_validation_datasets: "
-                    "'batch_size' shall be strictly positive"
-                )
-                raise ValueError(error_msg)
-
-            log_memory_usage(stage_name="Before Dataset creation", process=self._process)
+            log_memory_usage(
+                stage_name="Before Dataset creation",
+                process=self._process,
+                logger=self._logger
+            )
 
             self._dataset_manager = LumbarDicomTFRecordDataset(
                 self._config,
@@ -230,15 +197,7 @@ class ModelTrainer:
             nb_tfrecord_files = tf.shape(shuffled_tfrecord_list)[0]
 
             # 3. Define the train / validation ratio
-            train_ratio = training_cfg.get('train_split_ratio', None)
-
-            if train_ratio is None:
-                error_msg = (
-                    "Fatal error in prepare_training_and_validation_datasets: "
-                    "the setting variable 'training -> train_split_ratio' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                raise ValueError(error_msg)
+            train_ratio = training_cfg['train_split_ratio']
 
             # 4. Split the train and validation datasets
             split_idx = tf.cast(tf.cast(nb_tfrecord_files, tf.float32) * train_ratio, tf.int32)
@@ -259,16 +218,39 @@ class ModelTrainer:
                 is_training=False
             )
 
-            log_memory_usage(stage_name="After Dataset creation", process=self._process)
-
             logger.info("Training and validation dataset created successfully.",
                         extra={"status": "success"})
 
             return
 
+        except tf.errors.OpError as e:
+            # Catch any error occurring during TensorFlow graph execution (OOM, File IO, etc.)
+            critical_msg = f"Tensorflow Runtime error: {str(e)}"
+            self.logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failed", "error": str(e)}
+            )
+            sys.exit(1)
+
         except Exception as e:
-            logger.error(f"Error creating dataset: {str(e)}", exc_info=True,
-                         extra={"status": "failed", "error": str(e)})
+            # Create a "dynamic" tag for precise diagnostic:
+            error_type = type(e).__name__
+            memory_info_msg = f"Post-crash resource (CPU / RAM) snapshot: {error_type}"
+
+            # Call the log function with that tag
+            log_memory_usage(
+                stage_name=memory_info_msg,
+                process=self._process,
+                logger=self._logger
+            )
+
+            # Normally log the error
+            logger.error(
+                f"Error creating dataset: {str(e)}",
+                exc_info=True,
+                extra={"status": "failed", "error": str(e)}
+            )
             raise
 
     @log_method()
@@ -296,59 +278,22 @@ class ModelTrainer:
         logger = logger or self._logger
 
         paths_cfg = self._config["paths"]
-        if paths_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'paths' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
-
-        output_dir = paths_cfg.get('output', None)
-        if output_dir is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'paths -> output' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        output_dir = paths_cfg['output']
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        checkpoint_dir = Path(paths_cfg.get("checkpoint", None))
-        if checkpoint_dir is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'paths -> checkpoint' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        checkpoint_dir = Path(paths_cfg["checkpoint"])
 
         checkpoint_dir = checkpoint_dir.resolve()
         last_path = checkpoint_dir / self.CHECKPOINT_FILENAME
         best_path = checkpoint_dir / self.BEST_MODEL_FILENAME
 
         # Initialize your custom hardware and metrics monitor
-        system_cfg = self._config.get("system", None)
-        if system_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'system' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
-
-        memory_threshold_percent_str = system_cfg.get("memory_threshold_percent", None)
-        if memory_threshold_percent_str is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'system -> memory_threshold_percent' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        system_cfg = self._config["system"]
+        memory_threshold_percent_str = system_cfg["memory_threshold_percent"]
 
         memory_threshold_percent = float(memory_threshold_percent_str)
         monitor_callback = SystemResourceMonitorCallbacks(
@@ -370,28 +315,11 @@ class ModelTrainer:
 
         # Calculate steps_per_epoch and validation_step, since the dataset
         # uses .repeat()  (infinite stream)
-        training_cfg = self._config.get('training', None)
-        if training_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'training' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        training_cfg = self._config['training']
+        batch_size = training_cfg['batch_size']
 
-        batch_size = training_cfg.get('batch_size', None)
-
-        if (batch_size is None) or (batch_size <= 0):
-            msg_error = (
-                "Error in function _train_with_callbacks: "
-                "the setting variable 'training -> batch_size' is missing or invalid. "
-                "It must be a strictly positive integer. Please check your YAML configuration."
-            )
-            logger.error(msg_error)
-            raise ValueError(msg_error)
-
-        steps_per_epoch = max(1, self._nb_train // batch_size)
-        validation_steps = max(1, self._nb_val // batch_size)
+        steps_per_epoch = max(1, math.ceil(self._nb_train / batch_size))
+        validation_steps = max(1, math.ceil(self._nb_val / batch_size))
 
         logger.info(
             f"Starting model training: {steps_per_epoch} steps/epoch, "
@@ -400,23 +328,8 @@ class ModelTrainer:
 
         training_progress_callback = LogTrainingCallbacks(logger, validation_steps)
 
-        callbacks_cfg = self._config.get('callbacks', None)
-        if callbacks_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'training -> callbacks' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
-
-        patience_cfg = callbacks_cfg.get('patience', None)
-        if patience_cfg is None:
-            error_msg = (
-                "Fatal error in _train_with_callbacks: "
-                "the setting variable 'training -> callbacks -> patience' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        callbacks_cfg = self._config['callbacks']
+        patience_cfg = callbacks_cfg['patience']
 
         callbacks = [
             sync_epoch_callback,
@@ -461,19 +374,14 @@ class ModelTrainer:
 
         # Clear session and collect garbage to maximize available VRAM before fitting
         gc.collect()
-        log_memory_usage(stage_name="Pre-fit memory state", process=self._process)
+        log_memory_usage(
+            stage_name="Pre-fit memory state",
+            process=self._process,
+            logger=self._logger
+        )
 
         try:
-            epochs_cfg = training_cfg.get("epochs", None)
-
-            if epochs_cfg is None:
-                msg_error = (
-                    "Error in function _train_with_callbacks: "
-                    "the setting variable 'training -> epochs' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                logger.error(msg_error)
-                raise ValueError(msg_error)
+            epochs_cfg = training_cfg["epochs"]
 
             # Execute the training loop
             history = self._model.fit(

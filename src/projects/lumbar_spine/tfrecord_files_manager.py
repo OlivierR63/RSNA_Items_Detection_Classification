@@ -95,31 +95,13 @@ class TFRecordFilesManager:
                 the conversion process. If None, a default logger will be used.
         """
 
-        class_name = self.__class__.__name__
-        path_str = config['paths'].get('tfrecord', None)
-
-        if path_str is None:
-            error_msg = (
-                f"[{class_name}] Configuration Error: The parameter 'paths -> tfrecord' "
-                "is required but was not found. "
-                f"Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        path_str = config['paths']['tfrecord']
 
         self._tfrecord_dir = Path(path_str)
         self._config = config
         self._logger = logger
 
-        self._max_records = self._config['data_specs'].get('max_records_per_frame', -1)
-        if self._max_records <= 0:
-            error_msg = (
-                f"{class_name} initialization failed: the parameter "
-                "'data_specs -> max_record_per_frame' key is required but was not found "
-                f"or invalid (value: {self._max_records}) in the configuration file. "
-                "Please check your YAML file structure."
-            )
-
-            raise ValueError(error_msg)
+        self._max_records = self._config['data_specs']['max_records_per_frame']
 
     @log_method()
     def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
@@ -152,22 +134,8 @@ class TFRecordFilesManager:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        paths_cfg = self._config.get('paths', None)
-        if paths_cfg is None:
-            error_msg = (
-                "Fatal error: the parameter 'paths' "
-                "is required but was not found. "
-                "Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
-
-        dicom_studies_dir = paths_cfg.get('dicom_studies', None)
-        if dicom_studies_dir is None or not Path(dicom_studies_dir).is_dir():
-            error_msg = (
-                "Fatal error: 'paths -> dicom_studies' must be a valid directory. "
-                f"Received: '{dicom_studies_dir}'. Please verify your YAML configuration."
-            )
-            raise ValueError(error_msg)
+        paths_cfg = self._config['paths']
+        dicom_studies_dir = paths_cfg['dicom_studies']
 
         try:
             # Convert DICOM files to TFRecords (if needed)
@@ -177,15 +145,6 @@ class TFRecordFilesManager:
                 self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
                 # 2. Load and merge metadata
-                root_dir_cfg = self._config.get("root_dir", None)
-                if root_dir_cfg is None:
-                    error_msg = (
-                        "Fatal error: the parameter 'root_dir' "
-                        "is required but was not found. "
-                        "Please check your YAML file structure."
-                    )
-                    raise ValueError(error_msg)
-
                 metadata_handler = CSVMetadataHandler(
                     config=self._config,
                     logger=logger,
@@ -362,7 +321,9 @@ class TFRecordFilesManager:
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
 
         nb_skipped_series = 0
-        columns = ['study_id', 'series_id', 'series_description', 'actual_file_format']
+        columns = [
+            'study_id', 'series_id', 'series_description', 'instance_number', 'actual_file_format'
+        ]
         input_features_df = metadata_df[columns].drop_duplicates()
         labels_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
 
@@ -450,7 +411,7 @@ class TFRecordFilesManager:
         labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
         logger: Optional[logging.Logger] = None
-    ) -> Tuple[int, int, int]:
+    ) -> Tuple[int, int, int, int]:
 
         """
         Coordinates the processing of a single series by validating its directory
@@ -527,7 +488,7 @@ class TFRecordFilesManager:
 
             dicom_files_list = list(series_path.glob("*.dcm"))
             nb_files = len(dicom_files_list)
-            return 0, 0, nb_files
+            return 0, 0, nb_files, 0
 
         try:
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
@@ -1018,8 +979,10 @@ class TFRecordFilesManager:
             f"Function {class_name}.{func_name} started "
             f"for processing DICOM file {dicom_path}"
         )
-        logger.info(info_msg,
-                    extra={"action": "process_dicom_file_with_metadata", "dicom_file": dicom_path})
+        logger.info(
+            info_msg,
+            extra={"action": "process_dicom_file_with_metadata", "dicom_file": dicom_path}
+        )
 
         # Metadata serialization
         instance_id = int(dicom_path.stem)
@@ -1037,7 +1000,7 @@ class TFRecordFilesManager:
             # which is normally the rule with DICOM files.
 
             # The first dimension is useless and must be removed
-            img_array = np.squeeze(img_array)
+            img_array = np.squeeze(img_array, axis=0)
 
             # Handle Channels (Enforce Rank 3: [H, W, C])
             if img_array.ndim == 2:
@@ -1062,10 +1025,14 @@ class TFRecordFilesManager:
             # Scale the image to the target size :
             bool_var_1 = (input_features_df['series_id'] == series_id)
             bool_var_2 = (input_features_df['study_id'] == study_id)
+            bool_var_3 = (input_features_df['instance_number'] == instance_id)
             mask = bool_var_1 & bool_var_2
 
             relevant_data = (
-                input_features_df.loc[mask, ['actual_file_format', 'series_description']]
+                input_features_df.loc[
+                    mask,
+                    ['actual_file_format', 'series_description', 'instance_number']
+                ]
             )
 
             if not relevant_data.empty:
@@ -1074,9 +1041,38 @@ class TFRecordFilesManager:
                 # that was called by function CSVMetadataHandler._get_file_format().
                 # This format is the reverse order of the data returned by
                 # sitk.GetArrayFromImage(img), which is also used in this function.
-                target_format = relevant_data['actual_file_format'].iloc[0]
+                target_format_df = relevant_data['actual_file_format'].unique()
+                all_dimensions = [dim for fmt in target_format_df for dim in fmt[:2]]
+                max_val = max(all_dimensions)
+                target_format = (max_val, max_val)
+
                 description = int(relevant_data['series_description'].iloc[0])
 
+                current_image_format = relevant_data.loc[
+                    bool_var_3,
+                    'actual_file_format'
+                ].unique()[0][:2]
+
+                if current_image_format != target_format:
+                    pad_h = target_format[1] - current_image_format[1]  # Height
+                    pad_w = target_format[0] - current_image_format[0]  # Width
+
+                    pad_top = pad_h // 2
+                    pad_bottom = pad_h - pad_top
+
+                    pad_left = pad_w // 2
+                    pad_right = pad_w - pad_left
+
+                    img_array = np.pad(
+                        img_array,
+                        (
+                            (pad_top, pad_bottom),  # Axis 0: Height
+                            (pad_left, pad_right),  # Axis 1 Width
+                            (0, 0)  # Axis 2: Nb channels (no padding)
+                        ),
+                        mode='constant',
+                        constant_values=0
+                    )
             else:
                 raise ValueError(f"No matching data in file {class_name}.{func_name}")
 
@@ -1239,4 +1235,4 @@ class TFRecordFilesManager:
         Returns:
             int: The current maximum depth threshold.
         """
-        return self._config.get('series_depth')
+        return self._config['series_depth']

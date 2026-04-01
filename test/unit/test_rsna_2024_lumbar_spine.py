@@ -147,9 +147,9 @@ class TestRSNALumbarClassification:
             )
 
             # 2. Mock SystemStreamTee to prevent actual stdout/stderr redirection during test
-            mock_tee = MagicMock()
-            mock_tee_class = stack.enter_context(patch.object(src_module, "SystemStreamTee"))
-            mock_tee_class.return_value = mock_tee
+            # mock_tee = MagicMock()
+            # mock_tee_class = stack.enter_context(patch.object(src_module, "SystemStreamTee"))
+            # mock_tee_class.return_value = mock_tee
 
             # 3. Setup ConfigLoader mock to return our controlled mock_config
             mock_cfg_loader = stack.enter_context(patch.object(src_module, "ConfigLoader"))

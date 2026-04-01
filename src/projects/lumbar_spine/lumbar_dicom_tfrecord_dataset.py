@@ -38,25 +38,30 @@ class LumbarDicomTFRecordDataset():
                 Determines the depth dimension of the reconstructed tensors.
         """
 
-        self._logger = (
-            logger if logger is not None and isinstance(logger, logging.Logger)
-            else logging.getLogger(self.__class__.__name__)
-        )
-        self._config = config
-        self._MAX_RECORDS = config['data_specs']['max_records_per_frame']
-        self._series_depth = series_depth
+        try:
+            self._logger = (
+                logger if logger is not None and isinstance(logger, logging.Logger)
+                else logging.getLogger(self.__class__.__name__)
+            )
+            self._config = config
+            self._MAX_RECORDS = config['data_specs']['max_records_per_frame']
+            self._series_depth = series_depth
 
-        # We define the epoch tracker here.
-        # Using a tf.Variable is mandatory to allow the TF Graph to pick up
-        # changes during training without rebuilding the whole dataset.
-        self._current_epoch_var = tf.Variable(
-            0,
-            dtype=tf.int64,
-            trainable=False,
-            name="dataset_epoch_counter"
-        )
+            # We define the epoch tracker here.
+            # Using a tf.Variable is mandatory to allow the TF Graph to pick up
+            # changes during training without rebuilding the whole dataset.
+            self._current_epoch_var = tf.Variable(
+                0,
+                dtype=tf.int64,
+                trainable=False,
+                name="dataset_epoch_counter"
+            )
 
-        self._logger.info("LumbarDicomTFRecordDataset initialized")
+            self._logger.info("LumbarDicomTFRecordDataset initialized")
+
+        except RuntimeError as e:
+            self._logger.error(f"LumbarDicomTFRecordDataset initialization failed: {e}")
+            raise
 
     def generate_tfrecord_dataset(
         self,
@@ -151,7 +156,7 @@ class LumbarDicomTFRecordDataset():
         )
 
         # 6. Skip corrupted records automatically
-        dataset = dataset.ignore_errors()
+        # dataset = dataset.ignore_errors()
 
         # 7. Group all records found in the file (1 file = 1 patient)
         # We don't drop remainder here to catch all available frames

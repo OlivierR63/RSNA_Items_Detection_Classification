@@ -74,7 +74,7 @@ def main():
         csv_coordinates_files_df.astype(int).itertuples(index=False, name=None)
     )
 
-    with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
+    with setup_logger("train", log_dir=log_dir, config=config) as logger:
 
         print_and_log_info("\n" + "="*40, logger)
         print_and_log_info("STARTING ANALYSIS OF STUDIES FOLDER", logger)

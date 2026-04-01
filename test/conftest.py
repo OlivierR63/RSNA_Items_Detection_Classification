@@ -78,6 +78,7 @@ def mock_config(tmp_path, setup_csv_files):
         "system": {
             "nb_cores": 7,
             "log_retention_days": 30,
+            "memory_threshold_percent": 95,
             "seed": 42
         },
 
@@ -92,6 +93,12 @@ def mock_config(tmp_path, setup_csv_files):
             "group_studies": 1,
             "prefetch_batches": 1,
             "num_parallel_calls": 1
+        },
+
+        "logging": {
+            "level": "DEBUG",
+            "console_display": True,
+            "use_json": False
         }
     }
 

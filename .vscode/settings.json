@@ -48,6 +48,7 @@
         "pytest",
         "reindexing",
         "RSNA",
+        "rtrn",
         "signum",
         "sitk",
         "skyblue",
@@ -62,5 +63,8 @@
         "vmem",
         "xlabel",
         "ylabel"
-    ]
+    ],
+    "yaml.schemas": {
+        "https://raw.githubusercontent.com/instant-python/instant-python/main/schemas/main-structure-schema.json": "file:///c%3A/Users/Olivier/Desktop/Projet_Kaggle/RSNA_Items_Detection_Classification/src/config/lumbar_spine_config.yaml"
+    }
 }

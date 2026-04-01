@@ -6,22 +6,32 @@ import logging
 
 def compute_rsna_loss_core(y_true, y_pred):
     """
-    Private helper: Centralized logic for RSNA weighted log loss calculation.
+    Core logic for RSNA weighted log loss.
+    Assumes y_pred is already a probability distribution (after softmax).
     """
     class_weights = tf.constant([1.0, 2.0, 4.0], dtype=tf.float32)
+
+    # If y_true is not one-hot (e.g., shape is [batch, 25]), convert it:
+    if len(y_true.shape) != len(y_pred.shape):
+        y_true = tf.one_hot(tf.cast(y_true, tf.int32), depth=3)
 
     # Ensure y_true is float32 for mathematical operations
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
 
-    # Numerical stability
-    epsilon = 1e-7
+    # Standard epsilon for stability
+    epsilon = tf.keras.backend.epsilon()
     y_pred = tf.clip_by_value(y_pred, epsilon, 1.0 - epsilon)
 
-    # Core mathematical formula
-    loss = -y_true * tf.math.log(y_pred)
+    # Compute weighted log loss
+    # Shape of y_true * log(y_pred) is (batch, 25, 3)
+    individual_losses = -y_true * tf.math.log(y_pred)
 
-    return tf.reduce_sum(loss * class_weights, axis=-1)
+    # Apply weights across the last dimension (the 3 classes)
+    weighted_losses = tf.reduce_sum(individual_losses * class_weights, axis=-1)
+
+    # Return the sum of weights for all 25 conditions
+    return weighted_losses
 
 
 # --- 1. The Loss Functions (for Gradients) ---
@@ -78,7 +88,7 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         """
         self._logger = logger
 
-        self._logger.info(f"Starting initializing RSNAKaggleMetric ; **kwargs = {kwargs}")
+        self._logger.debug(f"Starting initializing RSNAKaggleMetric ; **kwargs = {kwargs}")
 
         try:
             super(RSNAKaggleMetric, self).__init__(name=name, **kwargs)
@@ -95,7 +105,7 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
                 initializer=tf.zeros_initializer(),
                 dtype=tf.float32
             )
-            self._logger.info("RSNAKaggleMetric initialized")
+            self._logger.debug("RSNAKaggleMetric initialized")
 
         except Exception as e:
             error_msg = f"RSNAKaggleMetric initialization failed: {e}"
@@ -111,7 +121,7 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
             y_pred (tf.Tensor): Predictions from the model.
             sample_weight (optional): Not used here but required by Keras API.
         """
-        self._logger.info("Starting method RSNAKaggleMetric.update_state")
+        self._logger.debug("Starting method RSNAKaggleMetric.update_state")
 
         # Ensure y_true is float32 for mathematical operations
         y_true = tf.cast(y_true, tf.float32)
@@ -124,7 +134,7 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         self.total_loss.assign_add(tf.cast(batch_mean, tf.float32))
         self.count.assign_add(1.0)
 
-        self._logger.info("Method RSNAKaggleMetric.update_state completed successfully")
+        self._logger.debug("Method RSNAKaggleMetric.update_state completed successfully")
 
     def result(self):
         """
@@ -133,13 +143,14 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         Returns:
             tf.Tensor: The average RSNA score across all processed batches.
         """
-        self._logger.info("Starting method RSNAKaggleMetric.result")
+        self._logger.debug("Starting method RSNAKaggleMetric.result")
+
         division = tf.math.divide_no_nan(
             tf.cast(self.total_loss, tf.float32),
             tf.cast(self.count, tf.float32)
         )
 
-        self._logger.info("Method RSNAKaggleMetric.result completed successfully")
+        self._logger.debug("Method RSNAKaggleMetric.result completed successfully")
 
         return division
 
@@ -147,7 +158,7 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         """
         Resets the state variables at the end of each epoch.
         """
-        self._logger.info("Starting method RSNAKaggleMetric.reset_state")
+        self._logger.debug("Starting method RSNAKaggleMetric.reset_state")
         self.total_loss.assign(0.0)
         self.count.assign(0.0)
-        self._logger.info("Method RSNAKaggleMetric.reset_state completed successfully.")
+        self._logger.debug("Method RSNAKaggleMetric.reset_state completed successfully.")

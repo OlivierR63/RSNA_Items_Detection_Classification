@@ -110,7 +110,7 @@ def test_integration_dicom_serialization(mock_setup, tmp_path):
             # Patch GetArrayFromImage if your function uses it to get pixel data
             with patch(
                 "SimpleITK.GetArrayFromImage",
-                return_value=np.zeros((512, 512), dtype=np.int16)
+                return_value=np.zeros((1, 512, 512), dtype=np.int16)
             ):
 
                 # 4. EXECUTION

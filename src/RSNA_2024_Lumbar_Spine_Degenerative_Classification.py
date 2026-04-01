@@ -9,7 +9,7 @@ import gc
 from keras.models import load_model
 
 from src.core.utils.logger import setup_logger, get_current_logger
-from src.core.utils.system_stream_tee import SystemStreamTee
+# from src.core.utils.system_stream_tee import SystemStreamTee
 from src.core.utils.clean_logs import clean_old_logs
 from src.core.models.model_factory import ModelFactory
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
@@ -72,32 +72,10 @@ config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
 config = config_loader.get()
 
 # Apply global TF settings from the config
-training_cfg = config.get('training', None)
-if training_cfg is None:
-    error_msg = (
-        "Fatal error: "
-        "the setting variable 'training' is required "
-        "but was not found. Please check your YAML file structure."
-    )
-    raise ValueError(error_msg)
+training_cfg = config['training']
 
-compilation_cfg = config.get('compilation', None)
-if compilation_cfg is None:
-    error_msg = (
-        "Fatal error: "
-        "the setting variable 'training -> compilation' is required "
-        "but was not found. Please check your YAML file structure."
-    )
-    raise ValueError(error_msg)
-
-run_eagerly_val = compilation_cfg.get('run_eagerly', False)
-
-if run_eagerly_val not in [True, False]:
-    error_msg = (
-        "Fatal error: the parameter 'training -> compilation -> run_eagerly' "
-        "is  not a boolean. Please check your YAML file structure."
-    )
-    raise ValueError(error_msg)
+compilation_cfg = config['compilation']
+run_eagerly_val = compilation_cfg['run_eagerly']
 
 tf.config.run_functions_eagerly(run_eagerly_val)
 tf.data.experimental.enable_debug_mode()  # Optional but helpful for tf.data
@@ -166,83 +144,23 @@ def get_or_build_model(
 
     # Extract configs locally within the function to ensure independence
     try:
-        optimizer_cfg = config.get('optimizer', None)
+        optimizer_cfg = config['optimizer']
+        compilation_cfg = config['compilation']
+        callbacks_cfg = config['callbacks']
 
-        if optimizer_cfg is None:
-            error_msg = (
-                "Fatal error: the setting variable 'optimizer' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        data_specs_cfg = config['data_specs']
+        max_records = int(data_specs_cfg['max_records_per_frame'])
 
-        compilation_cfg = config.get('compilation', None)
-
-        if compilation_cfg is None:
-            error_msg = (
-                "Fatal error: the setting variable 'compilation' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        callbacks_cfg = config.get('callbacks', None)
-
-        if callbacks_cfg is None:
-            error_msg = (
-                "Fatal error: the setting variable 'callbacks' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        data_specs_cfg = config.get('data_specs', None)
-
-        if data_specs_cfg is None:
-            error_msg = (
-                "Fatal error: the setting variable 'data_specs' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        max_records = int(data_specs_cfg.get('max_records_per_frame', -1))
-        if max_records < 0:
-            error_msg = (
-                "Fatal error: the setting variable 'data_specs -> max_records_per_frame' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        learning_rate = float(optimizer_cfg.get('learning_rate', -1))
-        clip_norm = float(optimizer_cfg.get('clipnorm', -1))
+        learning_rate = float(optimizer_cfg['learning_rate'])
+        clip_norm = float(optimizer_cfg['clipnorm'])
 
     except (ValueError, TypeError) as e:
         raise ValueError(f"Configuration type error: {e}")
 
-    # Explicit check to prevent logic errors later in the pipeline
-    if max_records < 0 or learning_rate < 0 or clip_norm < 0:
-        error_msg = (
-            "Fatal error: the setting variables 'learning_rate' and/or 'clipnorm' "
-            "were not properly defined. Please check your configuration file."
-        )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
     # Select the checkpoint loading policy: 'best' for the lowest validation loss
     # or 'last' to continue from the most recent epoch.
-    checkpoint_dir = Path(config["paths"].get("checkpoint", "checkpoints")).resolve()
-    resume_mode = callbacks_cfg.get("resume_mode", "last")
-
-    if resume_mode not in ["best", "last"]:
-        error_msg = (
-            "Fatal error: the parameter 'training -> hyperparameters -> resume_mode' "
-            "was not properly set. Only two values are permitted: 'best' or 'last'. "
-            "Please check your YAML file structure."
-        )
-        logger.critical(error_msg)
-        raise ValueError(error_msg)
+    checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+    resume_mode = callbacks_cfg["resume_mode"]
 
     # Define filenames based on your ModelTrainer saving logic
     best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
@@ -322,16 +240,7 @@ def get_or_build_model(
         # We give more weight to location (5.0) because the coordinate regression
         # is currently struggling to converge compared to classification.
 
-        loss_weights_settings = compilation_cfg.get('loss_weights', None)
-
-        if loss_weights_settings is None:
-            error_msg = (
-                "Fatal error in get_çor_build_model: "
-                "the setting variable 'training -> compilation -> loss_weights' is required "
-                "but was not found. Please check your YAML file structure."
-            )
-
-            raise ValueError(error_msg)
+        loss_weights_settings = compilation_cfg['loss_weights']
 
         loss_weights = {
             "severity_output": loss_weights_settings["severity_output"],
@@ -353,11 +262,7 @@ def get_or_build_model(
             "adam": tf.keras.optimizers.Adam
         }
 
-        optim = optimizer_cfg.get('type', None)
-        if optim not in optimizers:
-            msg_error = f"Unsupported optimizer: {optim}"
-            logger.error(msg_error, exc_info=True)
-            raise ValueError(msg_error)
+        optim = optimizer_cfg['type']
 
         model.compile(
             optimizer=optimizers[optim](
@@ -407,14 +312,8 @@ def main():
     # Identification of the environment to best fit the resources
     is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
 
-    system_cfg = config.get("system", None)
-    if system_cfg is None:
-        error_msg = (
-            "Fatal error: the parameter 'system' is required but was not found. "
-            "Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-    nb_cores_config = system_cfg.get('nb_cores', 0)
+    system_cfg = config["system"]
+    nb_cores_config = system_cfg['nb_cores']
 
     # Use 7 threads on local PC, but limit to 4 on Kaggle to avoid CPU overload
     cpu_threads = nb_cores_config if is_kaggle else 7
@@ -437,47 +336,40 @@ def main():
     # This prevents warnings regarding slight numerical differences due to floating-point round-off
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
-    paths_cfg = config.get('paths', None)
-    if paths_cfg is None:
-        error_msg = (
-            "Fatal error: the parameter 'paths' is required but was not found. "
-            "Please check your YAML file structure."
-        )
+    paths_cfg = config['paths']
 
     # Mirror all the console and error output toward a dedicated file
-    system_stream_tee_path = paths_cfg.get('log_mirror', None)
-    if system_stream_tee_path is None:
-        error_msg = (
-            "Fatal error: the parameter 'paths -> log_mirror' is required but was not found. "
-            "Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    # system_stream_tee_path = paths_cfg['log_mirror']
 
     # Initialize the system tee to capture stdout/stderr
-    mirror = SystemStreamTee(system_stream_tee_path)
-    sys.stdout = mirror
-    sys.stderr = mirror
+    # mirror = SystemStreamTee(system_stream_tee_path)
+    # sys.stdout = mirror
+    # sys.stderr = mirror
+    # log_file_fd = mirror._log_file.fileno()
+    # os.dup2(log_file_fd, sys.stderr.fileno())
+    # os.dup2(log_file_fd, sys.stdout.fileno())
 
     # 2. Initialize logger with process-specific context
-    log_dir = paths_cfg.get("output", None)  # use "logs" as default if not in config.
-    if log_dir is None:
-        error_msg = (
-            "Fatal error: the parameter 'paths -> output' is required but was not found. "
-            "Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    log_dir = paths_cfg["output"]
 
     log_dir = Path(log_dir) / "logs"
 
-    with setup_logger("train", log_dir=log_dir, use_json=True) as logger:
+    config = config_loader.get()
+
+    with setup_logger(
+        process_name="train",
+        log_dir=log_dir,
+        config=config
+    ) as logger:
+
         # The logger is now set up available globally via get_current_logger().
         # It will automatically close at the end of this block.
         logger.info(f"Configuration loaded successfully. Loaded_values: {config}")
 
         try:
-            if config_loader.get_value("series_depth") is None:
-                data_specs_cfg = config_loader.get_value("data_specs", {})
-                percentile_str = data_specs_cfg.get("series_depth_percentile", 95)
+            if config["series_depth"] is None:
+                data_specs_cfg = config["data_specs"]
+                percentile_str = data_specs_cfg["series_depth_percentile"]
 
                 if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
                     series_depth = config_loader.calculate_series_depth(
@@ -540,17 +432,10 @@ def main():
                         extra={"status": "completed"})
 
         # Remove log files older than 30 days
-        log_retention_days = system_cfg.get('log_retention_days', None)
-
-        if log_retention_days is None:
-            error_msg = (
-                "Fatal error: the setting variable 'system -> log_retention_days' "
-                "is required but was not found. Please check your YAML file structure."
-            )
-            raise ValueError(error_msg)
+        log_retention_days = system_cfg['log_retention_days']
 
         clean_old_logs(days=int(log_retention_days))
-        mirror.close()
+        # mirror.close()
 
 
 if __name__ == "__main__":

@@ -85,6 +85,9 @@ class ConfigLoader:
                     resolved_csv = (config_dir / val).resolve()
                     csv_dict[csv_key] = str(resolved_csv)
 
+        # Final check: Verify the compliance of the config dictionary
+        self._check_config_compliance()
+
     def set_value(self, key: str, value: Any) -> None:
         """
         Sets a configuration value for a specific key.
@@ -235,3 +238,588 @@ class ConfigLoader:
             )
 
         return series_depth
+
+    def _check_config_compliance(self):
+
+        paths_cfg = self._config.get("paths", None)
+        if paths_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        dicom_studies_dir = paths_cfg.get('dicom_studies', None)
+        if dicom_studies_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> dicom_studies' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        tfrecord_dir = paths_cfg.get('tfrecord', None)
+        if tfrecord_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> tfrecord' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        output_dir = paths_cfg.get('output', None)
+        if output_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> output' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        checkpoint_dir = Path(paths_cfg.get("checkpoint", None))
+        if checkpoint_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> checkpoint' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        log_mirror_dir = paths_cfg.get('log_mirror', None)
+        if log_mirror_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> log_mirror' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        tf_cache_dir = paths_cfg.get('tf_cache', None)
+        if tf_cache_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> tf_cache' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        inspection_dir = paths_cfg.get('inspection', None)
+        if inspection_dir is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> inspection' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        csv_cfg = paths_cfg.get('csv', None)
+        if csv_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> csv' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        series_description_csv = csv_cfg.get('series_description', None)
+        if series_description_csv is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> csv -> series_description' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        label_coordinates_csv = csv_cfg.get('label_coordinates', None)
+        if label_coordinates_csv is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> csv -> label_coordinates' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        label_enriched_csv = csv_cfg.get('label_enriched', None)
+        if label_enriched_csv is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> csv -> label_enriched' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        train_csv = csv_cfg.get('train', None)
+        if train_csv is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'paths -> csv -> train' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        data_specs_cfg = self._config.get('data_specs', None)
+        if data_specs_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'data_specs' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        series_depth_percentile = data_specs_cfg.get('series_depth_percentile', None)
+        if series_depth_percentile is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'data_specs -> series_depth_percentile' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        max_records_per_frame = data_specs_cfg.get('max_records_per_frame', None)
+        if max_records_per_frame is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'data_specs -> max_records_per_frame' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        dataset_buffer_size = data_specs_cfg.get('dataset_buffer_size_mb', None)
+        if dataset_buffer_size is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'data_specs -> dataset_buffer_size_mb' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        models_cfg = self._config.get('models', None)
+        if models_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        backbone_2d_cfg = models_cfg.get('backbone_2d', None)
+        if backbone_2d_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> backbone_2d' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        type_2d = backbone_2d_cfg.get('type', None)
+        if type_2d is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> backbone_2d -> type' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        img_shape = backbone_2d_cfg.get('img_shape', None)
+        if img_shape is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> backbone_2d -> img_shape' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        freeze = backbone_2d_cfg.get('freeze', None)
+        if freeze is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> backbone_2d -> freeze' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        scaling_dict = backbone_2d_cfg.get('scaling', None)
+        if scaling_dict is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> backbone_2d -> scaling' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        min_scaling_value, max_scaling_value = (
+            scaling_dict.get("min", None),
+            scaling_dict.get("max", None)
+        )
+
+        if None in (min_scaling_value, max_scaling_value):
+            error_msg = (
+                "Fatal error in normalize_image: "
+                "the setting variable 'models -> backbone_2d -> scaling' is required "
+                "but the dictionary values are invalid. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        if not (
+            isinstance(min_scaling_value, (int, float))
+            and isinstance(max_scaling_value, (int, float))
+        ):
+            raise ValueError("Scaling values must be numeric (int or float).")
+
+        if min_scaling_value > max_scaling_value:
+            error_msg = (
+                "Fatal error in normalize_image: 'min' cannot be greater than 'max' "
+                "in scaling configuration."
+            )
+            raise ValueError(error_msg)
+
+        head_3d_cfg = models_cfg.get('head_3d', None)
+        if head_3d_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> head_3d' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        type_3d = head_3d_cfg.get('type', None)
+        if type_3d is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> head_3d -> type' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        filters = head_3d_cfg.get('filters', None)
+        if filters is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'models -> head_3d -> filters' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        training_cfg = self._config.get('training', None)
+        if training_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        batch_size = training_cfg.get('batch_size', None)
+        if batch_size is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> batch_size' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        if batch_size <= 0:
+            error_msg = (
+                "Fatal error in prepare_training_and_validation_datasets: "
+                "'batch_size' shall be strictly positive"
+            )
+            raise ValueError(error_msg)
+
+        nb_epoch = training_cfg.get('epochs', None)
+        if nb_epoch is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> epochs' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        train_split_ratio = training_cfg.get('train_split_ratio', None)
+        if train_split_ratio is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> train_split_ratio' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        optimizer_cfg = self._config.get('optimizer', None)
+        if optimizer_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'optimizer' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        optim_type = optimizer_cfg.get('type', None)
+        if optim_type is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'optimizer -> type' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        learning_rate = optimizer_cfg.get('learning_rate', None)
+        if learning_rate is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'optimizer -> learning_rate' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        clipnorm = optimizer_cfg.get('clipnorm', None)
+        if clipnorm is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'optimizer -> clipnorm' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        callbacks_cfg = self._config.get('callbacks', None)
+        if callbacks_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'callbacks' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        patience = callbacks_cfg.get('patience', None)
+        if patience is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'callbacks -> patience' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        resume_mode = callbacks_cfg.get('resume_mode', None)
+        if resume_mode is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'callbacks -> resume_mode' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        if resume_mode not in ["best", "last"]:
+            error_msg = (
+                "Fatal error: the parameter 'callbacks -> resume_mode' "
+                "was not properly set. Only two values are permitted: 'best' or 'last'. "
+                "Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        compilation_cfg = self._config.get('compilation', None)
+        if compilation_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'compilation' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        loss_weights_cfg = compilation_cfg.get('loss_weights', None)
+        if loss_weights_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'compilation -> loss_weights' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        severity_cfg = loss_weights_cfg.get('severity_output', None)
+        if severity_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'compilation -> loss_weights -> severity_output' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        location_cfg = loss_weights_cfg.get('location_output', None)
+        if location_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'compilation -> loss_weights -> location_output' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        run_eagerly_cfg = compilation_cfg.get('run_eagerly', None)
+        if run_eagerly_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'compilation -> run_eagerly' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        system_cfg = self._config.get("system", None)
+        if system_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        nb_cores = system_cfg.get("nb_cores", None)
+        if nb_cores is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system -> nb_cores' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        log_retention_days = system_cfg.get("log_retention_days", None)
+        if log_retention_days is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system -> log_retention_days' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        seed = system_cfg.get("seed", None)
+        if seed is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system -> seed' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        mem_threshold_percent = system_cfg.get("memory_threshold_percent", None)
+        if mem_threshold_percent is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system -> memory_threshold_percent' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        dataset_steering_cfg = self._config.get("dataset_steering", None)
+        if dataset_steering_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        interleave_cfg = dataset_steering_cfg.get("interleave", None)
+        if interleave_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> interleave' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        nb_parallel_files = interleave_cfg.get("parallel_files", None)
+        if nb_parallel_files is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> interleave -> parallel_files' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        block_per_file = interleave_cfg.get("block_per_file", None)
+        if block_per_file is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> interleave -> block_per_file' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        deterministic = interleave_cfg.get("deterministic", None)
+        if deterministic is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> interleave -> deterministic' "
+                "is required but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        group_studies = dataset_steering_cfg.get("group_studies", None)
+        if group_studies is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> group_studies' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        prefetch_batches = dataset_steering_cfg.get("prefetch_batches", None)
+        if prefetch_batches is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> prefetch_batches' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        num_parallel_calls = dataset_steering_cfg.get("num_parallel_calls", None)
+        if num_parallel_calls is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> num_parallel_calls' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        use_cache = dataset_steering_cfg.get("use_cache", None)
+        if use_cache is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'dataset_steering -> use_cache' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        logging_cfg = self._config.get("logging", None)
+        if logging_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'logging' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        logging_level = logging_cfg.get("level", None)
+        if logging_level is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'logging -> level' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        console_display = logging_cfg.get("console_display", None)
+        if console_display is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'logging -> console_display' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        use_json = logging_cfg.get("use_json", None)
+        if use_json is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'logging -> use_json' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        return None

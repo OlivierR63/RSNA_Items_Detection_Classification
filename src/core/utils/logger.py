@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 import sys
 import contextlib
-from typing import Optional, Callable, Generator
+from typing import Optional, Callable, Generator, Dict, Any
 import json
 from functools import wraps
 from inspect import signature
@@ -16,11 +16,14 @@ _CURRENT_LOGGER: Optional[logging.Logger] = None
 
 
 @contextlib.contextmanager
-def setup_logger(process_name: str,
-                 log_dir: str = "logs",
-                 use_json: bool = False,
-                 console_display=False) -> Generator[logging.Logger, None, None]:
-    """Configures a logger linked to the current process ID.
+def setup_logger(
+    process_name: str,
+    config: Dict[str, Any],
+    log_dir: str = "logs"
+) -> Generator[logging.Logger, None, None]:
+
+    """
+    Configures a logger linked to the current process ID.
     Supports both text and JSON formatting.
 
     Args:
@@ -31,7 +34,44 @@ def setup_logger(process_name: str,
     Yields:
         logging.Logger: Configured logger (also stored in _CURRENT_LOGGER).
     """
+
     global _CURRENT_LOGGER
+
+    logging_cfg = config.get('logging', None)
+    if logging_cfg is None:
+        error_msg = (
+            "Fatal error in setup_logger: "
+            "the setting variable 'logging' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    logging_level = logging_cfg.get('level', None)
+    if logging_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        error_msg = (
+            "Fatal error in setup_logger: "
+            "the setting variable 'logging -> level' is required "
+            "but was not properly set. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    console_display = logging_cfg.get('console_display', False)
+    if not isinstance(console_display, bool):
+        error_msg = (
+            "Fatal error in setup_logger: "
+            "the setting variable 'logging -> console_display' is required "
+            "but was not properly set. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    use_json = logging_cfg.get('use_json', False)
+    if not isinstance(use_json, bool):
+        error_msg = (
+            "Fatal error in setup_logger: "
+            "the setting variable 'logging -> use_json' is required "
+            "but was not properly set. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
 
     # 1. Get the current process ID
     pid = os.getpid()
@@ -46,7 +86,11 @@ def setup_logger(process_name: str,
 
     # 4. Configure the logger
     logger = logging.getLogger(f"{process_name}_{pid}")
-    logger.setLevel(logging.INFO)
+
+    if (logging_level == "DEBUG"):
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
 
     # 5. Clear any existing handlers to avoid duplicate logs
     if _CURRENT_LOGGER is not None:
@@ -59,9 +103,9 @@ def setup_logger(process_name: str,
         formatter = JSONFormatter()
     else:
         formatter = logging.Formatter(
-                                      '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                                      datefmt='%Y-%m-%d %H:%M:%S'
-                                        )
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
 
     # 6. File handler (automatically closed at the end of the block)
     file_handler = logging.FileHandler(str(log_file), encoding='utf-8')
@@ -88,16 +132,24 @@ def setup_logger(process_name: str,
 
 
 def get_current_logger() -> logging.Logger:
-    """Returns the current logger instance.
+    """
+    Retrieves the currently configured logger instance for the application.
+
+    If no logger has been initialized via `setup_logger()`, this function
+    returns a default root logger. This fallback prevents initialization
+    errors during module imports, particularly during unit test discovery
+    with Pytest.
 
     Returns:
-        logging.Logger: The current logger instance.
-
-    Raises:
-        RuntimeError: If no logger is currently set up.
+        logging.Logger: The active logger instance or a default fallback logger.
     """
+    global _CURRENT_LOGGER
+
     if _CURRENT_LOGGER is None:
-        raise RuntimeError("No logger is currently set up. Call setup_logger() first.")
+        # Fallback to a default logger to allow Pytest discovery and
+        # prevent RuntimeError during imports.
+        _CURRENT_LOGGER = logging.getLogger("default")
+
     return _CURRENT_LOGGER
 
 

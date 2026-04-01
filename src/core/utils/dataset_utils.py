@@ -1,7 +1,15 @@
 # coding: utf-8
 
-import tensorflow as tf
+# Standard library
 from typing import Dict, Tuple, Any
+import os
+import sys
+
+# Third party library
+import tensorflow as tf
+
+# Local module
+from src.core.utils.logger import get_current_logger
 
 
 # Define the dataset mapping helper functions
@@ -35,7 +43,9 @@ def parse_tfrecord_single_element(
        RAM footprint and accelerate GPU throughput.
 
     Args:
-        feature_tf: A serialized tf.train.Example proto (as a string Tensor).
+        - feature_tf: A serialized tf.train.Example proto (as a string Tensor).
+        - current_epoch_tensor: index on the current epoch
+        - config: application setting
 
     Returns:
         A Tuple containing:
@@ -45,8 +55,21 @@ def parse_tfrecord_single_element(
         - labels_dict (dict): Dictionary with a 'records' key containing
           a (MAX_RECORDS, 4) float32 tensor of [condition_level, severity, x_norm, y_norm].
     """
-    model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
-    max_records = config["data_specs"]["max_records_per_frame"]
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function parse_tfrecord_single_element")
+
+    models_cfg = config['models']
+    backbone_2d_cfg = models_cfg['backbone_2d']
+    img_shape_cfg = backbone_2d_cfg['img_shape']
+    model_2d_height, model_2d_width, _ = img_shape_cfg
+
+    data_specs_cfg = config['data_specs']
+    max_records = data_specs_cfg['max_records_per_frame']
+
+    logging_cfg = config['logging']
+    level = logging_cfg['level']
 
     # Define the structure of the features stored in the TFRecord.
     feature_description = {
@@ -107,11 +130,30 @@ def parse_tfrecord_single_element(
     width_t = tf.cast(img_width_t, tf.int32)
 
     # --- 2. Deserialize and Reshape the Image Tensor (Pure TF) ---
-    image_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.uint16)
+    image_raw_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.uint16)
 
     # IMPORTANT: decode_raw returns a 1D vector. We MUST reshape it to (H, W, 1)
     # before any image operation like pad or crop.
-    image_tf = tf.reshape(image_tf, [height_t, width_t, 1])
+    # Before we, we must ensure the data integrity.
+
+    expected_size = height_t * width_t
+    actual_size = tf.shape(image_raw_tf)[0]
+
+    if level == "DEBUG":
+        debug_msg = (
+            f"Processing -> Study: {study_id_t}, "
+            f"Series: {series_id_t}, "
+            f"Instance: {instance_number_t}, "
+            f"Format: ({img_height_t}, {img_width_t}), "
+            f"Expected size: ({expected_size}), "
+            f"Actual size: ({actual_size})"
+
+        )
+        tf.print(debug_msg)
+
+    check_op = raise_size_error(expected_size, actual_size)
+    with tf.control_dependencies([check_op]):
+        image_tf = tf.reshape(image_raw_tf, [height_t, width_t, 1])
 
     # Static shape hint for the compiler
     image_tf.set_shape([None, None, 1])
@@ -215,15 +257,57 @@ def parse_tfrecord_single_element(
 
     return_object = (normalized_image_tf, metadata_dict, labels_dict)
 
+    logger.debug("Function parse_tfrecord_single_element completed")
+
     return return_object
 
 
-def create_padding_image(config: Dict[str, str]) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+def raise_size_error(expected_size, actual_size):
+    """
+    Creates a TensorFlow assertion to validate image data integrity.
+
+    Args:
+        expected_size: Calculated size based on metadata (height * width).
+        actual_size: Actual number of pixels found in the raw binary string.
+    """
+    condition = tf.equal(expected_size, actual_size)
+
+    return tf.cond(
+        condition,
+        lambda: tf.no_op(),
+        lambda: stop_process(expected_size, actual_size)
+    )
+
+
+def stop_process(expected_size, actual_size):
+    tf.py_function(python_stop, [expected_size, actual_size], [])
+    return tf.no_op()
+
+
+def python_stop(exp, act):
+    # This message is displayed right before the process is killed
+    tf.print("\n[FATAL] DATA CORRUPTION DETECTED")
+    tf.print("Expected size:", exp)
+    tf.print("Actual size:  ", act)
+
+    # Flush all the buffers and kill the process immediately
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(1)
+    return tf.no_op()
+
+
+def create_padding_image(
+    config: Dict[str, Any]
+) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
     """
     Generates a blank (black) image and neutral transformation parameters.
 
     This is used when 'is_padding' is 1, ensuring the tensor structure
     remains consistent across the dataset pipeline.
+
+    Args:
+        - config: Application settings
 
     Returns:
         A Tuple containing:
@@ -231,11 +315,19 @@ def create_padding_image(config: Dict[str, str]) -> Tuple[tf.Tensor, tf.Tensor, 
         - ratio (tf.float32): A neutral scaling ratio of 1.0.
         - offset (tf.float32): A zero translation vector [0.0, 0.0].
     """
+
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function create_padding_image")
+
     model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
     padding = tf.zeros(
         [model_2d_height, model_2d_width, 1],
         dtype=tf.float32
     )
+
+    logger.debug("Function create_padding_image completed")
 
     # Return neutral values to avoid affecting coordinate calculations
     return padding, tf.constant(1.0, dtype=tf.float32), tf.constant([0.0, 0.0], dtype=tf.float32)
@@ -246,7 +338,7 @@ def perform_deterministic_crop(
     height_t: tf.Tensor,
     width_t: tf.Tensor,
     seed: tf.Tensor,     # Expect a tensor of shape [2] (e.g.: [series_id, epoch])
-    config: Dict[str, str]
+    config: Dict[str, Any]
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
     """
     Crops the image using a deterministic seed to ensure all slices in a series
@@ -264,11 +356,12 @@ def perform_deterministic_crop(
     coordinate system of the cropped window.
 
     Args:
-        raw_image_tf: Original image tensor (H, W, 1) in uint16 or float32.
-        height_t: Actual height of the raw_image_tf.
-        width_t: Actual width of the raw_image_tf.
-        seed: A shape [2] int32 Tensor (e.g., [series_id, epoch]) used to
+        - raw_image_tf: Original image tensor (H, W, 1) in uint16 or float32.
+        - height_t: Actual height of the raw_image_tf.
+        - width_t: Actual width of the raw_image_tf.
+        - seed: A shape [2] int32 Tensor (e.g., [series_id, epoch]) used to
             guarantee spatial consistency across a series.
+        - config: Application settings
 
     Returns:
         A Tuple containing:
@@ -278,8 +371,39 @@ def perform_deterministic_crop(
         - offset_vector (tf.float32): Vector [x_offset, y_offset] (float32)
           containing negative integers representing the crop origin.
     """
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
 
-    model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
+    logger.debug("Starting function perform_deterministic_crop")
+
+    models_cfg = config.get('models', None)
+    if models_cfg is None:
+        error_msg = (
+            "Fatal error in perform_deterministic_crop: "
+            "the setting variable 'models' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    backbone_2d_cfg = models_cfg.get('backbone_2d', None)
+    if backbone_2d_cfg is None:
+        error_msg = (
+            "Fatal error in perform_deterministic_crop: "
+            "the setting variable 'models -> backbone_2d' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    img_shape_cfg = backbone_2d_cfg.get('img_shape', None)
+    if img_shape_cfg is None:
+        error_msg = (
+            "Fatal error in perform_deterministic_crop: "
+            "the setting variable 'models -> backbone_2d -> img_shape' is required "
+            "but was not found. Please check your YAML file structure."
+        )
+        raise ValueError(error_msg)
+
+    model_2d_height, model_2d_width, _ = img_shape_cfg
 
     # 1. Padding if the image is too small
     # This ensures the image is AT LEAST the size of the model canvas
@@ -317,6 +441,8 @@ def perform_deterministic_crop(
         -tf.cast(off_y, tf.float32)
     ])
 
+    logger.debug("Function perform_deterministic_crop completed")
+
     return tf.cast(final_img, tf.float32), scaling_ratio, offset_vector
 
 
@@ -324,12 +450,21 @@ def perform_resize(
     raw_image_tf: tf.Tensor,
     height_t: tf.Tensor,
     width_t: tf.Tensor,
-    config: Dict[str, str]
+    config: Dict[str, Any]
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
     """
     Performs isometric resizing and centering.
     """
-    model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function perform_resize")
+
+    models_cfg = config['models']
+    backbone_2d_cfg = models_cfg['backbone_2d']
+    img_shape_cfg = backbone_2d_cfg['img_shape']
+
+    model_2d_height, model_2d_width, _ = img_shape_cfg
 
     # Maintain [X, Y] logic for scaling calculation
     current_dims = tf.cast(tf.stack([width_t, height_t]), tf.float32)
@@ -349,6 +484,7 @@ def perform_resize(
     width_offset_t = tf.cast((model_2d_width - new_w) // 2, tf.float32)
     height_offset_t = tf.cast((model_2d_height - new_h) // 2, tf.float32)
 
+    logger.debug("Function perform_resize completed")
     return final_img, scaling_ratio, tf.stack([width_offset_t, height_offset_t])
 
 
@@ -365,59 +501,21 @@ def normalize_image(
     This ensures that background padding remains at absolute zero even after
     Min-Max scaling and range shifting.
     """
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
 
-    model_cfg = config.get("models", None)
-    if model_cfg is None:
-        error_msg = (
-            "Fatal error in normalize_image: "
-            "the setting variable 'models' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    logger.debug("Starting function normalize_image")
 
-    backbone_2d_cfg = model_cfg.get("backbone_2d", None)
-    if backbone_2d_cfg is None:
-        error_msg = (
-            "Fatal error in normalize_image: "
-            "the setting variable 'models -> backbone_2d' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    model_cfg = config["models"]
 
-    scaling_dict = backbone_2d_cfg.get("scaling", None)
-    if scaling_dict is None:
-        error_msg = (
-            "Fatal error in normalize_image: "
-            "the setting variable 'models -> backbone_2d -> scaling' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    backbone_2d_cfg = model_cfg["backbone_2d"]
+
+    scaling_dict = backbone_2d_cfg["scaling"]
 
     min_scaling_value, max_scaling_value = (
         scaling_dict.get("min", None),
         scaling_dict.get("max", None)
     )
-
-    if None in (min_scaling_value, max_scaling_value):
-        error_msg = (
-            "Fatal error in normalize_image: "
-            "the setting variable 'models -> backbone_2d -> scaling' is required "
-            "but the dictionary values are invalid. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
-    if not (
-        isinstance(min_scaling_value, (int, float))
-        and isinstance(max_scaling_value, (int, float))
-    ):
-        raise ValueError("Scaling values must be numeric (int or float).")
-
-    if min_scaling_value > max_scaling_value:
-        error_msg = (
-            "Fatal error in normalize_image: 'min' cannot be greater than 'max' "
-            "in scaling configuration."
-        )
-        raise ValueError(error_msg)
 
     # 2. Standard Normalization
     s_min = tf.cast(series_min_t, tf.float32)
@@ -429,6 +527,7 @@ def normalize_image(
     # Rescale to target range
     rescaled_image = normalized * (max_scaling_value - min_scaling_value) + min_scaling_value
 
+    logger.debug("Function normalize_image completed")
     return rescaled_image
 
 
@@ -436,7 +535,7 @@ def process_study_multi_series(
     images: tf.Tensor,
     meta: Dict[str, tf.Tensor],
     labels: Dict[str, tf.Tensor],
-    config: Dict[str, str],
+    config: Dict[str, any],
     is_training: bool = True
 ) -> Tuple[
             Tuple[
@@ -477,6 +576,10 @@ def process_study_multi_series(
                - study_id: The unified identifier for the study (scalar).
                - reduced_labels: Study-level diagnostic labels (compacted).
     """
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function process_study_multi_series")
 
     # --- 1. Define Search Targets (Integer Codes) ---
     # Based on the internal mapping: 0: "Sagittal T1", 1: "Sagittal T2", 2: "Axial T2"
@@ -488,42 +591,11 @@ def process_study_multi_series(
     # --- 2. Process Individual Branches ---
     # We extract the 3-tuple (Padded_Images, Selected_Series_ID, Description_Code) for each plane.
     # This handles series selection and black-frame padding internally.
-    series_depth = config.get('series_depth', None)
-    if series_depth is None:
-        error_msg = (
-            "Fatal error in process_study_multi_series: "
-            "the setting variable 'series_depth' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    series_depth = config['series_depth']
 
-    model_cfg = config.get("models", None)
-    if model_cfg is None:
-        error_msg = (
-            "Fatal error in process_study_multi_series: "
-            "the setting variable 'models' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
-    backbone_2d_cfg = model_cfg.get("backbone_2d", None)
-    if model_cfg is None:
-        error_msg = (
-            "Fatal error in process_study_multi_series: "
-            "the setting variable 'models -> backbone_2d' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
-    img_shape = backbone_2d_cfg.get("img_shape", None)
-    if not img_shape or len(img_shape) != 3:
-        error_msg = (
-            "Fatal error in process_study_multi_series: "
-            "the setting variable 'models -> backbone_2d -> img_shape' is required "
-            "and must contain 3 values (height, width, channels). "
-            "Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    model_cfg = config["models"]
+    backbone_2d_cfg = model_cfg["backbone_2d"]
+    img_shape = backbone_2d_cfg["img_shape"]
 
     model_2d_height, model_2d_width, model_2d_nb_channels = img_shape
 
@@ -574,7 +646,10 @@ def process_study_multi_series(
     reduced_labels = tf.nest.map_structure(reduce_to_first_element, labels)
 
     # Return the structured data required by LumbarDicomTFRecordDataset._format_for_model :
-    return (res_t1, res_t2, res_ax), study_id, reduced_labels
+    rtrn_value = (res_t1, res_t2, res_ax), study_id, reduced_labels
+
+    logger.debug("Function process_study_multi_series completed")
+    return rtrn_value
 
 
 def reduce_to_first_element(v):
@@ -612,7 +687,7 @@ def process_single_series_description(
     height: int,
     width: int,
     nb_channels: int,
-    config: dict,
+    config: Dict[str, Any],
     is_training: bool = True,
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -648,6 +723,10 @@ def process_single_series_description(
               Values: [sampling_flag, first_slice_index, target_desc_tensor].
               Note: target_desc_tensor is the encoded anatomical view.
     """
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function process_single_series_description")
 
     # Convert to int32 for stable comparison.
     current_desc = tf.cast(all_meta['series_description'], tf.int32)
@@ -665,7 +744,7 @@ def process_single_series_description(
     mask_has_data = tf.reduce_any(desc_mask)
 
     # Execute conditional logic
-    return tf.cond(
+    rtrn_value = tf.cond(
         mask_has_data,
         true_fn=lambda: process_valid_series(
             all_images, all_meta, desc_mask, target_desc_tensor,
@@ -675,6 +754,9 @@ def process_single_series_description(
             target_desc_tensor, series_depth, height, width, config
         )
     )
+
+    logger.debug("Function process_single_series_description completed")
+    return rtrn_value
 
 
 def process_valid_series(
@@ -720,6 +802,11 @@ def process_valid_series(
             - series_metadata (tf.Tensor): Series-level info vector (3,) [int32].
               Values: [sampling_flag, first_slice_index, target_desc_tensor].
     """
+
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function process_valid_series")
 
     # --- 1. Filtering by Description ---
     d_images = tf.boolean_mask(all_images, desc_mask)
@@ -773,7 +860,7 @@ def process_valid_series(
     # 5. Select image sampling mode
     slice_sampling_flag, indices = tf.cond(
         tf.logical_and(is_training, tf.greater(actual_count, series_depth)),
-        lambda: get_indices(actual_count, series_depth),
+        lambda: get_indices_on_images(actual_count, series_depth),
         # Default: Uniform Global sampling (for Val or small series)
         lambda: (
             False,
@@ -838,10 +925,15 @@ def process_valid_series(
         axis=0
     )
 
+    logger.debug("Function process_valid_series completed")
+
     return final_vol, slice_metadata, series_metadata
 
 
-def get_indices(actual_count, series_depth):
+def get_indices_on_images(
+    actual_count_tf: tf.Tensor,
+    series_depth: int
+) -> Tuple[bool, int]:
     """
     Determines which slice indices to extract from a series based on a sampling strategy.
 
@@ -859,22 +951,28 @@ def get_indices(actual_count, series_depth):
 
     Returns:
         A tuple containing:
-            - sampling_flag (tf.Tensor): Boolean flag (bool).
+            - sampling_flag: Boolean flag (bool).
               True if Local View was used, False if Global View was used.
             - indices (tf.Tensor): Integer vector of shape (series_depth,)
               containing the calculated slice indices [int32].
     """
+
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function get_indices_on_images")
+
     # Decide between Global Resampling or Local Window
     # We use a random variable to choose the mode
     use_global_view = tf.random.uniform([]) > 0.5
 
-    return tf.cond(
+    rtrn_value = tf.cond(
         use_global_view,
         # MODE 1: Global View (Full anatomy, high stride)
         lambda: (
             False,
             tf.cast(
-                tf.round(tf.linspace(0.0, tf.cast(actual_count - 1, tf.float32), series_depth)),
+                tf.round(tf.linspace(0.0, tf.cast(actual_count_tf - 1, tf.float32), series_depth)),
                 tf.int32
             )
         ),
@@ -883,10 +981,13 @@ def get_indices(actual_count, series_depth):
         lambda: (
             True,
             (lambda start_idx: tf.range(start_idx, start_idx + series_depth))(
-                tf.random.uniform([], 0, actual_count - series_depth, dtype=tf.int32)
+                tf.random.uniform([], 0, actual_count_tf - series_depth, dtype=tf.int32)
             )
         )
     )
+
+    logger.debug("Function get_indices_on_images completed")
+    return rtrn_value
 
 
 def process_empty_series(
@@ -894,7 +995,7 @@ def process_empty_series(
     series_depth: int,
     img_height: int,
     img_width: int,
-    config: dict,
+    config: Dict[str, Any],
     nb_channels: int = 3
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -912,6 +1013,7 @@ def process_empty_series(
         - height (int): Target image height.
         - width (int): Target image width.
         - config (dict): project settings dictionary
+        - nb_channels: Target image channels number
 
     Returns:
        A tuple containing:
@@ -921,6 +1023,10 @@ def process_empty_series(
             - series_metadata (tf.Tensor): Sentinel info vector (3,) [int32].
               Values: [sampling_flag=0, first_slice_index=0, target_desc_tensor].
     """
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
+
+    logger.debug("Starting function process_empty_series")
 
     # 1. Constants and Type Casting
     s_depth = tf.cast(series_depth, tf.int32)
@@ -932,10 +1038,10 @@ def process_empty_series(
     # Using tf.stack to create a dynamic shape tensor
     vol_shape = tf.stack([s_depth, height, width, channels])
 
-    models_cfg = config.get('models')
-    backbone_2d_cfg = models_cfg.get('backbone_2d')
-    scaling_cfg = backbone_2d_cfg.get('scaling')
-    black_pixel_value = scaling_cfg.get('min')
+    model_cfg = config["models"]
+    backbone_2d_cfg = model_cfg["backbone_2d"]
+    scaling_cfg = backbone_2d_cfg["scaling"]
+    black_pixel_value = scaling_cfg['min']
 
     # Create and force shape via reshape (Graph safe)
     empty_vol = tf.fill(vol_shape, black_pixel_value)
@@ -968,6 +1074,7 @@ def process_empty_series(
     # Finalize shape for the metadata tensor
     slice_metadata = tf.reshape(slice_metadata, meta_shape)
 
+    logger.debug("Function process_empty_series completed")
     return empty_vol, slice_metadata, series_metadata
 
 
@@ -979,75 +1086,37 @@ def format_for_model(
     ],
     study_id_tf: tf.Tensor,
     labels: Dict[str, tf.Tensor],
-    config: Dict[str, str]
+    config: Dict[str, Any]
 ) -> Tuple[Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
+
     """
     Final mapping stage that adapts study-level volumes and metadata
     to the specific multi-input/multi-output signature of the model.
 
     Args:
-        study_volumes_tf (tuple): Tensors for (Sagittal T1, Sagittal T2, Axial T2)
+        - study_volumes_tf (tuple): Tensors for (Sagittal T1, Sagittal T2, Axial T2)
                                 each with shape (self._series_depth, H, W, C).
-        study_id_tf (tf.Tensor): The unique identifier for the study.
-        labels (dict): Dictionary containing the 'records' tensor for diagnosis.
+        - study_id_tf (tf.Tensor): The unique identifier for the study.
+        - labels (dict): Dictionary containing the 'records' tensor for diagnosis.
+        - config (dict): Application settings
 
     Returns:
         tuple: (inputs_dict, targets_dict) ready for model.fit().
     """
-    model_cfg = config.get("models", None)
-    if model_cfg is None:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'models' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
 
-    backbone_2d_cfg = model_cfg.get("backbone_2d", None)
-    if model_cfg is None:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'models -> backbone_2d' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    # Retrieve the logger already instantiated
+    logger = get_current_logger()
 
-    img_shape = backbone_2d_cfg.get("img_shape", None)
-    if not img_shape or len(img_shape) != 3:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'models -> backbone_2d -> img_shape' is required "
-            "and must contain 3 values (height, width, channels). "
-            "Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    logger.debug("Starting function format_for_model")
 
-    series_depth = config.get("series_depth", None)
-    if series_depth is None:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'series_depth' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    model_cfg = config["models"]
+    backbone_2d_cfg = model_cfg["backbone_2d"]
+    img_shape = backbone_2d_cfg["img_shape"]
 
-    data_specs_cfg = config.get("data_specs", None)
-    if data_specs_cfg is None:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'data_specs' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    series_depth = config["series_depth"]
 
-    max_records = data_specs_cfg.get("max_records_per_frame", None)
-    if max_records is None:
-        error_msg = (
-            "Fatal error in format_for_model: "
-            "the setting variable 'data_specs -> max_records' is required "
-            "but was nt found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
+    data_specs_cfg = config["data_specs"]
+    max_records = data_specs_cfg["max_records_per_frame"]
 
     # Retrieve the config of the expected shapes
     model_2d_height, model_2d_width, model_2d_nb_channels = img_shape
@@ -1111,5 +1180,7 @@ def format_for_model(
 
     # Do the same for labels to be absolutely safe
     labels_dict = {k: tf.cast(v, tf.float32) for k, v in labels_dict.items()}
+
+    logger.debug("Function format_for_model completed")
 
     return features, labels_dict

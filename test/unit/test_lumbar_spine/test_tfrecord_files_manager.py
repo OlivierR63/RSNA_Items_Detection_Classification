@@ -108,10 +108,12 @@ class TestTFRecordFilesManager():
             # Mock SimpleITK image and its conversion to numpy
             sitk_func_path = 'src.projects.lumbar_spine.tfrecord_files_manager.sitk'
             mock_sitk = stack.enter_context(patch(sitk_func_path))
-            mock_sitk.ReadImage.return_value = MagicMock(spec=sitk.Image)
+            mock_image = MagicMock(spec=sitk.Image)
+            mock_image.GetNumberOfComponentsPerPixel.return_value = 1
+            mock_sitk.ReadImage.return_value = mock_image
 
             # Create a fake 2D image array (e.g., 512*512)
-            fake_array = np.zeros((512, 512), dtype=np.uint16)
+            fake_array = np.zeros((1, 512, 512), dtype=np.uint16)
             mock_sitk.GetArrayFromImage.return_value = fake_array
 
             # Mock TFRecordFilesManager._get_series_stats
@@ -1009,7 +1011,7 @@ class TestProcessSingleSeriesInstance:
 
         with patch('src.core.utils.logger.get_current_logger') as mock_get_log:
             mock_get_log.return_value = mock_tfrecord_files_manager._logger
-            nb_success, nb_failures, nb_files = (
+            nb_success, nb_failures, nb_files, nb_padding_files = (
                 mock_tfrecord_files_manager._process_single_series_instance(
                     series_dir,
                     input_features_df,
@@ -1021,6 +1023,7 @@ class TestProcessSingleSeriesInstance:
             assert nb_success == 0
             assert nb_failures == 0
             assert nb_files == 3
+            assert nb_padding_files == 0
 
         # Ensure the specific missing metadata status was logged
         assert any(
@@ -1906,13 +1909,13 @@ class TestProcessDicomFileWithMetadata:
         Test the successful conversion of a DICOM file to a tf.train.Example.
         """
         # Setup mock file structure and metadata
-        dicom_path = tmp_path / "dicom/1010/10110/555.dcm"
+        dicom_path = tmp_path / "dicom/1010/10110/3.dcm"
         series_id = 10110
         study_id = 1010
 
         # Prepare mock image data (SimpleITK)
         mock_img = MagicMock()
-        mock_array = np.zeros((512, 512), dtype=np.uint16)
+        mock_array = np.zeros((1, 512, 512), dtype=np.uint16)
 
         # Prepare features dictionary to be returned by _prepare_tf_features
         # Use the actual helper functions to create valid Protobuf objects
@@ -1924,7 +1927,7 @@ class TestProcessDicomFileWithMetadata:
             'series_id': _int64_feature(10110),
             'series_min': _int64_feature(15),
             'series_max': _int64_feature(550),
-            'instance_number': _int64_feature(1),
+            'instance_number': _int64_feature(3),
             'img_height': _int64_feature(224),
             'img_width': _int64_feature(224),
             'series_description': _int64_feature(0)
@@ -1952,7 +1955,13 @@ class TestProcessDicomFileWithMetadata:
                 )
             )
 
-            mask_1 = ['study_id', 'series_id', 'actual_file_format', 'series_description']
+            mask_1 = [
+                'study_id',
+                'series_id',
+                'actual_file_format',
+                'instance_number',
+                'series_description'
+            ]
             input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
 
             mask_2 = ['condition_level', 'severity', 'x', 'y']
@@ -1976,7 +1985,7 @@ class TestProcessDicomFileWithMetadata:
             # Verify metadata extraction from path and dataframe
             args, kwargs = mock_prepare.call_args
             assert kwargs['series_id'] == series_id
-            assert kwargs['instance_id'] == 555
+            assert kwargs['instance_id'] == 3
             assert kwargs['study_id'] == study_id
 
     def test_process_dicom_missing_description_error(
@@ -2008,11 +2017,17 @@ class TestProcessDicomFileWithMetadata:
             stack.enter_context(
                 patch(
                     'SimpleITK.GetArrayFromImage',
-                    return_value=np.zeros((10, 10))
+                    return_value=np.zeros((1, 10, 10))
                 )
             )
 
-            mask_1 = ['study_id', 'series_id', 'actual_file_format', 'series_description']
+            mask_1 = [
+                'study_id',
+                'series_id',
+                'actual_file_format',
+                'instance_number',
+                'series_description'
+            ]
             input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
 
             mask_2 = ['condition_level', 'severity', 'x', 'y']
@@ -2057,7 +2072,13 @@ class TestProcessDicomFileWithMetadata:
                 )
             )
 
-            mask_1 = ['study_id', 'series_id', 'actual_file_format', 'series_description']
+            mask_1 = [
+                'study_id',
+                'series_id',
+                'actual_file_format',
+                'instance_number',
+                'series_description'
+            ]
             input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
 
             mask_2 = ['condition_level', 'severity', 'x', 'y']
@@ -2093,7 +2114,7 @@ class TestProcessDicomFileWithMetadata:
         dicom_path = tmp_path / "dicom/1010/10110/1.dcm"
 
         # Simulate float array from SITK (common with some rescaled DICOMs)
-        float_array = np.array([[0.5, 1.5], [2.5, 3.5]], dtype=np.float32)
+        float_array = np.array([[[0.5, 1.5], [2.5, 3.5]]], dtype=np.float32)
 
         with ExitStack() as stack:
             mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
@@ -2109,7 +2130,13 @@ class TestProcessDicomFileWithMetadata:
                 )
             )
 
-            mask_1 = ['study_id', 'series_id', 'actual_file_format', 'series_description']
+            mask_1 = [
+                'study_id',
+                'series_id',
+                'actual_file_format',
+                'instance_number',
+                'series_description'
+            ]
             input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
 
             mask_2 = ['condition_level', 'severity', 'x', 'y']

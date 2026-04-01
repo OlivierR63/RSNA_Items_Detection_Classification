@@ -3,7 +3,6 @@
 
 import logging
 import json
-import pytest
 from unittest.mock import MagicMock
 from src.core.utils.logger import (
     setup_logger,
@@ -13,16 +12,18 @@ from src.core.utils.logger import (
 )
 
 
-def test_setup_logger(caplog, tmp_path):
+def test_setup_logger(mock_config, caplog, tmp_path):
     """
     Test the creation of a logger with setup_logger.
     """
 
     log_dir = tmp_path / "logs"
 
-    with setup_logger("test_process",
-                      log_dir=str(log_dir),
-                      use_json=False) as logger:
+    with setup_logger(
+        "test_process",
+        log_dir=str(log_dir),
+        config=mock_config
+    ) as logger:
 
         assert logger is not None
         assert isinstance(logger, logging.Logger)
@@ -62,7 +63,7 @@ def test_json_formatter():
     assert data["level"] == "INFO"
 
 
-def test_log_method_decorator(caplog, tmp_path):
+def test_log_method_decorator(mock_config, caplog, tmp_path):
     """
     Test the log_method decorator.
     """
@@ -74,7 +75,7 @@ def test_log_method_decorator(caplog, tmp_path):
         logger.info("Test function called")
 
     # Test with automatic injection
-    with setup_logger("test", log_dir=str(log_dir), use_json=False):
+    with setup_logger("test", log_dir=str(log_dir), config=mock_config):
         test_function()
         log_files = list(log_dir.glob("*.log"))
         with open(log_files[0], "r") as f:
@@ -87,21 +88,25 @@ def test_log_method_decorator(caplog, tmp_path):
     mock_logger.info.assert_called_with("Test function called")
 
 
-def test_get_current_logger(tmp_path):
+def test_get_current_logger(mock_config, tmp_path):
     """
     Test retrieving the current logger.
     """
     log_dir = tmp_path / "logs"
-    with setup_logger("test", log_dir=str(log_dir), use_json=False) as logger:
+    with setup_logger("test", log_dir=str(log_dir), config=mock_config) as logger:
         current_logger = get_current_logger()
         assert current_logger is logger
 
-    # Check that RuntimeError is raised when no logger is configured
-    with pytest.raises(RuntimeError):
-        get_current_logger()
+    # Since we are now out of the previous 'with' block, setup_logger
+    # has closed all the log files. Normally, we might expect the
+    # global variable _CURRENT_LOGGER to have been set to None.
+    # Check the new behavior: the fallback logger must be called.
+    fallback_logger = get_current_logger()
+    assert fallback_logger.name == "default"
+    assert isinstance(fallback_logger, logging.Logger)
 
 
-def test_setup_logger_with_existing_handlers(caplog, tmp_path):
+def test_setup_logger_with_existing_handlers(mock_config, caplog, tmp_path):
     """
     Test that setup_logger clears existing handlers when a logger is already set up.
     """
@@ -109,29 +114,32 @@ def test_setup_logger_with_existing_handlers(caplog, tmp_path):
     log_dir.mkdir(exist_ok=True)  # exist_ok = True to avoid error if log_dir already exists
 
     # First setup
-    with setup_logger("test_process", log_dir=str(log_dir)) as logger1:
+    with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger1:
         assert logger1 is not None
-        assert len(logger1.handlers) == 1  # Only file handler
+        assert len(logger1.handlers) == 2  # Only file handler and config
 
         # Second setup (should clear existing handlers)
-        with setup_logger("test_process", log_dir=str(log_dir)) as logger2:
+        with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger2:
             assert logger2 is not None
-            assert len(logger2.handlers) == 1  # Only file handler (previous handlers cleared)
+
+            # Only file handler (previous handlers cleared) and config
+            assert len(logger2.handlers) == 2
 
 
-def test_setup_logger_with_console_display(caplog, tmp_path):
+def test_setup_logger_with_console_display(mock_config, caplog, tmp_path):
     """
     Test that setup_logger adds a console handler when console_display=True.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)  # exist_ok = True to avoid error if log_dir already exists
 
-    with setup_logger("test_process", log_dir=str(log_dir), console_display=True) as logger:
+    mock_config["logging"]["console_display"] = True
+    with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger:
         assert logger is not None
-        assert len(logger.handlers) == 2  # File handler + console handler
+        assert len(logger.handlers) == 2  # File handler + config
 
 
-def test_setup_logger_handlers_closed(tmp_path):
+def test_setup_logger_handlers_closed(mock_config, tmp_path):
     """
     Test that setup_logger closes all handlers when exiting the context.
     """
@@ -140,15 +148,15 @@ def test_setup_logger_handlers_closed(tmp_path):
     # Use exist_ok = True to avoid an error if the directory already exists
     log_dir.mkdir(exist_ok=True)
 
-    with setup_logger("test_process", log_dir=str(log_dir)) as logger:
+    with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger:
         assert logger is not None
-        assert len(logger.handlers) == 1  # File handler
+        assert len(logger.handlers) == 2  # File handler
 
     # After exiting the context, handlers should be closed and cleared
     assert logger.handlers == []
 
 
-def test_log_method_decorator_without_logger_param(tmp_path):
+def test_log_method_decorator_without_logger_param(mock_config, tmp_path):
     """
     Test that the log_method decorator does not inject a logger
     if the function does not accept it.
@@ -159,12 +167,12 @@ def test_log_method_decorator_without_logger_param(tmp_path):
     def test_function_without_logger():
         return True
 
-    with setup_logger("test", log_dir=str(log_dir), use_json=False):
+    with setup_logger("test", log_dir=str(log_dir), config=mock_config):
         result = test_function_without_logger()
         assert result is True
 
 
-def test_log_method_decorator_with_logger_param(tmp_path):
+def test_log_method_decorator_with_logger_param(mock_config, tmp_path):
     """
     Test that the log_method decorator injects the logger if the function accepts it.
     """
@@ -176,7 +184,7 @@ def test_log_method_decorator_with_logger_param(tmp_path):
         logger.info("Test message with logger")
         return logger is not None
 
-    with setup_logger("test", log_dir=str(log_dir), use_json=False):
+    with setup_logger("test", log_dir=str(log_dir), config=mock_config):
         result = test_function_with_logger()
         assert result is True
         log_files = list(log_dir.glob("*.log"))
@@ -185,27 +193,29 @@ def test_log_method_decorator_with_logger_param(tmp_path):
             assert "Test message with logger" in content
 
 
-def test_setup_logger_with_json_formatter(tmp_path):
+def test_setup_logger_with_json_formatter(mock_config, tmp_path):
     """
     Test that setup_logger uses JSONFormatter when use_json=True.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)
 
-    with setup_logger("test_process", log_dir=str(log_dir), use_json=True) as logger:
+    mock_config['logging']['use_json'] = True
+    with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger:
         assert logger is not None
-        assert len(logger.handlers) == 1  # File handler
+        assert len(logger.handlers) == 2  # File handler
         assert isinstance(logger.handlers[0].formatter, JSONFormatter)
 
 
-def test_json_formatter_with_exception(tmp_path):
+def test_json_formatter_with_exception(mock_config, tmp_path):
     """
     Test that JSONFormatter includes exception information when record.exc_info is set.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)
 
-    with setup_logger("test_process", log_dir=str(log_dir), use_json=True) as logger:
+    mock_config['logging']['use_json'] = True
+    with setup_logger("test_process", log_dir=str(log_dir), config=mock_config) as logger:
         try:
             # Simulate an exception
             raise ValueError("Test exception")

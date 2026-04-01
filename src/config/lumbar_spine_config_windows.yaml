@@ -38,7 +38,7 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 2
+  batch_size: 1
   epochs: 2
   train_split_ratio: 0.8
 
@@ -68,23 +68,34 @@ system:
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 2       # Equivalent to cycle_length
+    parallel_files: 1       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   
   # How many patient studies to group before 3D reconstruction
   # (Usually 1, as 1 TFRecord already contains 1 full study)
-  group_studies: 2          
+  group_studies: 1          
   
   # Number of final training batches to keep in the pipeline buffer
-  prefetch_batches: 2
+  prefetch_batches: 1
 
   # Use -1 for tf.data.AUTOTUNE
-  num_parallel_calls: 2
+  num_parallel_calls: 1
 
   # Use the cache or not
-  use_cache: false
+  use_cache: False
 
 #--- Actual series depth (do not confuse with the percentile) --
 # series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader. 
 
+# ----------------- Logging & Debugging -------------------
+logging:
+  # Level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+  # No other value is allowed
+  level: "DEBUG"
+
+  # Whether to display logs in the terminal
+  console_display: False
+  
+  # Use JSON formatting for structured logs
+  use_json: False

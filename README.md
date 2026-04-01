@@ -27,6 +27,7 @@ RSNA_Items_Detection_Classification/
 │   │       ├── __init__.py
 │   │       ├── clean_logs.py                   # Log rotation: automates deletion of outdated logs (>30 days)
 │   │       ├── dataset_utils.py                        # TFRecord parsing, Normalization, Augmentation
+│   │       ├── monitoring_utils.py
 │   │       ├── log_training_callbacks.py    # Training monitor: logs metrics (Loss/Acc), RAM usage, and step timing
 │   │       ├── logger.py                               # Unified_logging_system
 │   │       ├── system_resource_monitor_callbacks.py    # Safety circuit: monitors RAM/CPU to trigger emergency stop (OOM prevention)
@@ -34,7 +35,7 @@ RSNA_Items_Detection_Classification/
 │   │
 │   ├── projects/                  # Project-specific implementations
 │   │    │
-│   │    └── lumbar_spine/          # Lumbar_spine_project
+│   │    └── lumbar_spine/         # Lumbar_spine_project
 │   │        ├── __init__.py
 │   │        ├── csv_metadata_handler.py                     # Data orchestrator (Joins CSV/Labels)
 │   │        ├── lumbar_dicom_tfrecord_dataset.py            # Data pipeline: 3D volumes builder from TFRecords

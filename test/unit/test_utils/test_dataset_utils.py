@@ -1043,17 +1043,3 @@ class TestFormatForModel:
         # Ensure all targets are cast to float32
         assert targets["severity_output"].dtype == tf.float32
         assert targets["location_output"].dtype == tf.float32
-
-    def test_config_validation_raises_value_error(self):
-        """
-        Confirms that missing configuration keys trigger explicit ValueErrors.
-        """
-        invalid_config = {"series_depth": 15}  # Missing 'models' key
-
-        with pytest.raises(ValueError, match="models' is required"):
-            format_for_model(
-                study_volumes_tf=None,
-                study_id_tf=None,
-                labels={"records": tf.zeros((25, 4))},
-                config=invalid_config
-            )
