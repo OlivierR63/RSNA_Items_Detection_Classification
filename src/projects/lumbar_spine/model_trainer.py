@@ -16,7 +16,7 @@ from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomT
 from src.core.utils.logger import get_current_logger, log_method
 from src.core.callbacks.log_training_callbacks import LogTrainingCallbacks
 from src.core.callbacks.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
-from src.core.callbacks.system_resource_monitor_callbacks import CPUTemperatureMonitorCallback
+from src.core.callbacks.cpu_temperature_monitor_callback import CPUTemperatureMonitorCallback
 from src.core.utils.monitoring_utils import log_memory_usage
 
 
