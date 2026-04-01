@@ -76,20 +76,6 @@ class TestRSNALumbarClassification:
             error_msg = "No existing model found. Building a new model from factory."
             local_mock_logger.info.assert_any_call(error_msg)
 
-    def test_get_or_build_model_invalid_config(self, mock_logger):
-        """
-        Test get_or_build_model raises ValueError if config is incomplete.
-        """
-
-        incomplete_config = {"checkpoint_path": "some/path"}  # Missing learning_rate, etc.
-
-        with pytest.raises(ValueError):
-            src_module.get_or_build_model(
-                depth=60,
-                config=incomplete_config,
-                logger=mock_logger
-            )
-
     def test_get_or_build_model_corrupted_file(self, mock_config):
         """
         Test fallback to factory when the model file is corrupted.

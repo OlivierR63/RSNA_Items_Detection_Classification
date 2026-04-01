@@ -19,6 +19,7 @@ def mock_config(tmp_path, setup_csv_files):
             "dicom_studies": tmp_path / "dicom",
             "tfrecord": tmp_path / "tfrecord_dir",
             "output": tmp_path / "output",
+            "tf_cache": tmp_path / "tensorflow_cache/lumbar_train",
             "checkpoint": tmp_path / "checkpoints/model.keras",
             "inspection": tmp_path / "input_data_inspection",
             "log_mirror": tmp_path / "logs/full_session_output.log",
@@ -92,7 +93,8 @@ def mock_config(tmp_path, setup_csv_files):
             },
             "group_studies": 1,
             "prefetch_batches": 1,
-            "num_parallel_calls": 1
+            "num_parallel_calls": 1,
+            "use_cache": False
         },
 
         "logging": {

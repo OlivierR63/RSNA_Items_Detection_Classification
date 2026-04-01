@@ -7,15 +7,18 @@
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "cSpell.words": [
+        "Acpi",
         "addopts",
         "aggreg",
         "allclose",
         "AUTOTUNE",
         "autouse",
         "caplog",
+        "capsys",
         "clipnorm",
         "conftest",
         "conv",
+        "coretemp",
         "coveragerc",
         "cpus",
         "dcmread",
@@ -60,11 +63,12 @@
         "tfrecords",
         "tobytes",
         "twinx",
+        "virt",
         "vmem",
         "xlabel",
         "ylabel"
     ],
     "yaml.schemas": {
-        "https://raw.githubusercontent.com/instant-python/instant-python/main/schemas/main-structure-schema.json": "file:///c%3A/Users/Olivier/Desktop/Projet_Kaggle/RSNA_Items_Detection_Classification/src/config/lumbar_spine_config.yaml"
-    }
+    },
+    "yaml.schemaStore.enable": false
 }

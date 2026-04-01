@@ -705,6 +705,15 @@ class ConfigLoader:
             )
             raise ValueError(error_msg)
 
+        threshold_temperature = system_cfg.get("threshold_temperature", None)
+        if threshold_temperature is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'system -> threshold_temperature' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
         dataset_steering_cfg = self._config.get("dataset_steering", None)
         if dataset_steering_cfg is None:
             error_msg = (
