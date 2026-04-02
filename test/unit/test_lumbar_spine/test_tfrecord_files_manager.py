@@ -75,6 +75,18 @@ def test_bytes_feature_with_string():
 
 class TestTFRecordFilesManager():
 
+    @pytest.fixture
+    def mock_tfrecord_files_manager(self, mock_config, mock_logger):
+        """
+        Creates an instance of TFRecordFilesManager with mocked dependencies
+        (like logger and path) to isolate the internal logic.
+        """
+
+        # We instantiate the real class
+        manager = TFRecordFilesManager(config=mock_config, logger=mock_logger)
+
+        return manager
+
     def test_generate_tfrecord_files_nominal(
         self,
         mock_tfrecord_files_manager,
@@ -88,59 +100,61 @@ class TestTFRecordFilesManager():
         Verifies that the function iterates over internal data and writes to disk.
         """
 
-        # Enter each context manager through the stack
         with ExitStack() as stack:
-
-            # Patch the global logger getter used by @log_method
+            # Patch the global logger
             mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
             mock_get_log.return_value = mock_tfrecord_files_manager._logger
 
+            # Mock TFRecord Writer
             mock_tf_writer = stack.enter_context(patch('tensorflow.io.TFRecordWriter'))
             mock_writer_instance = mock_tf_writer.return_value.__enter__.return_value
 
-            # Link the CSVMetadataHandler mock to the mock_metadata fixture (the DataFrame)
-            # Directly set the 'merged' attribute on the mock's return instance
+            # Mock CSVMetadataHandler and its DataFrame
             csv_func_path = 'src.projects.lumbar_spine.tfrecord_files_manager.CSVMetadataHandler'
             mock_csv = stack.enter_context(patch(csv_func_path))
             instance = mock_csv.return_value
+            # Ensure the mock returns the expected dataframe for metadata retrieval
             instance.generate_metadata_dataframe.return_value = mock_encoded_metadata
 
-            # Mock SimpleITK image and its conversion to numpy
+            # Mock SimpleITK
             sitk_func_path = 'src.projects.lumbar_spine.tfrecord_files_manager.sitk'
             mock_sitk = stack.enter_context(patch(sitk_func_path))
+
             mock_image = MagicMock(spec=sitk.Image)
             mock_image.GetNumberOfComponentsPerPixel.return_value = 1
+            # SimpleITK GetSize() returns (Width, Height, Depth)
+            mock_image.GetSize.return_value = (512, 512, 1)
             mock_sitk.ReadImage.return_value = mock_image
 
-            # Create a fake 2D image array (e.g., 512*512)
+            # Create a fake SITK array: (Depth, Height, Width) -> (1, 512, 512)
+            # This will be squeezed to (512, 512) then expanded to (512, 512, 1) in the code
             fake_array = np.zeros((1, 512, 512), dtype=np.uint16)
             mock_sitk.GetArrayFromImage.return_value = fake_array
 
-            # Mock TFRecordFilesManager._get_series_stats
+            # Mock series statistics (min/max intensity)
             stack.enter_context(
                 patch.object(mock_tfrecord_files_manager, '_get_series_stats')
             ).return_value = (0, 256)
 
-            # Mock calculate_max_series_depth
-
-            # Execute the function with the real signature
+            # --- Execution ---
             mock_tfrecord_files_manager.generate_tfrecord_files()
 
-            # Check that the writer was initialized 3 times (once per study)
+            # --- Assertions ---
+
+            # 1. Check that the writer was initialized 3 times (once per study)
             assert mock_tf_writer.call_count == 3
 
-            # Verify the maximum number of files per series ("depth"):
-            # With a 95 % chosen percentile rate, le series depth is 5 files per series.
+            # 2. Verify the series depth logic (percentile 95%)
+            # Ensure the manager correctly calculated the depth based on mock_encoded_metadata
             assert mock_tfrecord_files_manager.get_series_depth() == 5
 
-            # Verify that the writer was called for each DICOM file instance
-            # As a reminder : there are 3 series per study. ALWAYS.
-            # Total expected calls:
-            #   First study: 3 series * (3 images + 2 padding files)
-            #   Second study: 3 series * (4 images + 1 padding file per series)
-            #   Third study: 3 series * 5 images per series
-            #   Total : 45 images
+            # 3. Verify total write calls
+            # 3 studies * 3 series/study * 5 records/series = 45 calls
+            # This includes both real DICOM data and padding examples.
             assert mock_writer_instance.write.call_count == 45
+
+            # 4. Check that there are no errors in logs
+            assert "failed" not in caplog.text.lower()
 
     def test_generate_tfrecord_files_with_logger(
         self,
@@ -249,6 +263,300 @@ class TestTFRecordFilesManager():
                 f"No studies found in {empty_studies_dir}. "
                 "Process stops immediately."
             )
+
+    def test_load_normalized_dicom_2d_input(self, mock_tfrecord_files_manager):
+        """
+        Verify that a standard DICOM (Depth=1) is correctly squeezed
+        and expanded to a (Height, Width, 1) shape.
+        """
+        with ExitStack() as stack:
+            mock_read = stack.enter_context(patch('SimpleITK.ReadImage'))
+            mock_get_array = stack.enter_context(patch('SimpleITK.GetArrayFromImage'))
+
+            # Mock SITK Image metadata
+            mock_img = MagicMock(spec=sitk.Image)
+            mock_img.GetNumberOfComponentsPerPixel.return_value = 1
+            mock_read.return_value = mock_img
+
+            # Simulate SITK output: (Depth, Height, Width)
+            # 100 is Height (Axis 1), 200 is Width (Axis 2)
+            fake_sitk_array = np.zeros((1, 100, 200), dtype=np.uint16)
+            mock_get_array.return_value = fake_sitk_array
+
+            # Execution
+            img_array, channels = mock_tfrecord_files_manager._load_normalized_dicom("fake_path")
+
+            # Assertions: Final shape must be (H, W, C)
+            assert img_array.ndim == 3
+            assert img_array.shape == (100, 200, 1)
+            assert channels == 1
+
+    def test_load_normalized_dicom_channel_mismatch_raises_error(self, mock_tfrecord_files_manager):
+        """
+        Verify that a ValueError is raised if the array channels
+        do not match the SITK metadata components.
+        """
+        with ExitStack() as stack:
+            mock_read = stack.enter_context(patch('SimpleITK.ReadImage'))
+            mock_get_array = stack.enter_context(patch('SimpleITK.GetArrayFromImage'))
+
+            mock_img = MagicMock(spec=sitk.Image)
+            mock_img.GetNumberOfComponentsPerPixel.return_value = 3  # Expecting RGB
+            mock_read.return_value = mock_img
+
+            # Simulate 1-channel array (Grayscale)
+            mock_get_array.return_value = np.zeros((1, 10, 10))
+
+            with pytest.raises(ValueError, match="Channel mismatch in fake_path"):
+                mock_tfrecord_files_manager._load_normalized_dicom("fake_path")
+
+    def test_apply_center_padding_logic(self, mock_tfrecord_files_manager, mock_logger):
+        """
+        Test that padding is correctly applied to center a 2x2 image into a 4x4 canvas.
+        """
+        # Source: 2x2 white square (ones) with 1 channel
+        img = np.ones((2, 2, 1), dtype=np.uint16)
+        target_w, target_h = 4, 4
+
+        # Execution
+        padded_img = mock_tfrecord_files_manager._apply_center_padding(
+            img,
+            target_w,
+            target_h,
+            mock_logger
+        )
+
+        # Assertions
+        assert padded_img.shape == (4, 4, 1)
+        # The original 1s should be at index [1, 1] and [2, 2]
+        # because pad_h=2 (top=1, bot=1) and pad_w=2 (left=1, right=1)
+        assert padded_img[1, 1, 0] == 1  # Top-left of original
+        assert padded_img[0, 0, 0] == 0  # Padding area
+        assert padded_img[3, 3, 0] == 0  # Padding area
+
+    def test_apply_center_padding_no_op(self, mock_tfrecord_files_manager, mock_logger):
+        """
+        Verify that the function returns the original image if sizes already match.
+        """
+        img = np.random.randint(0, 100, (512, 512, 1), dtype=np.uint16)
+
+        padded_img = mock_tfrecord_files_manager._apply_center_padding(img, 512, 512, mock_logger)
+
+        # Check that it's the exact same object (no unnecessary copy)
+        assert id(img) == id(padded_img)
+
+    def test_apply_center_padding_asymmetric_odd_dimensions(
+        self,
+        mock_tfrecord_files_manager,
+        mock_logger
+    ):
+        """
+        Check the 'pad_bottom = pad_h - pad_top' logic with an odd number of pixels to pad.
+        Targeting 10x13 from a 10x10 source (3 pixels to add on Width).
+        """
+        img = np.ones((10, 10, 1), dtype=np.uint16)
+        target_w, target_h = 13, 10
+
+        padded_img = mock_tfrecord_files_manager._apply_center_padding(
+            img,
+            target_w,
+            target_h,
+            mock_logger
+        )
+
+        # Calculation: pad_w = 3 -> pad_left = 1, pad_right = 2
+        # Original image should span from index 1 to 10 inclusive on Axis 1 (Width)
+        assert padded_img.shape == (10, 13, 1)
+        assert padded_img[5, 0, 0] == 0   # Left padding (1px)
+        assert padded_img[5, 1, 0] == 1   # Image starts
+        assert padded_img[5, 10, 0] == 1  # Image ends
+        assert padded_img[5, 11, 0] == 0  # Right padding (2px)
+
+    def test_process_dicom_orchestration_only(
+        self,
+        mock_tfrecord_files_manager,
+        mock_encoded_metadata,
+        mock_writer,
+        mock_logger,
+        tmp_path
+    ):
+        """
+        Test the orchestration of _process_single_dicom_instance.
+        It should route the logic to _process_dicom_file_with_metadata
+        when is_padding is False and write the serialized result.
+        """
+        # 1. Setup identifiers and paths
+        study_id, series_id, instance_id = 1010, 10110, 3
+        series_dir = tmp_path / str(study_id) / str(series_id)
+        series_dir.mkdir(parents=True, exist_ok=True)
+        dicom_path = series_dir / f"{instance_id}.dcm"
+
+        # 2. Mock the lower-level processing method and the return features
+        # We mock a TensorFlow-like feature object that has a SerializeToString method
+        mock_features = MagicMock()
+        mock_features.SerializeToString.return_value = b"serialized_data"
+
+        with patch.object(
+            mock_tfrecord_files_manager,
+            '_process_dicom_file_with_metadata',
+            return_value=mock_features
+        ) as mock_process_file:
+
+            # 3. Execution
+            result = mock_tfrecord_files_manager._process_single_dicom_instance(
+                series_path=series_dir,
+                series_min=0,
+                series_max=2000,
+                input_features_df=mock_encoded_metadata,
+                labels_df=mock_encoded_metadata,
+                writer=mock_writer,
+                instance_num=instance_id,
+                is_padding=False,
+                logger=mock_logger
+            )
+
+            # 4. Assertions
+            assert result is True
+
+            # Verify that the correct sub-method was called with expected arguments
+            mock_process_file.assert_called_once_with(
+                dicom_path,
+                0,
+                2000,
+                mock_encoded_metadata,
+                mock_encoded_metadata
+            )
+
+            # Verify that the result was serialized and written to the TFRecordWriter
+            mock_features.SerializeToString.assert_called_once()
+            mock_writer.write.assert_called_once_with(b"serialized_data")
+
+    def test_process_padding_orchestration_only(
+        self,
+        mock_tfrecord_files_manager,
+        mock_encoded_metadata,
+        mock_writer,
+        mock_logger,
+        tmp_path
+    ):
+        """
+        Test the orchestration when is_padding is True.
+        It should route to _generate_padding_features.
+        """
+        series_dir = tmp_path / "123" / "456"
+        mock_features = MagicMock()
+        mock_features.SerializeToString.return_value = b"padding_data"
+
+        with patch.object(
+            mock_tfrecord_files_manager,
+            '_generate_padding_features',
+            return_value=mock_features
+        ) as mock_gen_padding:
+
+            result = mock_tfrecord_files_manager._process_single_dicom_instance(
+                series_path=series_dir,
+                series_min=0,
+                series_max=2000,
+                input_features_df=mock_encoded_metadata,
+                labels_df=mock_encoded_metadata,
+                writer=mock_writer,
+                instance_num=999,
+                is_padding=True,
+                logger=mock_logger
+            )
+
+            assert result is True
+            mock_gen_padding.assert_called_once()
+            mock_writer.write.assert_called_once_with(b"padding_data")
+
+    def test_get_target_metadata_success(self, mock_tfrecord_files_manager, mock_logger):
+        """
+        Test successful metadata retrieval and square format calculation.
+        Target should be the maximum value found in 'actual_file_format' tuples.
+        """
+        # Setup mock data: (Width, Height, Depth)
+        # The max value here is 800
+        mock_df = pd.DataFrame({
+            'study_id': [101, 101],
+            'series_id': [201, 201],
+            'actual_file_format': [(512, 512, 1), (800, 600, 1)],
+            'series_description': ["3", "3"]
+        })
+
+        # Path structured as: root/study_id/series_id/instance_id.dcm
+        fake_path = Path("data/101/201/1.dcm")
+
+        # Execution
+        target_w, target_h, description = mock_tfrecord_files_manager._get_target_metadata(
+            fake_path,
+            mock_df,
+            mock_logger
+        )
+
+        # Assertions
+        assert target_w == 800
+        assert target_h == 800
+        assert description == 3
+
+    def test_get_target_metadata_no_match_raises_error(
+        self,
+        mock_tfrecord_files_manager,
+        mock_logger
+    ):
+        """
+        Verify that a ValueError is raised when the IDs from the path
+        do not exist in the DataFrame.
+        """
+        mock_df = pd.DataFrame({
+            'study_id': [999],
+            'series_id': [888],
+            'actual_file_format': [(512, 512, 1)],
+            'series_description': ["1"]
+        })
+
+        fake_path = Path("data/101/201/1.dcm")  # IDs 101/201 not in DF
+
+        with pytest.raises(ValueError, match="No matching metadata found"):
+            mock_tfrecord_files_manager._get_target_metadata(fake_path, mock_df, mock_logger)
+
+    def test_get_target_metadata_empty_df_raises_error(
+        self,
+        mock_tfrecord_files_manager,
+        mock_logger
+    ):
+        """
+        Verify behavior when an empty DataFrame is provided.
+        """
+        empty_df = pd.DataFrame(
+            columns=['study_id', 'series_id', 'actual_file_format', 'series_description']
+        )
+        fake_path = Path("data/101/201/1.dcm")
+
+        with pytest.raises(ValueError, match="No matching metadata found"):
+            mock_tfrecord_files_manager._get_target_metadata(fake_path, empty_df, mock_logger)
+
+    def test_get_target_metadata_different_types(self, mock_tfrecord_files_manager, mock_logger):
+        """
+        Ensure the function correctly handles ID extraction even if the path
+        stems are numeric strings (checking type conversion to int).
+        """
+        mock_df = pd.DataFrame({
+            'study_id': [1],
+            'series_id': [2],
+            'actual_file_format': [(128, 256, 1)],
+            'series_description': ["10"]
+        })
+
+        # Path with numeric names
+        fake_path = Path("root/1/2/50.dcm")
+
+        target_w, target_h, desc = (
+            mock_tfrecord_files_manager._get_target_metadata(fake_path, mock_df, mock_logger)
+        )
+
+        assert target_w == 256
+        assert target_h == 256
+        assert desc == 10
 
 
 class TestConvertDicomToTFrecords:
@@ -1893,317 +2201,118 @@ class TestProcessSingleDicomInstance:
 
 class TestProcessDicomFileWithMetadata:
     """
-    Test suite for _process_dicom_file_with_metadata.
-    Verifies image processing, metadata merging, and TF Feature preparation.
+    Refactored test suite to match the current orchestration logic.
     """
 
     def test_process_dicom_success(
         self,
         mock_tfrecord_files_manager,
         mock_encoded_metadata,
-        mock_writer,
-        caplog,
+        mock_logger,
         tmp_path
     ):
-        """
-        Test the successful conversion of a DICOM file to a tf.train.Example.
-        """
-        # Setup mock file structure and metadata
-        dicom_path = tmp_path / "dicom/1010/10110/3.dcm"
-        series_id = 10110
-        study_id = 1010
+        # 1. Setup path structure: study_id=1010, series_id=10110, instance=3
+        # Must match: dicom_path.parent.parent.name (study) / dicom_path.parent.name (series)
+        study_id, series_id, instance_id = 1010, 10110, 3
+        dicom_dir = tmp_path / str(study_id) / str(series_id)
+        dicom_dir.mkdir(parents=True)
+        dicom_path = dicom_dir / f"{instance_id}.dcm"
 
-        # Prepare mock image data (SimpleITK)
-        mock_img = MagicMock()
-        mock_array = np.zeros((1, 512, 512), dtype=np.uint16)
-
-        # Prepare features dictionary to be returned by _prepare_tf_features
-        # Use the actual helper functions to create valid Protobuf objects
-        # This avoids the TypeError: Parameter to CopyFrom() must be instance of same class
-
-        mock_features_dict = {
-            'image': _bytes_feature(b"fake_image_data"),
-            'study_id': _int64_feature(1010),
-            'series_id': _int64_feature(10110),
-            'series_min': _int64_feature(15),
-            'series_max': _int64_feature(550),
-            'instance_number': _int64_feature(3),
-            'img_height': _int64_feature(224),
-            'img_width': _int64_feature(224),
-            'series_description': _int64_feature(0)
-        }
+        # 2. Mocking INTERNAL methods of the class
+        fake_img = np.zeros((100, 100), dtype=np.float32)
+        fake_padded = np.zeros((224, 224), dtype=np.uint16)
+        mock_features = {"dummy": _int64_feature(1)}
 
         with ExitStack() as stack:
-
-            # Mock SimpleITK reading and array conversion
-            stack.enter_context(patch('SimpleITK.ReadImage', return_value=mock_img))
-            stack.enter_context(patch('SimpleITK.GetArrayFromImage', return_value=mock_array))
-
-            # Mock the feature preparation and logger
-            mock_prepare = stack.enter_context(
+            m_load = stack.enter_context(
+                patch.object(
+                    mock_tfrecord_files_manager,
+                    '_load_normalized_dicom',
+                    return_value=(fake_img, 1)
+                )
+            )
+            m_meta = stack.enter_context(
+                patch.object(
+                    mock_tfrecord_files_manager,
+                    '_get_target_metadata',
+                    return_value=(224, 224, "T1")
+                )
+            )
+            m_pad = stack.enter_context(
+                patch.object(
+                    mock_tfrecord_files_manager,
+                    '_apply_center_padding',
+                    return_value=fake_padded
+                )
+            )
+            m_prep = stack.enter_context(
                 patch.object(
                     mock_tfrecord_files_manager,
                     '_prepare_tf_features',
-                    return_value=mock_features_dict
+                    return_value=mock_features
                 )
             )
 
-            stack.enter_context(
-                patch(
-                    'src.core.utils.logger.get_current_logger',
-                    return_value=mock_tfrecord_files_manager._logger
-                )
-            )
-
-            mask_1 = [
-                'study_id',
-                'series_id',
-                'actual_file_format',
-                'instance_number',
-                'series_description'
-            ]
-            input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
-
-            mask_2 = ['condition_level', 'severity', 'x', 'y']
-            labels_df = mock_encoded_metadata[mask_2].drop_duplicates()
-
-            result = mock_tfrecord_files_manager._process_single_dicom_instance(
-                series_path=dicom_path.parent,
+            # 3. Execution
+            result = mock_tfrecord_files_manager._process_dicom_file_with_metadata(
+                dicom_path=dicom_path,
                 series_min=0,
-                series_max=2000,
-                input_features_df=input_features_df,
-                labels_df=labels_df,
-                writer=mock_writer,
-                instance_num=dicom_path.stem,
-                is_padding=False
+                series_max=1000,
+                input_features_df=mock_encoded_metadata,
+                labels_df=mock_encoded_metadata,
+                logger=mock_logger
             )
 
-            # Check if the orchestration was correct
-            assert result is True
-            mock_prepare.assert_called_once()
+            # 4. Assertions
+            assert isinstance(result, tf.train.Example)
+            m_load.assert_called_once()
+            m_meta.assert_called_once()
+            m_pad.assert_called_once()
 
-            # Verify metadata extraction from path and dataframe
-            args, kwargs = mock_prepare.call_args
-            assert kwargs['series_id'] == series_id
-            assert kwargs['instance_id'] == 3
+            # Verify that IDs were correctly extracted from the Path
+            args, kwargs = m_prep.call_args
             assert kwargs['study_id'] == study_id
+            assert kwargs['series_id'] == series_id
+            assert kwargs['instance_id'] == instance_id
+            assert kwargs['image_bytes'] == fake_padded.tobytes()
 
-    def test_process_dicom_missing_description_error(
+    def test_process_dicom_exception_handling(
         self,
         mock_tfrecord_files_manager,
         mock_encoded_metadata,
-        caplog,
-        tmp_path
+        mock_logger,
+        tmp_path,
+        caplog
     ):
-        """
-        Test that a ValueError is raised when the key 'series_description'
-        is missing for the series.
-        """
-
-        # Series 99999 not in mock_encoded_metadata
-        dicom_path = tmp_path / "dicom/1010/99999/1.dcm"
-
-        with ExitStack() as stack:
-            mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
-            mock_get_log.return_value = mock_tfrecord_files_manager._logger
-
-            stack.enter_context(
-                patch(
-                    'SimpleITK.ReadImage',
-                    return_value=MagicMock()
-                )
-            )
-
-            stack.enter_context(
-                patch(
-                    'SimpleITK.GetArrayFromImage',
-                    return_value=np.zeros((1, 10, 10))
-                )
-            )
-
-            mask_1 = [
-                'study_id',
-                'series_id',
-                'actual_file_format',
-                'instance_number',
-                'series_description'
-            ]
-            input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
-
-            mask_2 = ['condition_level', 'severity', 'x', 'y']
-            labels_df = mock_encoded_metadata[mask_2].drop_duplicates()
-
-            with pytest.raises(ValueError) as exc_info:
-                mock_tfrecord_files_manager._process_dicom_file_with_metadata(
-                    dicom_path=dicom_path,
-                    series_min=0,
-                    series_max=1000,
-                    input_features_df=input_features_df,
-                    labels_df=labels_df
-                )
-
-            assert "No matching data in file" in str(exc_info.value)
-
-            # Verify the log message contains the IDs that failed the lookup
-            error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
-            assert error_record is not None
-            assert "No matching data in file" in error_record.message
-
-    def test_process_dicom_read_exception(
-        self,
-        mock_tfrecord_files_manager,
-        mock_encoded_metadata,
-        caplog,
-        tmp_path
-    ):
-        """
-        Test that exceptions during SimpleITK read are logged and re-raised.
-        """
-        dicom_path = tmp_path / "dicom/1010/10110/1.dcm"
-
-        with ExitStack() as stack:
-            mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
-            mock_get_log.return_value = mock_tfrecord_files_manager._logger
-
-            stack.enter_context(
-                patch(
-                    'SimpleITK.ReadImage',
-                    side_effect=Exception("SITK Read Error")
-                )
-            )
-
-            mask_1 = [
-                'study_id',
-                'series_id',
-                'actual_file_format',
-                'instance_number',
-                'series_description'
-            ]
-            input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
-
-            mask_2 = ['condition_level', 'severity', 'x', 'y']
-            labels_df = mock_encoded_metadata[mask_2].drop_duplicates()
-
-            with pytest.raises(Exception) as exc_info:
-                mock_tfrecord_files_manager._process_dicom_file_with_metadata(
-                    dicom_path=dicom_path,
-                    series_min=0,
-                    series_max=1000,
-                    input_features_df=input_features_df,
-                    labels_df=labels_df
-                )
-
-            assert "SITK Read Error" in str(exc_info.value)
-
-            # Verify that the error was logged with the full message
-            error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
-            assert error_record is not None
-            assert "_process_dicom_file_with_metadata" in error_record.message
-            assert "SITK Read Error" in error_record.message
-
-    def test_process_dicom_data_type_conversion(
-        self,
-        mock_tfrecord_files_manager,
-        mock_encoded_metadata,
-        caplog,
-        tmp_path
-    ):
-        """
-        Ensures that the image array is correctly cast to uint16 before byte conversion.
-        """
-        dicom_path = tmp_path / "dicom/1010/10110/1.dcm"
-
-        # Simulate float array from SITK (common with some rescaled DICOMs)
-        float_array = np.array([[[0.5, 1.5], [2.5, 3.5]]], dtype=np.float32)
-
-        with ExitStack() as stack:
-            mock_get_log = stack.enter_context(patch('src.core.utils.logger.get_current_logger'))
-            mock_get_log.return_value = mock_tfrecord_files_manager._logger
-
-            stack.enter_context(patch('SimpleITK.ReadImage', return_value=MagicMock()))
-            stack.enter_context(patch('SimpleITK.GetArrayFromImage', return_value=float_array))
-            mock_prepare = stack.enter_context(
-                patch.object(
-                    mock_tfrecord_files_manager,
-                    '_prepare_tf_features',
-                    return_value={}
-                )
-            )
-
-            mask_1 = [
-                'study_id',
-                'series_id',
-                'actual_file_format',
-                'instance_number',
-                'series_description'
-            ]
-            input_features_df = mock_encoded_metadata[mask_1].drop_duplicates()
-
-            mask_2 = ['condition_level', 'severity', 'x', 'y']
-            labels_df = mock_encoded_metadata[mask_2].drop_duplicates()
-
-            mock_tfrecord_files_manager._process_dicom_file_with_metadata(
-                dicom_path, 0, 100, input_features_df, labels_df
-            )
-
-            # Check image_bytes in _prepare_tf_features call
-            passed_bytes = mock_prepare.call_args[1]['image_bytes']
-            expected_bytes = float_array.astype(np.uint16).tobytes()
-            assert passed_bytes == expected_bytes
-
-    def test_process_dicom_file_general_exception(
-        self,
-        mock_tfrecord_files_manager,
-        caplog,
-        tmp_path
-    ):
-        """
-        Test that any unexpected exception (e.g., SimpleITK failure) is caught,
-        logged with traceback, and then re-raised.
-        """
-        # Setup minimal directory structure to allow ID extraction
-        dicom_path = tmp_path / "1010/10110/1.dcm"
+        # Setup path to avoid extraction errors before the simulated failure
+        dicom_path = tmp_path / "10/20/30.dcm"
         dicom_path.parent.mkdir(parents=True)
-        dicom_path.touch()
 
-        with ExitStack() as stack:
-            # Inject logger for caplog capture
-            stack.enter_context(
-                patch(
-                    'src.core.utils.logger.get_current_logger',
-                    return_value=mock_tfrecord_files_manager._logger
-                )
-            )
+        with patch.object(
+            mock_tfrecord_files_manager,
+            '_load_normalized_dicom',
+            side_effect=RuntimeError("SITK Error")
+        ):
 
-            # Simulate a critical failure during SimpleITK image reading
-            stack.enter_context(
-                patch(
-                    'SimpleITK.ReadImage',
-                    side_effect=RuntimeError("SITK Critical Error")
-                )
-            )
-
-            # Verify that the exception is re-raised to the caller
-            with pytest.raises(RuntimeError, match="SITK Critical Error"):
+            with pytest.raises(RuntimeError, match="SITK Error"):
                 mock_tfrecord_files_manager._process_dicom_file_with_metadata(
                     dicom_path=dicom_path,
                     series_min=0,
-                    series_max=255,
-                    input_features_df=pd.DataFrame(),  # Not reached due to SITK error
-                    labels_df=pd.DataFrame()
+                    series_max=100,
+                    input_features_df=mock_encoded_metadata,
+                    labels_df=mock_encoded_metadata,
+                    logger=mock_logger
                 )
 
-        # Verify the ERROR log contains the custom message and the traceback
-        error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
-        assert error_record is not None
+            # Check if the logger was called as per the 'except' block
+            assert len(caplog.records) > 0
+            error_record = caplog.records[-1]
+            assert error_record.levelname == "ERROR"
+            assert "30.dcm" in error_record.message
 
-        assert_msg = "The DICOM file read/conversion/serialization process for 1.dcm failed"
-        assert assert_msg in error_record.message
-        assert error_record.status == "failed"
-        assert error_record.error_type == "DicomProcessingError"
-
-        # Crucial: ensure exc_info is present for debugging
-        assert error_record.exc_info is not None
+            # Verify the class/function name is in the log message
+            assert "_process_dicom_file_with_metadata" in error_record.message
+            assert "SITK Error" in error_record.message
 
 
 class TestPrepareTfFeatures:

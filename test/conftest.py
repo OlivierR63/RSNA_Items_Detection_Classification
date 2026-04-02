@@ -80,6 +80,7 @@ def mock_config(tmp_path, setup_csv_files):
             "nb_cores": 7,
             "log_retention_days": 30,
             "memory_threshold_percent": 95,
+            "threshold_temperature": 85,
             "seed": 42
         },
 

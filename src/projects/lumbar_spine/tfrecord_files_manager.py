@@ -942,15 +942,8 @@ class TFRecordFilesManager:
         labels_df: pd.DataFrame,
         logger: Optional[logging.Logger] = None
     ) -> tf.train.Example:
-
         """
-        Processes a single DICOM file to extract pixel data and associated metadata.
-
-        This method performs the core data transformation:
-        1. Reads the DICOM image using SimpleITK and converts it to a raw byte stream.
-        2. Extracts and validates hierarchical IDs (Study, Series, Instance).
-        3. Retrieves the specific series description from the provided metadata.
-        4. Compiles all data into a structured `tf.train.Example` via `_prepare_tf_features`.
+        Orchestrates image loading, padding, and TF serialization.
 
         Args:
             - dicom_path (Path): Path to the DICOM file to be processed.
@@ -969,155 +962,187 @@ class TFRecordFilesManager:
             Exception: Propagates any error occurring during image reading,
                 array conversion, or feature preparation.
         """
-
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
         logger = logger or self._logger
-
-        info_msg = (
-            f"Function {class_name}.{func_name} started "
-            f"for processing DICOM file {dicom_path}"
-        )
-        logger.info(
-            info_msg,
-            extra={"action": "process_dicom_file_with_metadata", "dicom_file": dicom_path}
-        )
-
-        # Metadata serialization
-        instance_id = int(dicom_path.stem)
-        series_id = int(dicom_path.parent.name)
-        study_id = int(dicom_path.parent.parent.name)
+        func_info = f"{self.__class__.__name__}.{inspect.currentframe().f_code.co_name}"
 
         try:
-            # Retrieve DICOM image array
-            img = sitk.ReadImage(str(dicom_path))
-            img_array: np.ndarray = sitk.GetArrayFromImage(img)
+            # 1. Load and normalize array [H, W, C]
+            img_array, num_components = self._load_normalized_dicom(dicom_path, logger)
 
-            # SimpleITK considers each image as a 3D volume. Each DICOM file is loaded
-            # as a volume with one slice only ==> format (Depth, Height, Width), where Depth = 1
-            # Note: The channel dimension is absent by default if the number of channels is 1,
-            # which is normally the rule with DICOM files.
-
-            # The first dimension is useless and must be removed
-            img_array = np.squeeze(img_array, axis=0)
-
-            # Handle Channels (Enforce Rank 3: [H, W, C])
-            if img_array.ndim == 2:
-                # Add channel dimension if missing
-                img_array = img_array[:, :, np.newaxis]
-
-            elif img_array.ndim == 3:
-                # Verify that the last dimension is indeed the channel count
-                # and not a leftover depth dimension
-                if img_array.shape[2] != img.GetNumberOfComponentsPerPixel():
-                    # This could happen if squeeze didn't work as expected
-                    # or if the axes are transposed.
-                    raise ValueError(f"Inconsistent channel data in {dicom_path}")
-
-            else:
-                error_msg = (
-                    f"Unsupported image: rank {img_array.ndim} "
-                    f"(expected 2 before expansion or 3) in {dicom_path}"
-                )
-                raise ValueError(error_msg)
-
-            # Scale the image to the target size :
-            bool_var_1 = (input_features_df['series_id'] == series_id)
-            bool_var_2 = (input_features_df['study_id'] == study_id)
-            bool_var_3 = (input_features_df['instance_number'] == instance_id)
-            mask = bool_var_1 & bool_var_2
-
-            relevant_data = (
-                input_features_df.loc[
-                    mask,
-                    ['actual_file_format', 'series_description', 'instance_number']
-                ]
+            # 2. Get target formatting metadata
+            target_w, target_h, description = self._get_target_metadata(
+                dicom_path,
+                input_features_df,
+                logger
             )
 
-            if not relevant_data.empty:
-                # Note: target_format is formatted as follows: (Width, Height, Depth)
-                # This format derives from the command sitk.ImageFileReader().GetSize(),
-                # that was called by function CSVMetadataHandler._get_file_format().
-                # This format is the reverse order of the data returned by
-                # sitk.GetArrayFromImage(img), which is also used in this function.
-                target_format_df = relevant_data['actual_file_format'].unique()
-                all_dimensions = [dim for fmt in target_format_df for dim in fmt[:2]]
-                max_val = max(all_dimensions)
-                target_format = (max_val, max_val)
+            # 3. Apply padding if necessary
+            img_array = self._apply_center_padding(
+                img_array,
+                target_w,
+                target_h,
+                logger
+            )
 
-                description = int(relevant_data['series_description'].iloc[0])
-
-                current_image_format = relevant_data.loc[
-                    bool_var_3,
-                    'actual_file_format'
-                ].unique()[0][:2]
-
-                if current_image_format != target_format:
-                    pad_h = target_format[1] - current_image_format[1]  # Height
-                    pad_w = target_format[0] - current_image_format[0]  # Width
-
-                    pad_top = pad_h // 2
-                    pad_bottom = pad_h - pad_top
-
-                    pad_left = pad_w // 2
-                    pad_right = pad_w - pad_left
-
-                    img_array = np.pad(
-                        img_array,
-                        (
-                            (pad_top, pad_bottom),  # Axis 0: Height
-                            (pad_left, pad_right),  # Axis 1 Width
-                            (0, 0)  # Axis 2: Nb channels (no padding)
-                        ),
-                        mode='constant',
-                        constant_values=0
-                    )
-            else:
-                raise ValueError(f"No matching data in file {class_name}.{func_name}")
-
-            img_uint16 = img_array.astype(np.uint16)
-            img_bytes = img_uint16.tobytes()
+            # 4. Serialize to TF Example
+            img_bytes = img_array.astype(np.uint16).tobytes()
 
             features_dict = self._prepare_tf_features(
                 is_padding=False,
                 image_bytes=img_bytes,
-                study_id=study_id,
-                series_id=series_id,
+                study_id=int(dicom_path.parent.parent.name),
+                series_id=int(dicom_path.parent.name),
                 series_min=series_min,
                 series_max=series_max,
-                instance_id=instance_id,
-                img_height=target_format[1],
-                img_width=target_format[0],
+                instance_id=int(dicom_path.stem),
+                img_height=target_h,
+                img_width=target_w,
                 description=description,
                 labels_df=labels_df,
                 nb_max_records=self._max_records
             )
 
-            features = tf.train.Example(features=tf.train.Features(feature=features_dict))
+            return tf.train.Example(features=tf.train.Features(feature=features_dict))
 
-            logger.info(
-                (
-                    f"Function {class_name}.{func_name}: Successfully processed "
-                    f"DICOM file {dicom_path}"
-                ),
-                extra={"status": "success"}
-            )
+        except Exception as e:
+            error_msg = f"Function {func_info} failed for {dicom_path.name}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise
 
-            return features
+    def _load_normalized_dicom(
+        self,
+        dicom_path: Path,
+        logger: Optional[logging.Logger] = None
+    ) -> Tuple[np.ndarray, int]:
+
+        """
+        Reads DICOM and ensures [H, W, C] format.
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+
+        try:
+            img = sitk.ReadImage(str(dicom_path))
+            img_array = sitk.GetArrayFromImage(img)
+
+            # Remove depth dimension (Depth=1 for single DICOM)
+            img_array = np.squeeze(img_array, axis=0)
+
+            if img_array.ndim == 2:
+                img_array = img_array[:, :, np.newaxis]
+
+            if img_array.shape[2] != img.GetNumberOfComponentsPerPixel():
+                raise ValueError(f"Channel mismatch in {dicom_path}")
+
+            return img_array, img.GetNumberOfComponentsPerPixel()
 
         except Exception as e:
             error_msg = (
                 f"Function {class_name}.{func_name} failed: "
-                f"Error in _process_dicom_file_with_metadata: The DICOM file "
-                f"read/conversion/serialization process for {dicom_path.name} failed. "
-                f"{str(e)}"
+                f"{e}"
             )
-            logger.error(
-                error_msg,
-                exc_info=True,  # Includes the full stack trace upon failure
-                extra={"status": "failed", "error_type": "DicomProcessingError"}
+            logger.error(error_msg, exc_info=True)
+            raise
+
+    def _get_target_metadata(
+        self,
+        dicom_path: Path,
+        input_features_df: pd.DataFrame,
+        logger: Optional[logging.Logger] = None
+    ) -> Tuple[int, int, int]:
+        """
+        Retrieves the target dimensions and series description from the metadata DataFrame.
+
+        Returns:
+            Tuple[int, int, int]: (target_width, target_height, description)
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+        try:
+            series_id = int(dicom_path.parent.name)
+            study_id = int(dicom_path.parent.parent.name)
+
+            # Filter metadata for the specific series and study
+            mask_1 = (input_features_df['series_id'] == series_id)
+            mask_2 = (input_features_df['study_id'] == study_id)
+            mask = mask_1 & mask_2
+
+            relevant_data = input_features_df.loc[
+                mask,
+                ['actual_file_format', 'series_description']
+            ]
+
+            if relevant_data.empty:
+                raise ValueError(f"No matching metadata found for DICOM: {dicom_path}")
+
+            # Calculate target format (square based on max dimension)
+            target_format_df = relevant_data['actual_file_format'].unique()
+            all_dimensions = [dim for fmt in target_format_df for dim in fmt[:2]]
+            max_val = max(all_dimensions)
+
+            # target_format is (Width, Height)
+            target_w, target_h = max_val, max_val
+            description = int(relevant_data['series_description'].iloc[0])
+
+            return target_w, target_h, description
+
+        except Exception as e:
+            error_msg = (
+                f"Function {class_name}.{func_name} failed: "
+                f"{e}"
             )
+            logger.error(error_msg, exc_info=True)
+            raise
+
+    def _apply_center_padding(
+        self,
+        img_array: np.ndarray,
+        target_w: int,
+        target_h: int,
+        logger: logging.Logger
+    ) -> np.ndarray:
+        """
+        Calculates and applies zero-padding to center the image.
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+
+        try:
+            current_h, current_w = img_array.shape[0], img_array.shape[1]
+
+            if (current_h, current_w) == (target_h, target_w):
+                return img_array
+
+            pad_h = max(0, target_h - current_h)
+            pad_w = max(0, target_w - current_w)
+
+            if pad_h == 0 and pad_w == 0:
+                return img_array
+
+            pad_top = pad_h // 2
+            pad_bottom = pad_h - pad_top
+            pad_left = pad_w // 2
+            pad_right = pad_w - pad_left
+
+            return np.pad(
+                img_array,
+                ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
+                mode='constant',
+                constant_values=0
+            )
+
+        except Exception as e:
+            error_msg = (
+                f"Function {class_name}.{func_name} failed: "
+                f"{e}"
+            )
+            logger.error(error_msg, exc_info=True)
             raise
 
     def _prepare_tf_features(

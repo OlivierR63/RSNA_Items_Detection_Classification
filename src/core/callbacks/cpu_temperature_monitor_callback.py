@@ -3,6 +3,7 @@
 import tensorflow as tf
 import psutil
 import platform
+import wmi
 
 
 class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
@@ -29,13 +30,15 @@ class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
         elif self.os_name == "Windows":
             # Requires WMI and often specific hardware drivers
             try:
-                import wmi
                 w = wmi.WMI(namespace="root\\wmi")
                 temperature_info = w.MSAcpi_ThermalZoneTemperature()[0]
+
                 # Temperature is in tenths of Kelvin, convert to Celsius
                 return (temperature_info.CurrentTemperature / 10.0) - 273.15
+
             except Exception:
                 return None
+
         return None
 
     def on_train_batch_end(self, batch, logs=None):

@@ -1,6 +1,6 @@
 # coding: utf-8
 
-from src.core.utils.log_training_callbacks import LogTrainingCallbacks
+from src.core.callbacks.log_training_callbacks import LogTrainingCallbacks
 
 
 def test_log_training_callbacks_full_cycle(mock_logger, caplog):
