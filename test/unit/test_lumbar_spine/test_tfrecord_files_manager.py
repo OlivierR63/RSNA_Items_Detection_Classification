@@ -1556,7 +1556,7 @@ class TestProcessSeries:
 
             # Verify that at least one such warning was logged
             assert len(warning_records) == 1
-            assert warning_records[0].failed_processing == 1
+            assert warning_records[0].failed_count == 1
 
     def test_process_series_complete_failure(
         self,
@@ -1630,11 +1630,8 @@ class TestProcessSeries:
 
             # Validate that the log exists and contains the correct metadata
             assert error_record is not None, f"Error log for series {series_dir.name} was not found"
-            assert "All files failed during processing" in error_record.message
+            assert "All files failed" in error_record.message
             assert error_record.status == "failed"
-
-            # Verify that exception info (traceback) was captured
-            assert error_record.exc_info is not None
 
     def test_process_series_no_dicom_files(
         self,
@@ -1739,7 +1736,7 @@ class TestProcessSeries:
         # Verify that the error was logged with appropriate metadata
         # Note: This assumes you have a try/except block in your _process_series source code
         error_record = next(
-            (rec for rec in caplog.records if "Failed to process series" in rec.message),
+            (rec for rec in caplog.records if "Failed series" in rec.message),
             None
         )
 

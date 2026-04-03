@@ -11,6 +11,7 @@ from src.core.utils.logger import log_method
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from pathlib import Path
 from tqdm import tqdm
+from typing import List, Union
 
 
 # ----------------------- Helper functions -------------------------------
@@ -513,178 +514,146 @@ class TFRecordFilesManager:
         labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
         logger: Optional[logging.Logger] = None
-    ) -> Tuple[int, int, int]:
+    ) -> Tuple[int, int, int, int]:
 
         """
-        Processes all DICOM instances within a single series directory.
-
-        This method first computes global statistics for the series (min/max pixel values)
-        to ensure consistent normalization across all instances. It then iterates through
-        each DICOM file, delegating the extraction and serialization to
-        `_process_single_dicom_instance`.
-
-        Args:
-             - series_path (Path): Path to the series directory containing DICOM files.
-             - input_features_df (pd.DataFrame): DataFrame containing input features metadata.
-             - labels_df (pd.DataFrame): DataFrame containing target labels and coordinates.
-             - writer (tf.io.TFRecordWriter): The active TFRecord writer for the current study.
-             - logger (Optional[logging.Logger]): Logger instance for status reporting.
-
-        Returns:
-            Tuple[int, int, int]: A tuple containing:
-                - nb_success: Number of (DICOM + padding) files successfully serialized.
-                - nb_failures: Number of files that encountered errors during processing.
-                - nb_dicom_files: Total number of DICOM files discovered in the directory.
-                - nb_padding_instances : number of additional padding files created
-                                         in the directory.
-
-        Raises:
-            Exception: Propagates any critical error encountered during series-level
-                operations (e.g., stats computation) after logging.
-
+        Orchestrates series processing by handling stats, padding, and iteration.
         """
+        logger = logger or self._logger
+        series_id, study_id = series_path.name, series_path.parent.name
 
+        try:
+            # 1. Stats & File Discovery
+            series_min, series_max = self._get_series_stats(series_path)
+            dicom_files = sorted(list(series_path.glob("*.dcm")), key=lambda x: int(x.stem))
+
+            # 2. Get Normalized Sequence (Real files + Padding indices)
+            full_sequence = self._plan_series_sequence(dicom_files)
+
+            # 3. Execution Loop
+            nb_success, nb_failures = 0, 0
+            for item in full_sequence:
+                if isinstance(item, Path):
+                    instance_num, is_padding = (int(item.stem), False)
+                else:
+                    instance_num, is_padding = (item, True)
+
+                success = self._process_single_dicom_instance(
+                    series_path.resolve(), series_min, series_max,
+                    input_features_df, labels_df, writer,
+                    instance_num=instance_num, is_padding=is_padding
+                )
+                if success:
+                    nb_success += 1
+                else:
+                    nb_failures += 1
+
+            self._log_series_status(series_id, nb_success, nb_failures, logger)
+
+            nb_dicom = len(dicom_files)
+            nb_padding = len(full_sequence) - nb_dicom
+            return nb_success, nb_failures, nb_dicom, nb_padding
+
+        except Exception as e:
+            logger.error(
+                f"Failed series {series_id} (Study {study_id}): {e}",
+                exc_info=True,
+                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
+            )
+            raise
+
+    @log_method()
+    def _plan_series_sequence(
+        self,
+        dicom_files: List[Path],
+        logger: Optional[logging.Logger] = None
+    ) -> List[Union[Path, int]]:
+        """
+        Calculates the final sequence of instances to reach series_depth.
+        Returns a list containing Paths (real files) and ints (padding instances).
+        """
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
 
-        info_msg = (
-            f"Starting function {class_name}.{func_name} "
-            f"for series {series_path.name}"
-        )
-
-        logger.info(
-           info_msg,
-           extra={"action": "process_series", "series_dir": series_path}
-        )
-
-        nb_failures = 0
-        nb_success = 0
-
         try:
-            # Define the min / max pixel values of the series
-            series_min, series_max = self._get_series_stats(series_path)
+            depth_target = self._config["series_depth"]
+            nb_files = len(dicom_files)
 
-            dicom_files_list = list(series_path.glob("*.dcm"))
-            nb_dicom_files = len(dicom_files_list)
+            if nb_files == depth_target:
+                return dicom_files
 
-            series_depth = self._config["series_depth"]
+            indices = [int(f.stem) for f in dicom_files]
+            min_i, max_i = (min(indices), max(indices)) if indices else (0, 0)
 
-            nb_padding_instances = 0
+            # Step 1: Real files + Internal Gaps
+            sequence = dicom_files.copy()
+            current_target = depth_target - nb_files
 
-            if nb_dicom_files != series_depth:
-                dcm_files_instances_numbers_list = (
-                    [int(Path(dcm_file).stem) for dcm_file in dicom_files_list]
-                )
+            for inst in range(min_i + 1, max_i):
+                if current_target <= 0:
+                    break
+                if inst not in indices:
+                    sequence.append(inst)
+                    current_target -= 1
 
-                if nb_dicom_files == 0:
-                    (max_inst, min_inst) = (0, 0)
-                else:
-                    max_inst = np.max(dcm_files_instances_numbers_list)
-                    min_inst = np.min(dcm_files_instances_numbers_list)
+            # Step 2: External Gaps (Head & Tail)
+            if current_target > 0:
+                head_count = current_target // 2
+                tail_count = current_target - head_count
 
-                # Create a list of objects (Path or int)
-                final_elements_list = dicom_files_list.copy()
-                target = series_depth - nb_dicom_files
+                for i in range(head_count):
+                    sequence.insert(0, min_i - 1 - i)
+                for i in range(tail_count):
+                    sequence.append(max_i + 1 + i)
 
-                # Step 1: Fill internal gaps (In-between existing instances)
-                for instance in range(min_inst + 1, max_inst):
-                    if instance not in dcm_files_instances_numbers_list:
-                        final_elements_list.append(instance)  # Add instance number as sent
-                        target -= 1
-                        nb_padding_instances += 1
-
-                    if 0 == target:
-                        break
-
-                # Step 2: Fill external gaps (Head and tail)
-                if target > 0:
-                    nb_inserted_files = int(target) // 2
-                    nb_appended_files = target - nb_inserted_files
-
-                    # Insert at the beginning (Head)
-                    for idx in range(nb_inserted_files):
-                        # Using negative or specific range to avoid collision if needed
-                        final_elements_list.insert(0, min_inst - 1 - idx)
-                        nb_padding_instances += 1
-
-                    # Add at the end (tail)
-                    for idx in range(nb_appended_files):
-                        final_elements_list.append(max_inst + 1 + idx)
-                        nb_padding_instances += 1
-
-                # Replace the original list with the padded / extended one
-                dicom_files_list = final_elements_list
-
-            for item in dicom_files_list:
-                series_path = series_path.resolve()
-                if isinstance(item, Path):
-                    # Real DICOM file
-                    instance_num = int(item.stem)
-                    is_padding = False
-                else:
-                    # It is a padding instance : the item is the instance number
-                    instance_num = item
-                    is_padding = True
-
-                process_completed: bool = self._process_single_dicom_instance(
-                    series_path,
-                    series_min,
-                    series_max,
-                    input_features_df,
-                    labels_df,
-                    writer,
-                    instance_num=instance_num,
-                    is_padding=is_padding
-                )
-
-                if process_completed is False:
-                    nb_failures += 1
-                    continue
-
-                nb_success += 1
-
-            full_success: bool = (nb_failures == 0)
-            partial_success: bool = (nb_success > 0 and not full_success)
-            complete_failure: bool = (nb_success == 0)
-
-            if complete_failure:
-                logger.error(
-                    f"Series {series_path.name} processing failed: "
-                    f"All files failed during processing.",
-                    exc_info=True,
-                    extra={"status": "failed"}
-                )
-
-            if partial_success:
-                logger.warning(
-                    f"Series {series_path.name} partially completed:"
-                    f"    - ({nb_success} were processed with success). "
-                    f"    - {nb_failures} files were skipped due to processing errors).",
-                    extra={"status": "partial_success",
-                           "failed_processing": nb_failures}
-                )
-
-            if full_success:
-                logger.info(
-                    f"Series {series_path.name} processing completed successfully.",
-                    extra={"status": "success"}
-                )
-
-            return nb_success, nb_failures, nb_dicom_files, nb_padding_instances
+            return sequence
 
         except Exception as e:
-            # Log the failure of the specific series before re-raising
-            series_id = series_path.name
-            study_id = series_path.parent.name
-
-            logger.error(
-                f"Failed to process series instance {series_id} in study {study_id}: {str(e)}",
-                exc_info=True,
-                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
+            error_msg = (
+                f"Function {class_name}.{func_name} failed: "
+                f"{e}"
             )
-            raise  # Keep propagating the error
+            logger.error(error_msg, exc_info=True)
+            raise
+
+    def _log_series_status(
+        self,
+        series_id: str,
+        nb_success: int,
+        nb_failures: int,
+        logger: logging.Logger
+    ) -> None:
+        """
+        Handles final logging for a series based on success/failure counts.
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        full_success = (nb_failures == 0)
+        partial_success = (nb_success > 0 and not full_success)
+        complete_failure = (nb_success == 0)
+
+        if complete_failure:
+            logger.error(
+                f"Series {series_id} processing failed: All files failed.",
+                extra={"status": "failed"}
+            )
+
+        elif partial_success:
+            logger.warning(
+                f"Series {series_id} partially completed: "
+                f"({nb_success} success, {nb_failures} skipped).",
+                extra={"status": "partial_success", "failed_count": nb_failures}
+            )
+
+        elif full_success:
+            logger.info(
+                f"Function {class_name}.{func_name}: "
+                f"Series {series_id} processing completed successfully.",
+                extra={"status": "success"}
+            )
 
     @log_method()
     def _get_series_stats(
@@ -962,8 +931,19 @@ class TFRecordFilesManager:
             Exception: Propagates any error occurring during image reading,
                 array conversion, or feature preparation.
         """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
         logger = logger or self._logger
-        func_info = f"{self.__class__.__name__}.{inspect.currentframe().f_code.co_name}"
+
+        instance_num = dicom_path.name
+        series_path = dicom_path.parent
+
+        info_msg = (
+            f"Function {class_name}.{func_name} started "
+            f"for processing image instance {instance_num} in series {series_path}"
+        )
+        logger.info(info_msg)
 
         try:
             # 1. Load and normalize array [H, W, C]
@@ -1002,10 +982,20 @@ class TFRecordFilesManager:
                 nb_max_records=self._max_records
             )
 
+            info_msg = (
+                f"Function {class_name}.{func_name}: "
+                f"successfully processed image instance {instance_num} in series {series_path}"
+            )
+
+            logger.info(
+                info_msg,
+                extra={"status": "success"}
+            )
+
             return tf.train.Example(features=tf.train.Features(feature=features_dict))
 
         except Exception as e:
-            error_msg = f"Function {func_info} failed for {dicom_path.name}: {str(e)}"
+            error_msg = f"Function {class_name}.{func_name} failed for {dicom_path.name}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             raise
 
