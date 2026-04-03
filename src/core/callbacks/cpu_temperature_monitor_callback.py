@@ -3,7 +3,12 @@
 import tensorflow as tf
 import psutil
 import platform
-import wmi
+
+# This library is imported only into Windows environment
+if platform.system() == "WIndows":
+    import wmi
+else:
+    wmi = None
 
 
 class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
