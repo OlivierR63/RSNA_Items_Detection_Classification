@@ -7,7 +7,7 @@ paths:
   log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
   inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
   csv:
-    description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
+    series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
     label_enriched: "/kaggle/working/csv_file/train_label_coordinates_format.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
@@ -23,7 +23,8 @@ models:
   backbone_2d:
     type: "MobileNetV2"
     img_shape: [224, 224, 3]
-    scaling: { max: 1, min: -1 }
+    freeze: True
+    scaling: { min: -1.0, max: 1.0 }
 
   head_3d:
     type: "cnn3d"
@@ -32,7 +33,7 @@ models:
 # ----------------- Training & Compilation ----------------
 training:
   batch_size: 8
-  epochs: 1
+  epochs: 5
   train_split_ratio: 0.8
 
 optimizer:
@@ -52,10 +53,10 @@ compilation:
 
 # ----------------- Hardware & Maintenance ----------------
 system:
-  nb_cores: 0  # 0 = all cores
+  nb_cores: 4  # 0 = all cores
   log_retention_days: 30
   seed: 42
-  memory_threshold_percent: 90
+  memory_threshold_percent: 85.0
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
@@ -76,9 +77,19 @@ dataset_steering:
   num_parallel_calls: 1
 
   # Use the cache or not
-  use_cache: false
+  use_cache: False
 
 #--- Actual series depth (do not confuse with the percentile) --
 # series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader.
 
+# ----------------- Logging & Debugging -------------------
+logging:
+  # Level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+  # No other value is allowed
+  level: "DEBUG"
 
+  # Whether to display logs in the terminal
+  console_display: False
+  
+  # Use JSON formatting for structured logs
+  use_json: False
