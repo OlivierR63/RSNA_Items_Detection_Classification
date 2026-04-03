@@ -5,6 +5,7 @@ paths:
   output: "/kaggle/working/lumbar_spine/output/"
   checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
   log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
+  tf_cache: "/tmp/tensorflow_cache/lumbar_train"
   inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
   csv:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
