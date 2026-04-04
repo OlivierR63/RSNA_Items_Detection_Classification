@@ -108,8 +108,12 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
             self._logger.debug("RSNAKaggleMetric initialized")
 
         except Exception as e:
-            error_msg = f"RSNAKaggleMetric initialization failed: {e}"
-            self._logger.error(error_msg, exc_info=True)
+            critical_msg = f"RSNAKaggleMetric initialization failed: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failed"}
+            )
             raise
 
     def update_state(self, y_true, y_pred, sample_weight=None):

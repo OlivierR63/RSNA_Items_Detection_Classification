@@ -129,10 +129,10 @@ class ModelTrainer:
                 process=self._process,
                 logger=self._logger
             )
-            logger.error(
+            logger.critical(
                 f"Error in train_model: {str(e)}",
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -247,10 +247,10 @@ class ModelTrainer:
             )
 
             # Normally log the error
-            logger.error(
+            logger.critical(
                 f"Error creating dataset: {str(e)}",
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -415,6 +415,10 @@ class ModelTrainer:
             return history
 
         except Exception as e:
-            logger.error(f"Error during training: {str(e)}", exc_info=True,
-                         extra={"status": "failed", "error": str(e)})
+            critical_msg = f"Error during training: {str(e)}"
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str(e)}
+            )
             raise

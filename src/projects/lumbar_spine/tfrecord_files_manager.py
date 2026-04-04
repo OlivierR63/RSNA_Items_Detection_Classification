@@ -70,6 +70,13 @@ class SeriesProcessingError(Exception):
     pass
 
 
+class MissingLabelsError(Exception):
+    """
+    Exception raised when some series failed to be processed
+    """
+    pass
+
+
 class TFRecordFilesManager:
     """
     Manager responsible for orchestrating the conversion of medical imaging studies
@@ -171,15 +178,15 @@ class TFRecordFilesManager:
                             extra={"status": "skipped"})
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"function {class_name}.{func_name} failed."
                 f"Error generating TFRecords: {str(e)}"
             )
 
-            logger.error(
-                error_msg,
+            logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -210,9 +217,13 @@ class TFRecordFilesManager:
 
         # Case empty root directory
         if not any(Path(studies_dir).iterdir()):
-            error_msg = f"No studies found in {studies_dir}. Process stops immediately."
-            logger.critical(error_msg, extra={"status": "failure"})
-            raise EmptyDirectoryError(error_msg)
+            critical_msg = f"No studies found in {studies_dir}. Process stops immediately."
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
+            raise EmptyDirectoryError(critical_msg)
 
         try:
             # Ensure the destination directory for TFRecord files exists and return its Path.
@@ -227,7 +238,7 @@ class TFRecordFilesManager:
                         f"Skipping non-directory item {study_full_path} "
                         f"in root directory {studies_dir}"
                     )
-                    logger.warning(msg_warning)
+                    logger.warning(msg_warning, extra={"status": "incomplete"})
                     continue
 
                 # Case directory study_full_path is empty
@@ -236,7 +247,7 @@ class TFRecordFilesManager:
                         f"Skipping empty directory {study_full_path} "
                         f"in root directory {studies_dir}"
                     )
-                    logger.warning(msg_warning, extra={"status": "Skipped studies"})
+                    logger.warning(msg_warning, extra={"status": "incomplete"})
                     continue
 
                 study_metadata_df = (
@@ -253,7 +264,7 @@ class TFRecordFilesManager:
                         "Required action: Please check the CSV files "
                         "and ensure they contain the right records."
                     )
-                    logger.warning(msg_warning)
+                    logger.warning(msg_warning, extra={"status": "incomplete"})
                     continue
 
                 self._process_study(study_full_path, study_metadata_df, tfrecord_path)
@@ -262,15 +273,15 @@ class TFRecordFilesManager:
                         extra={"status": "success"})
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"function {class_name}.{func_name} failed."
                 f"Error during DICOM conversion: {str(e)}"
             )
 
-            logger.error(
-                error_msg,
+            logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -329,31 +340,53 @@ class TFRecordFilesManager:
         labels_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
 
         try:
+            actual_nb_labels = len(labels_df)
+            expected_nb_labels = self._config['data_specs']['max_records_per_frame']
+            if actual_nb_labels != expected_nb_labels:
+                critical_msg = (
+                    f"Issue in function {class_name}.{func_name}. "
+                    f"Study {study_path.name} has an invalid number of labels. "
+                    f"Found {actual_nb_labels} labels, but expected {expected_nb_labels}"
+                )
+
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+
+                raise MissingLabelsError(critical_msg)
+
             series_list = list(study_path.iterdir())
             nb_series = len(series_list)
 
             if (nb_series) == 0:
-                error_msg = (
+                critical_msg = (
                     f"Issue in function {class_name}.{func_name}. "
                     f"Study {study_path.name} is empty."
                 )
-                logger.error(
-                    error_msg,
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
                     extra={"status": "failure", "nb_series": nb_series, "skipped_series": nb_series}
                 )
 
-                raise EmptyDirectoryError(error_msg)
+                raise EmptyDirectoryError(critical_msg)
 
             # Case nb_series > 0
             with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
                 for series_path in series_list:
                     # Case series_full_path is not a directory
                     if not series_path.is_dir():
-                        msg_error = (
+                        critical_msg = (
                             f"Skipping non-directory item {series_path.name} "
                             f"in study directory {study_path.name}"
                         )
-                        logger.error(msg_error)
+                        logger.critical(
+                            critical_msg,
+                            exc_info=True,
+                            extra={"status": "failure"}
+                        )
                         continue
 
                     nb_success, _, _, _ = self._process_single_series_instance(
@@ -368,21 +401,19 @@ class TFRecordFilesManager:
                         continue
 
             if nb_skipped_series > 0:
-                error_msg = (
+                warning_msg = (
                     f"Issue in function {class_name}.{func_name}."
                     f"Study {study_id} processed with {nb_skipped_series} skipped series "
                     "due to missing metadata or aborted TFRecord file generation."
                 )
-                logger.error(
-                    error_msg,
+                logger.warning(
+                    warning_msg,
                     extra={
-                        "status": "failure",
+                        "status": "incomplete",
                         "nb_series": nb_series,
                         "skipped_series": nb_skipped_series
                     }
                 )
-
-                raise SeriesProcessingError(error_msg)
 
             else:  # last case : nb_series > 0 and nb_skipped_series == 0
                 logger.info(
@@ -397,10 +428,10 @@ class TFRecordFilesManager:
 
         except Exception as e:
             # Log the specific study failure before re-raising
-            logger.error(
+            logger.critical(
                 f"Failed to process study {study_id}: {str(e)}",
                 exc_info=True,
-                extra={"study_id": study_id, "status": "failed"}
+                extra={"study_id": study_id, "status": "failure"}
             )
             raise  # Keep propagating the error
 
@@ -459,19 +490,19 @@ class TFRecordFilesManager:
                 f"\nSkipping non-directory item: {series_path} "
                 f"in study: {study_path}"
             )
-            logger.warning(msg_warning)
+            logger.warning(msg_warning, extra={"status": "incomplete"})
             return 0, 0, 0
 
         series_id = int(series_path.name)
         series_metadata_df = input_features_df[input_features_df['series_id'] == series_id]
 
         if series_metadata_df.empty:
-            warning_message = (
+            warning_msg = (
                 f"Issue in function {func_name}.{class_name}: "
-                f"Skipping series {series_path.name} in study {study_id}: "
-                "No matching metadata found.\n"
-                "-> Consequence: This series will not be considered "
-                "during training or evaluation.\n"
+                f"Series {series_path.name} in study {study_id}: "
+                "No matching metadata related with that series found.\n"
+                # "-> Consequence: This series will not be considered "
+                # "during training or evaluation.\n"
                 "-> Root Cause: This may be due to missing "
                 "or inconsistent records in the CSV files.\n"
                 "-> Action: Please check the CSV files "
@@ -479,17 +510,17 @@ class TFRecordFilesManager:
             )
 
             logger.warning(
-                warning_message,
+                warning_msg,
                 extra={
-                    "status": "metadata_missing",
+                    "status": "incomplete",
                     "series_dir": series_path.name,
                     "study_id": study_id
                 }
             )
 
-            dicom_files_list = list(series_path.glob("*.dcm"))
-            nb_files = len(dicom_files_list)
-            return 0, 0, nb_files, 0
+            # dicom_files_list = list(series_path.glob("*.dcm"))
+            # nb_files = len(dicom_files_list)
+            # return 0, 0, nb_files, 0
 
         try:
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
@@ -499,10 +530,10 @@ class TFRecordFilesManager:
 
         except Exception as e:
             # Log the failure of the specific series instance before re-raising
-            logger.error(
+            logger.critical(
                 f"Failed to process series instance {series_id} in study {study_id}: {str(e)}",
                 exc_info=True,
-                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
+                extra={"study_id": study_id, "series_id": series_id, "status": "failure"}
             )
             raise  # Keep propagating the error
 
@@ -555,10 +586,10 @@ class TFRecordFilesManager:
             return nb_success, nb_failures, nb_dicom, nb_padding
 
         except Exception as e:
-            logger.error(
+            logger.critical(
                 f"Failed series {series_id} (Study {study_id}): {e}",
                 exc_info=True,
-                extra={"study_id": study_id, "series_id": series_id, "status": "failed"}
+                extra={"study_id": study_id, "series_id": series_id, "status": "failure"}
             )
             raise
 
@@ -611,11 +642,15 @@ class TFRecordFilesManager:
             return sequence
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def _log_series_status(
@@ -642,10 +677,13 @@ class TFRecordFilesManager:
             )
 
         elif partial_success:
-            logger.warning(
+            msg_warning = (
                 f"Series {series_id} partially completed: "
-                f"({nb_success} success, {nb_failures} skipped).",
-                extra={"status": "partial_success", "failed_count": nb_failures}
+                f"({nb_success} success, {nb_failures} skipped)."
+            )
+            logger.warning(
+                msg_warning,
+                extra={"status": "incomplete", "failed_count": nb_failures}
             )
 
         elif full_success:
@@ -693,11 +731,16 @@ class TFRecordFilesManager:
                 dicom_paths = list(Path(series_path).glob("*.dcm"))
 
                 if not dicom_paths:
-                    error_msg = (
+                    critical_msg = (
                         f"Error in function {class_name}.{func_name}"
                         f"No DICOM files found in {series_path}"
                     )
-                    raise FileNotFoundError(error_msg)
+                    logger.critical(
+                        critical_msg,
+                        exc_info=True,
+                        extra={"status": "failure"}
+                    )
+                    raise FileNotFoundError(critical_msg)
 
             global_min = float('inf')
             global_max = float('-inf')
@@ -718,11 +761,15 @@ class TFRecordFilesManager:
             return int(global_min), int(global_max)
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     @log_method()
@@ -889,15 +936,15 @@ class TFRecordFilesManager:
             return features
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"The padding instance generation for {series_path}/{instance_num}.dcm failed. "
                 f"{str(e)}"
             )
-            logger.error(
-                error_msg,
+            logger.critical(
+                critical_msg,
                 exc_info=True,  # Includes the full stack trace upon failure
-                extra={"status": "failed", "error_type": "DicomProcessingError"}
+                extra={"status": "failure", "error_type": "DicomProcessingError"}
             )
             raise
 
@@ -995,8 +1042,14 @@ class TFRecordFilesManager:
             return tf.train.Example(features=tf.train.Features(feature=features_dict))
 
         except Exception as e:
-            error_msg = f"Function {class_name}.{func_name} failed for {dicom_path.name}: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            critical_msg = (
+                f"Function {class_name}.{func_name} failed for {dicom_path.name}: {str(e)}"
+            )
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def _load_normalized_dicom(
@@ -1024,16 +1077,26 @@ class TFRecordFilesManager:
                 img_array = img_array[:, :, np.newaxis]
 
             if img_array.shape[2] != img.GetNumberOfComponentsPerPixel():
-                raise ValueError(f"Channel mismatch in {dicom_path}")
+                critical_msg = f"Channel mismatch in {dicom_path}"
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             return img_array, img.GetNumberOfComponentsPerPixel()
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def _get_target_metadata(
@@ -1067,7 +1130,13 @@ class TFRecordFilesManager:
             ]
 
             if relevant_data.empty:
-                raise ValueError(f"No matching metadata found for DICOM: {dicom_path}")
+                critical_msg = f"No matching metadata found for DICOM: {dicom_path}"
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             # Calculate target format (square based on max dimension)
             target_format_df = relevant_data['actual_file_format'].unique()
@@ -1081,11 +1150,15 @@ class TFRecordFilesManager:
             return target_w, target_h, description
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def _apply_center_padding(
@@ -1128,11 +1201,15 @@ class TFRecordFilesManager:
             )
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def _prepare_tf_features(
@@ -1233,11 +1310,15 @@ class TFRecordFilesManager:
             }
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Function {class_name}.{func_name} failed: "
                 f"{e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def get_series_depth(self) -> int:

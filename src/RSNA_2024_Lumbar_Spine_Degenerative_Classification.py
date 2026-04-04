@@ -136,11 +136,15 @@ def get_or_build_model(
     """
 
     if depth is None or depth <= 0:
-        error_msg = (
+        critical_msg = (
             "Function get_or_build_model failed. Null depth parameter"
         )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        logger.critical(
+            critical_msg,
+            exc_info=True,
+            extra={"status": "failure"}
+        )
+        raise ValueError(critical_msg)
 
     # Extract configs locally within the function to ensure independence
     try:
@@ -155,7 +159,13 @@ def get_or_build_model(
         clip_norm = float(optimizer_cfg['clipnorm'])
 
     except (ValueError, TypeError) as e:
-        raise ValueError(f"Configuration type error: {e}")
+        critical_msg = f"Configuration type error: {e}"
+        logger.critical(
+            critical_msg,
+            exc_info=True,
+            extra={"status": "failure"}
+        )
+        raise ValueError(critical_msg)
 
     # Select the checkpoint loading policy: 'best' for the lowest validation loss
     # or 'last' to continue from the most recent epoch.
@@ -205,9 +215,15 @@ def get_or_build_model(
         model = factory_model.build_multi_series_model()
 
     except Exception as e_2:
-        msg_error = f"Fatal error. Failed to build new model: {e_2}"
-        logger.error(msg_error, extra={"status": "failed", "error": str({e_2})}, exc_info=True)
-        raise RuntimeError(msg_error)
+        msg_critical = f"Fatal error. Failed to build new model: {e_2}"
+
+        logger.critical(
+            msg_critical,
+            extra={"status": "failure", "error": str({e_2})},
+            exc_info=True
+        )
+
+        raise RuntimeError(msg_critical)
 
     try:
         if checkpoint_full_path:
@@ -288,7 +304,13 @@ def get_or_build_model(
 
     except Exception as e_4:
         critical_msg = f"Fatal error : {e_4}"
-        logger.critical(critical_msg)
+
+        logger.critical(
+            critical_msg,
+            exc_info=True,
+            extra={"status": "failure"}
+        )
+
         raise e_4
 
 
@@ -423,9 +445,13 @@ def main():
             gc.collect()
 
         except Exception as e:
-            logger.error(f"Critical error during training: {str(e)}", exc_info=True,
-                         extra={"status": "failed", "error": str(e)})
-            raise
+            critical_msg = f"Critical error during training: {str(e)}"
+            logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str(e)}
+            )
+            raise e
 
         finally:
             logger.info("Training process completed. Log file will be closed automatically.",

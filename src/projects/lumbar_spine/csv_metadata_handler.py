@@ -97,12 +97,18 @@ class CSVMetadataHandler:
 
         root_dir_cfg = self._config.get("root_dir", None)
         if root_dir_cfg is None:
-            error_msg = (
+            critical_msg = (
                 "Fatal error: the parameter 'root_dir' "
                 "is required but was not found. "
                 "Please check your YAML file structure."
             )
-            raise ValueError(error_msg)
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
+
+            raise ValueError(critical_msg)
 
         for key, original_path in raw_paths.items():
             # If the path is relative (e.g., "train.csv"), it is joined with root_dir.
@@ -170,9 +176,14 @@ class CSVMetadataHandler:
                 self._label_coords_df.to_csv(output_path, index=False)
 
         except ValueError as e:
-            self._logger.error(
+            critical_msg = (
                 f"Type conversion failed: {str(e)}. "
                 "Ensure CSV files do not contain non-numeric characters in ID columns."
+            )
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
             )
             raise  # Re-raise to stop the pipeline if data integrity is compromised
 
@@ -232,13 +243,13 @@ class CSVMetadataHandler:
             merged_df = self._merge_metadata()
 
             if merged_df.empty:
-                error_msg = "Fatal error: empty DataFrame"
-                logger.error(
-                    error_msg,
+                critical_msg = "Fatal error: empty DataFrame"
+                logger.critical(
+                    critical_msg,
                     exc_info=True,
-                    extra={"status": "failed"}
+                    extra={"status": "failure"}
                 )
-                raise ValueError(error_msg)
+                raise ValueError(critical_msg)
 
             logger.info(
                 "Metadata merged successfully",
@@ -264,10 +275,13 @@ class CSVMetadataHandler:
             return encoded_metadata_df
 
         except Exception as e:
-            self._logger.error(
-                f"Error initializing CSVMetadataHandler: {str(e)}",
+            critical_msg = (
+                f"Error initializing CSVMetadataHandler: {str(e)}"
+            )
+            self._logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -408,15 +422,18 @@ class CSVMetadataHandler:
             data_df['y'] += offset_y
 
         except Exception as e:
+            critical_msg = f"Data inconsistency - Coordinate scaling failed: {str(e)}"
+
             self.logger.error(
-                f"Coordinate scaling failed: {str(e)}",
+                critical_msg,
                 exc_info=True,
                 extra={"action": "scale_series_format", "error_type": type(e).__name__}
             )
-            raise ValueError(f"Data inconsistency during coordinate scaling: {e}")
+            raise ValueError(critical_msg)
 
         modified_mask = (offset_x != 0) | (offset_y != 0)
-        self._logger.info(f"Coordinate unification complete. {modified_mask.sum()} labels updated.")
+        info_msg = f"Coordinate unification complete. {modified_mask.sum()} labels updated."
+        self._logger.info(info_msg)
 
         data_df = (
             data_df.drop(columns=['actual_file_format'])
@@ -450,10 +467,10 @@ class CSVMetadataHandler:
             return (result)  # Returns (Width, Height)
 
         except Exception as e:
-            self._logger.error(
+            self._logger.critical(
                 f"Error reading file format: {str(e)}",
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -478,10 +495,10 @@ class CSVMetadataHandler:
             return merged_df
 
         except Exception as e:
-            self._logger.error(
+            self._logger.critical(
                 f"Error merging metadata: {str(e)}",
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -498,9 +515,9 @@ class CSVMetadataHandler:
             )
 
             if tmp_train_df.empty:
-                error_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
-                self._logger.error(error_msg, exc_info=True, extra={"status": "failed"})
-                raise ValueError(error_msg)
+                critical_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
+                self._logger.critical(critical_msg, exc_info=True, extra={"status": "failure"})
+                raise ValueError(critical_msg)
 
             initial_count = len(tmp_train_df)
 
@@ -508,17 +525,17 @@ class CSVMetadataHandler:
             final_count = len(tmp_train_df)
 
             if final_count == 0:
-                error_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
-                self._logger.error(error_msg, exc_info=True, extra={"status": "failed"})
-                raise ValueError(error_msg)
+                critical_msg = "Fatal error: method _melt_and_clean_train_df. Empty DataFrame"
+                self._logger.error(critical_msg, exc_info=True, extra={"status": "failure"})
+                raise ValueError(critical_msg)
 
             self._logger.info(
                 f"Dropped {initial_count - final_count} NaN rows",
                 extra={
-                        "step": 1,
-                        "initial_count": initial_count,
-                        "final_count": final_count
-                       }
+                    "step": 1,
+                    "initial_count": initial_count,
+                    "final_count": final_count
+                }
             )
 
             # Standardize severity text as well
@@ -531,10 +548,10 @@ class CSVMetadataHandler:
             return tmp_train_df
 
         except Exception as e:
-            self._logger.error(
+            self._logger.critical(
                 f"Error melting and cleaning training DataFrame: {str(e)}",
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -564,8 +581,14 @@ class CSVMetadataHandler:
             )
 
             if merged_df.empty:
-                error_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
-                raise ValueError(error_msg)
+                critical_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+
+                self._logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             self._logger.info(
                 f"Merged with label coordinates. Shape: {merged_df.shape}",
@@ -573,11 +596,11 @@ class CSVMetadataHandler:
             )
 
         except Exception as e:
-            error_msg = f"Fatal error in _merge_with_label_coordinates: {e}"
-            self._logger.error(
-                error_msg,
+            critical_msg = f"Fatal error in _merge_with_label_coordinates: {e}"
+            self._logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str({e})}
+                extra={"status": "failure", "error": str({e})}
             )
             raise e
 
@@ -594,8 +617,13 @@ class CSVMetadataHandler:
             merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
 
             if merged_df.empty:
-                error_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
-                raise ValueError(error_msg)
+                critical_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+                self._logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             self._logger.info(
                 f"Merged with series descriptions. Final shape: {merged_df.shape}",
@@ -603,11 +631,11 @@ class CSVMetadataHandler:
             )
 
         except Exception as e:
-            error_msg = f"Fatal error in _merge_with_series_descriptions: {e}"
-            self._logger.error(
-                error_msg,
+            critical_msg = f"Fatal error in _merge_with_series_descriptions: {e}"
+            self._logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str({e})}
+                extra={"status": "failure", "error": str({e})}
             )
             raise e
 
@@ -657,8 +685,14 @@ class CSVMetadataHandler:
 
         try:
             if metadata_df.empty:
-                error_msg = "Empty DataFrame"
-                raise ValueError(error_msg)
+                critical_msg = "Empty DataFrame"
+
+                self._logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             # Define columns to encode and their corresponding mapping variables
             columns_to_encode = ["condition_level", "series_description", "severity"]
@@ -674,14 +708,14 @@ class CSVMetadataHandler:
             return metadata_df
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Fatal error in function {class_name}.{func_name}: {str(e)}"
             )
 
-            logger.error(
-                error_msg,
+            logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise
 
@@ -728,13 +762,14 @@ class CSVMetadataHandler:
             return mappings
 
         except Exception as e:
-            error_msg = (
+            critical_msg = (
                 f"Error in {self.__class__.__name__}.{func_name} "
                 f"while processing column '{column}': {e}"
             )
-            self._logger.error(
-                error_msg,
-                exc_info=True
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
             )
             raise
 
@@ -818,10 +853,10 @@ class CSVMetadataHandler:
             return mapper
 
         except Exception as e:
-            error_msg = f"Error in function {class_name}.{func_name} : {str(e)}"
-            logger.error(
-                error_msg,
+            critical_msg = f"Error in function {class_name}.{func_name} : {str(e)}"
+            logger.critical(
+                critical_msg,
                 exc_info=True,
-                extra={"status": "failed", "error": str(e)}
+                extra={"status": "failure", "error": str(e)}
             )
             raise

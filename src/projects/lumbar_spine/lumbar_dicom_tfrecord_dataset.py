@@ -60,7 +60,12 @@ class LumbarDicomTFRecordDataset():
             self._logger.info("LumbarDicomTFRecordDataset initialized")
 
         except RuntimeError as e:
-            self._logger.error(f"LumbarDicomTFRecordDataset initialization failed: {e}")
+            critical_msg = f"LumbarDicomTFRecordDataset initialization failed: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
             raise
 
     def generate_tfrecord_dataset(
