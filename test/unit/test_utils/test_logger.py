@@ -2,6 +2,7 @@
 
 
 import logging
+import pytest
 import json
 from unittest.mock import MagicMock
 from src.core.utils.logger import (
@@ -34,9 +35,8 @@ def test_setup_logger(mock_config, caplog, tmp_path):
         assert len(log_files) == 1
 
         # Check the log content
-        with open(log_files[0], "r") as f:
-            content = f.read()
-            assert "Test message" in content
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "Test message" in content
 
 
 def test_json_formatter():
@@ -78,9 +78,8 @@ def test_log_method_decorator(mock_config, caplog, tmp_path):
     with setup_logger("test", log_dir=str(log_dir), config=mock_config):
         test_function()
         log_files = list(log_dir.glob("*.log"))
-        with open(log_files[0], "r") as f:
-            content = f.read()
-            assert "Test function called" in content
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "Test function called" in content
 
     # Test with explicit logger
     mock_logger = MagicMock()
@@ -187,10 +186,10 @@ def test_log_method_decorator_with_logger_param(mock_config, tmp_path):
     with setup_logger("test", log_dir=str(log_dir), config=mock_config):
         result = test_function_with_logger()
         assert result is True
+
         log_files = list(log_dir.glob("*.log"))
-        with open(log_files[0], "r") as f:
-            content = f.read()
-            assert "Test message with logger" in content
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "Test message with logger" in content
 
 
 def test_setup_logger_with_json_formatter(mock_config, tmp_path):
@@ -227,8 +226,71 @@ def test_json_formatter_with_exception(mock_config, tmp_path):
         # Check that the log file contains the exception information
         log_files = list(log_dir.glob("*.log"))
         assert len(log_files) == 1
-        with open(log_files[0], "r") as f:
-            content = f.read()
-            log_data = json.loads(content)
-            assert "exception" in log_data
-            assert "Test exception" in log_data["exception"]
+
+        content = log_files[0].read_text(encoding="utf-8")
+        log_data = json.loads(content)
+        assert "exception" in log_data
+        assert "Test exception" in log_data["exception"]
+
+
+@pytest.mark.parametrize(
+    (
+        "config_level,"
+        "expected_numeric,"
+        "expected_name,"
+        "should_contain,"
+        "should_not_contain"
+    ),
+
+    [
+        ("INFO", logging.INFO, "INFO", ["INFO_MSG"], ["DEBUG_MSG"]),
+        ("DEBUG", logging.DEBUG, "DEBUG", ["INFO_MSG", "DEBUG_MSG"], []),
+        ("INVALID", logging.INFO, "INFO", ["INFO_MSG"], ["DEBUG_MSG"]),
+    ]
+)
+def test_setup_logger_filtering_levels(
+    mock_config,
+    tmp_path,
+    config_level,
+    expected_numeric,
+    expected_name,
+    should_contain,
+    should_not_contain
+):
+    """
+    Unified test for logging levels filtering and fallback behavior.
+    """
+    log_dir = tmp_path / "logs"
+    mock_config["logging"]["level"] = config_level
+
+    with setup_logger("test_filter", log_dir=str(log_dir), config=mock_config) as logger:
+        # Check internal state
+        assert logger.getEffectiveLevel() == expected_numeric
+        assert logging.getLevelName(logger.getEffectiveLevel()) == expected_name
+
+        # Emit logs
+        logger.debug("DEBUG_MSG")
+        logger.info("INFO_MSG")
+
+    # Check physical file content
+    log_file = list(log_dir.glob("*.log"))[0]
+    content = log_file.read_text(encoding='utf-8')
+    for msg in should_contain:
+        assert msg in content
+    for msg in should_not_contain:
+        assert msg not in content
+
+
+def test_setup_logger_console_output(mock_config, tmp_path, capsys):
+    """
+    Verify that logs are actually printed to stdout when console_display is True.
+    """
+    log_dir = tmp_path / "logs"
+    mock_config["logging"]["console_display"] = True
+
+    with setup_logger("test_console", log_dir=str(log_dir), config=mock_config) as logger:
+        logger.info("CONSOLE_VERIFICATION_MSG")
+
+    # Capture the stdout/stderr
+    captured = capsys.readouterr()
+    assert "CONSOLE_VERIFICATION_MSG" in captured.out

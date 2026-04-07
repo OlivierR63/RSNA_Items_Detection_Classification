@@ -154,7 +154,7 @@ class TestTFRecordFilesManager():
             assert mock_writer_instance.write.call_count == 45
 
             # 4. Check that there are no errors in logs
-            assert "failed" not in caplog.text.lower()
+            assert "failure" not in caplog.text.lower()
 
     def test_generate_tfrecord_files_with_logger(
         self,
@@ -711,7 +711,7 @@ class TestConvertDicomToTFrecords:
             warning_record = next(
                 r for r in caplog.records if "Skipping empty directory" in r.message
             )
-            assert warning_record.status == "Skipped studies"
+            assert warning_record.status == "incomplete"
 
     # --- Non folder item (skip it) ---
     def test_convert_dicom_to_tfrecords_skips_file(
@@ -844,7 +844,7 @@ class TestConvertDicomToTFrecords:
                 )
 
             # Verify error was logged before re-raising
-            assert any(record.levelname == "ERROR" for record in caplog.records)
+            assert any(record.levelname == "CRITICAL" for record in caplog.records)
 
             # Access the string representation of the exception
             exception_msg = str(excinfo.value)
@@ -1741,8 +1741,8 @@ class TestProcessSeries:
         )
 
         assert error_record is not None
-        assert error_record.levelname == "ERROR"
-        assert error_record.status == "failed"
+        assert error_record.levelname == "CRITICAL"
+        assert error_record.status == "failure"
         assert error_record.exc_info is not None
 
 
@@ -1806,7 +1806,7 @@ class TestGetSeriesStats:
                 mock_tfrecord_files_manager._get_series_stats(empty_dir)
 
         # Verify the ERROR level record is present in caplog
-        error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
+        error_record = next((rec for rec in caplog.records if rec.levelname == "CRITICAL"), None)
         assert error_record is not None
         assert "No DICOM files found" in error_record.message
 
@@ -1834,7 +1834,7 @@ class TestGetSeriesStats:
                 mock_tfrecord_files_manager._get_series_stats(series_dir)
 
         # Verify that the log contains exc_info (traceback)
-        error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
+        error_record = next((rec for rec in caplog.records if rec.levelname == "CRITICAL"), None)
         assert error_record is not None
         assert "Function TFRecordFilesManager._get_series_stats failed" in error_record.message
         assert error_record.exc_info is not None
@@ -1918,7 +1918,7 @@ class TestGetSeriesStats:
                 mock_tfrecord_files_manager._get_series_stats(series_dir)
 
         # Verify that the error was logged before the exception was re-raised
-        error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
+        error_record = next((rec for rec in caplog.records if rec.levelname == "CRITICAL"), None)
         assert error_record is not None
         assert "Function TFRecordFilesManager._get_series_stats failed" in error_record.message
 
@@ -2304,7 +2304,7 @@ class TestProcessDicomFileWithMetadata:
             # Check if the logger was called as per the 'except' block
             assert len(caplog.records) > 0
             error_record = caplog.records[-1]
-            assert error_record.levelname == "ERROR"
+            assert error_record.levelname == "CRITICAL"
             assert "30.dcm" in error_record.message
 
             # Verify the class/function name is in the log message
@@ -2445,7 +2445,7 @@ class TestPrepareTfFeatures:
             )
 
         # Check that error was logged with traceback (exc_info=True)
-        error_records = [rec for rec in caplog.records if rec.levelname == "ERROR"]
+        error_records = [rec for rec in caplog.records if rec.levelname == "CRITICAL"]
         assert len(error_records) == 1
         assert "condition_level" in error_records[0].message
         assert error_records[0].exc_info is not None
@@ -2482,7 +2482,7 @@ class TestPrepareTfFeatures:
                 )
 
         # Verify the error was logged with the function name and traceback
-        error_record = next((rec for rec in caplog.records if rec.levelname == "ERROR"), None)
+        error_record = next((rec for rec in caplog.records if rec.levelname == "CRITICAL"), None)
         assert error_record is not None
         assert "Function TFRecordFilesManager._prepare_tf_features failed" in error_record.message
 

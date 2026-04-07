@@ -311,7 +311,8 @@ def create_padding_image(
 
     Returns:
         A Tuple containing:
-        - padding (tf.float32): A (H, W, 1) zeroed image tensor.
+        - padding (tf.float32): A (H, W, 1) "zeroed" (ie set to the minimal backbone 2d image value)
+                                image tensor.
         - ratio (tf.float32): A neutral scaling ratio of 1.0.
         - offset (tf.float32): A zero translation vector [0.0, 0.0].
     """
@@ -321,11 +322,12 @@ def create_padding_image(
 
     logger.debug("Starting function create_padding_image")
 
+    min_val = config['models']['backbone_2d']['scaling']['min']
     model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
-    padding = tf.zeros(
+    padding = tf.ones(
         [model_2d_height, model_2d_width, 1],
         dtype=tf.float32
-    )
+    ) * min_val
 
     logger.debug("Function create_padding_image completed")
 

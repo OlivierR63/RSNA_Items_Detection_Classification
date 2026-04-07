@@ -5,9 +5,9 @@ import psutil
 import platform
 
 # This library is imported only into Windows environment
-if platform.system() == "WIndows":
+if platform.system() == "Windows":
     import wmi
-else:
+else:  # pragma: no cover (Not counted as missing on Windows coverage)
     wmi = None
 
 
@@ -37,6 +37,7 @@ class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
             try:
                 w = wmi.WMI(namespace="root\\wmi")
                 temperature_info = w.MSAcpi_ThermalZoneTemperature()[0]
+                print(f"temperature_info = {temperature_info}")
 
                 # Temperature is in tenths of Kelvin, convert to Celsius
                 return (temperature_info.CurrentTemperature / 10.0) - 273.15

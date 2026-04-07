@@ -38,40 +38,9 @@ def setup_logger(
     global _CURRENT_LOGGER
 
     logging_cfg = config.get('logging', None)
-    if logging_cfg is None:
-        error_msg = (
-            "Fatal error in setup_logger: "
-            "the setting variable 'logging' is required "
-            "but was not found. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
     logging_level = logging_cfg.get('level', None)
-    if logging_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
-        error_msg = (
-            "Fatal error in setup_logger: "
-            "the setting variable 'logging -> level' is required "
-            "but was not properly set. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
     console_display = logging_cfg.get('console_display', False)
-    if not isinstance(console_display, bool):
-        error_msg = (
-            "Fatal error in setup_logger: "
-            "the setting variable 'logging -> console_display' is required "
-            "but was not properly set. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
-
     use_json = logging_cfg.get('use_json', False)
-    if not isinstance(use_json, bool):
-        error_msg = (
-            "Fatal error in setup_logger: "
-            "the setting variable 'logging -> use_json' is required "
-            "but was not properly set. Please check your YAML file structure."
-        )
-        raise ValueError(error_msg)
 
     # 1. Get the current process ID
     pid = os.getpid()

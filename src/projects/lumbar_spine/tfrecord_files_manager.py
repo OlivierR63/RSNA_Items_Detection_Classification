@@ -1,5 +1,5 @@
 # coding: utf-8
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Union
 import logging
 import tensorflow as tf
 import numpy as np
@@ -11,7 +11,6 @@ from src.core.utils.logger import log_method
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from pathlib import Path
 from tqdm import tqdm
-from typing import List, Union
 
 
 # ----------------------- Helper functions -------------------------------
@@ -343,50 +342,37 @@ class TFRecordFilesManager:
             actual_nb_labels = len(labels_df)
             expected_nb_labels = self._config['data_specs']['max_records_per_frame']
             if actual_nb_labels != expected_nb_labels:
-                critical_msg = (
+                error_msg = (
                     f"Issue in function {class_name}.{func_name}. "
                     f"Study {study_path.name} has an invalid number of labels. "
                     f"Found {actual_nb_labels} labels, but expected {expected_nb_labels}"
+                    "Skipped study"
                 )
-
-                logger.critical(
-                    critical_msg,
-                    exc_info=True,
-                    extra={"status": "failure"}
-                )
-
-                raise MissingLabelsError(critical_msg)
+                logger.error(error_msg)
+                return
 
             series_list = list(study_path.iterdir())
             nb_series = len(series_list)
 
             if (nb_series) == 0:
-                critical_msg = (
+                error_msg = (
                     f"Issue in function {class_name}.{func_name}. "
                     f"Study {study_path.name} is empty."
+                    "Skip to the next one"
                 )
-                logger.critical(
-                    critical_msg,
-                    exc_info=True,
-                    extra={"status": "failure", "nb_series": nb_series, "skipped_series": nb_series}
-                )
-
-                raise EmptyDirectoryError(critical_msg)
+                logger.error(error_msg)
+                return
 
             # Case nb_series > 0
             with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
                 for series_path in series_list:
-                    # Case series_full_path is not a directory
+                    # Case series_full_path is not a directory: skip to the next series
                     if not series_path.is_dir():
-                        critical_msg = (
+                        error_msg = (
                             f"Skipping non-directory item {series_path.name} "
                             f"in study directory {study_path.name}"
                         )
-                        logger.critical(
-                            critical_msg,
-                            exc_info=True,
-                            extra={"status": "failure"}
-                        )
+                        logger.error(error_msg)
                         continue
 
                     nb_success, _, _, _ = self._process_single_series_instance(
@@ -468,6 +454,8 @@ class TFRecordFilesManager:
                 - nb_success: Number of successfully processed DICOM instances.
                 - nb_failures: Number of instances that failed during processing.
                 - nb_files: Total number of DICOM files found in the series.
+                - nb_padding_instances: Total number of "padding instances" (= "dummy files")
+                                        created
 
         Raises:
             Exception: Re-raises any exception encountered during `_process_series`
@@ -526,6 +514,15 @@ class TFRecordFilesManager:
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
                 self._process_series(series_path, input_features_df, labels_df, writer)
             )
+
+            logger.info(
+                f"Function {class_name}.{func_name}: "
+                f"study {study_id} processing completed successfully.",
+                extra={
+                    "status": "success"
+                }
+            )
+
             return nb_success, nb_failures, nb_dcm_files, nb_padding_instances
 
         except Exception as e:
@@ -556,7 +553,15 @@ class TFRecordFilesManager:
         try:
             # 1. Stats & File Discovery
             series_min, series_max = self._get_series_stats(series_path)
-            dicom_files = sorted(list(series_path.glob("*.dcm")), key=lambda x: int(x.stem))
+
+            min_series_value = self._config['models']['backbone_2d']['scaling']['min']
+            if series_min == min_series_value and series_max == min_series_value:
+                dicom_files = []
+            else:
+                dicom_files = sorted(
+                    list(series_path.glob("*.dcm")),
+                    key=lambda x: int(x.stem)
+                )
 
             # 2. Get Normalized Sequence (Real files + Padding indices)
             full_sequence = self._plan_series_sequence(dicom_files)
@@ -636,6 +641,7 @@ class TFRecordFilesManager:
 
                 for i in range(head_count):
                     sequence.insert(0, min_i - 1 - i)
+
                 for i in range(tail_count):
                     sequence.append(max_i + 1 + i)
 
@@ -745,20 +751,36 @@ class TFRecordFilesManager:
             global_min = float('inf')
             global_max = float('-inf')
 
+            nb_valid_files = 0
+
             for path in dicom_paths:
-                ds = pydicom.dcmread(path)
-                arr = ds.pixel_array
+                try:
+                    ds = pydicom.dcmread(path, force=True)
+                    arr = ds.pixel_array
 
-                current_min = np.min(arr)
-                current_max = np.max(arr)
+                    current_min = np.min(arr)
+                    current_max = np.max(arr)
 
-                if current_min < global_min:
-                    global_min = current_min
+                    if current_min < global_min:
+                        global_min = current_min
 
-                if current_max > global_max:
-                    global_max = current_max
+                    if current_max > global_max:
+                        global_max = current_max
 
-            return int(global_min), int(global_max)
+                    nb_valid_files += 1
+
+                except pydicom.errors.InvalidDicomError as e:
+                    # Log the error for this file but skip to the next iteration.
+                    logger.warning(f"Skipping invalid DICOM file {path.name}: {e}")
+                    continue
+
+            if nb_valid_files == 0:
+                min_val = self._config['models']['backbone_2d']['scaling']['min']
+                rtrn_value = (min_val, min_val)
+            else:
+                rtrn_value = int(global_min), int(global_max)
+
+            return rtrn_value
 
         except Exception as e:
             critical_msg = (
@@ -885,8 +907,8 @@ class TFRecordFilesManager:
             info_msg,
             extra={
                 "action": "generate_padding_features",
-                "series": {str(series_path)},
-                "instance": {instance_num}
+                "series": str(series_path),
+                "instance": instance_num
             }
         )
 
@@ -902,7 +924,8 @@ class TFRecordFilesManager:
 
             # 3. Create the 1x1 dummy pixel (uint16 to match DICOM depth)
             # We use 0 as the "null" value.
-            dummy_pixel = np.zeros((1, 1, 1), dtype=np.uint16).tobytes()
+            padding_val = self._config['models']['backbone_2d']['scaling']['min']
+            dummy_pixel = (np.ones((1, 1, 1), dtype=np.uint16)*padding_val).tobytes()
 
             # 4. Build the Feature Dictionary
             # Ensure keys match exactly those in your real DICOM processing

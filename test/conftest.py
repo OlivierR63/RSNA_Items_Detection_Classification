@@ -159,18 +159,20 @@ def setup_csv_files(tmp_path):
 # Unified logger fixture renamed to mock_logger to maintain
 # compatibility with existing tests while enabling caplog features.
 @pytest.fixture
-def mock_logger(caplog):
+def mock_logger(mock_config, caplog):
     """
     Unified logger fixture.
     Works as a real logger for the manager, but allows message capture via caplog.
     """
-    # Get the specific logger used in your project
-    test_logger = logging.getLogger("lumbar_spine_test")
+    logger_name = "lumbar_spine_test"
+    test_logger = logging.getLogger(logger_name)
 
-    # Set to DEBUG to ensure caplog catches every detail (INFO, WARNING, etc.).
-    # Without this, low-level messages used for debugging logic
-    # might be filtered out before capture.
-    caplog.set_level(logging.DEBUG, logger="lumbar_spine_test")
+    # Get level from config (default to INFO if missing or invalid)
+    level = mock_config.get('logging', {}).get('level', 'INFO')
+
+    # caplog.set_level accepts strings like "DEBUG", "INFO", etc.
+    # It automatically handles the conversion to numerical values.
+    caplog.set_level(level, logger=logger_name)
 
     return test_logger
 
@@ -229,8 +231,8 @@ def mock_metadata():
         "study_id": [],
         "series_id": [],
         "instance_number": [],
-        "condition_level": [],
         "series_description": [],
+        "condition_level": [],
         "severity": [],
         "x": [],
         "y": [],

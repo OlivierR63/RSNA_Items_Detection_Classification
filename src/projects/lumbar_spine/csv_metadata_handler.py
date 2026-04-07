@@ -54,6 +54,8 @@ class CSVMetadataHandler:
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
+        self._logger.info("Starting CSVMetadataHandler object initialization")
+
         # Load and ensure all data is treated as string initially to prevent merging errors.
         self._dicom_studies_dir = Path(dicom_studies_dir)
         self._config = config
@@ -69,13 +71,7 @@ class CSVMetadataHandler:
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
 
-        self._logger.info(
-            "Initializing CSVMetadataHandler object",
-            extra={
-                "action": "init",
-                "paths": {key: str(val) for key, val in self._paths_dict.items()}
-            }
-        )
+        self._logger.info("CSVMetadataHandler initialization completed")
 
     def _setup_paths(
         self,
@@ -87,6 +83,10 @@ class CSVMetadataHandler:
         """
         Defines paths for raw data and the enriched version (cache)
         """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(f"Starting function {class_name}.{func_name}")
 
         raw_paths = {
             'series_description': series_description,
@@ -94,6 +94,7 @@ class CSVMetadataHandler:
             'label_raw': label_coordinates,
             'label_enriched': label_enriched
         }
+        self._logger.debug(f"raw_path = {raw_paths}")
 
         root_dir_cfg = self._config.get("root_dir", None)
         if root_dir_cfg is None:
@@ -118,6 +119,11 @@ class CSVMetadataHandler:
             # the / operator leaves it unchanged.
             self._paths_dict[key] = Path(root_dir_cfg) / path
 
+        self._logger.info(
+            f"Function {class_name}.{func_name} completed successfully",
+            extra={"status": "success"}
+        )
+
     def _load_and_cleanse_data(self) -> None:
         """
         Orchestrates metadata loading and multi-stage data type restoration.
@@ -131,9 +137,20 @@ class CSVMetadataHandler:
         Raises:
             ValueError: If numeric columns contain non-convertible standardized strings.
         """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(f"Starting function {class_name}.{func_name}")
+
         # Load core metadata files
-        self._series_desc_df = pd.read_csv(self._paths_dict['series_description'])
         self._train_df = pd.read_csv(self._paths_dict['train'])
+        self._series_desc_df = pd.read_csv(self._paths_dict['series_description'])
+
+        # DEBUG: check columns of self._series_desc_df right after loading from CSV file
+        self._logger.debug(
+            f"features list of self._series_desc_df: {self._series_desc_df.columns}"
+        )
 
         # Decide which coordinates file to use
         if self._paths_dict['label_enriched'].is_file():
@@ -141,22 +158,35 @@ class CSVMetadataHandler:
             self._logger.info(f"Loading enriched coordinates from: {target_path.name}")
         else:
             target_path = self._paths_dict['label_raw']
-            self._logger.info(f"Loading raw coordinates from: {target_path.name}")
+            self._logger.info(
+                f"Loading raw coordinates from: {target_path.name}"
+            )
 
         self._label_coords_df = pd.read_csv(target_path)
+
+        # DEBUG: check columns of self._label_coords_df right after loading from CSV file
+        self._logger.debug(
+            f"features list of self._label_coords_df: {self._label_coords_df.columns}"
+        )
 
         # 1. Cleanse input data (converts everything to lowercase strings)
         self._train_df = self._filter_null_dataframe_values(self._train_df)
         self._series_desc_df = self._filter_null_dataframe_values(self._series_desc_df)
+        self._label_coords_df = self._filter_null_dataframe_values(self._label_coords_df)
+
+        # DEBUG: Visualize all the columns of self._series_desc_df and self.__label_coords_df
+        # after _filter_null_dataframe_values
+        if self._series_desc_df is not None:
+            self._logger.debug(f"self._series_desc_df columns = {self._series_desc_df.columns}")
+
+        if self._label_coords_df is not None:
+            self._logger.debug(f"self._label_coords_df columns = {self._label_coords_df.columns}")
 
         # 2. Convert identifiers with error handling
         try:
             self._series_desc_df[['study_id', 'series_id']] = (
                 self._series_desc_df[['study_id', 'series_id']].astype('int64')
             )
-
-            # Processing coordinates and formats
-            self._label_coords_df = self._filter_null_dataframe_values(self._label_coords_df)
 
             int_cols = ['study_id', 'series_id', 'instance_number']
             self._label_coords_df[int_cols] = (
@@ -176,6 +206,7 @@ class CSVMetadataHandler:
                 self._label_coords_df.to_csv(output_path, index=False)
 
         except ValueError as e:
+            # Critical: stop pipeline if data types cannot be guaranteed
             critical_msg = (
                 f"Type conversion failed: {str(e)}. "
                 "Ensure CSV files do not contain non-numeric characters in ID columns."
@@ -187,7 +218,7 @@ class CSVMetadataHandler:
             )
             raise  # Re-raise to stop the pipeline if data integrity is compromised
 
-        # 3. Handle 'actual_file_format' tuple conversion
+        # 3. Deserialize 'actual_file_format' from string to Python tuple
         if 'actual_file_format' in self._label_coords_df.columns:
             unique_formats = self._label_coords_df['actual_file_format'].unique()
             format_map = {
@@ -198,6 +229,11 @@ class CSVMetadataHandler:
             self._label_coords_df['actual_file_format'] = (
                 self._label_coords_df['actual_file_format'].map(format_map)
             )
+
+        self._logger.info(
+            f"Function {class_name}.{func_name} completed successfully",
+            extra={"status": "success"}
+        )
 
     @property
     def train_df(self) -> pd.DataFrame:
@@ -238,6 +274,11 @@ class CSVMetadataHandler:
 
         logger = logger or self._logger
 
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(f"Starting function {class_name}.{func_name}")
+
         try:
             # Perform the initial merge and preprocessing upon instantiation.
             merged_df = self._merge_metadata()
@@ -269,8 +310,15 @@ class CSVMetadataHandler:
                 warning_msg = (
                     f"Unexpected number of levels detected: {nb_conditions_levels}. "
                     "Verify dataset integrity."
+                    f"Quit function {class_name}{func_name}"
                 )
                 logger.warning(warning_msg)
+
+            else:
+                self._logger.info(
+                    f"Function {class_name}.{func_name} completed successfully",
+                    extra={"status": "success"}
+                )
 
             return encoded_metadata_df
 
@@ -304,15 +352,39 @@ class CSVMetadataHandler:
         Returns:
             pd.DataFrame: A DataFrame where every element is a cleaned string.
         """
-        data_df = (
-            data_df.dropna()                                # 1. Remove actual NaN/None values
-            .astype(str)                                    # 2. Convert remaining data to strings
-            .apply(lambda s: s.str.lower().str.strip())     # 3. Standardize text format
-            .replace('nan', pd.NA)                          # 4. Handle cases with "nan" strings
-            .dropna()                                       # 5. Final sweep of newly created nulls
-        )
 
-        return data_df
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(f"Starting function {class_name}.{func_name}")
+
+        try:
+            data_df = (
+                # 1. Remove actual NaN/None values
+                data_df.dropna()
+                # 2. Convert remaining data to strings
+                .astype(str)
+                # 3. Standardize text format
+                .apply(lambda s: s.str.lower().str.strip())
+                # 4. Handle cases with "nan" strings
+                .replace('nan', pd.NA)
+                # 5. Final sweep of newly created nulls
+                .dropna()
+            )
+
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+            return data_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
+            self.logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
 
     def _scale_series_format_locations(
         self,
@@ -352,11 +424,15 @@ class CSVMetadataHandler:
             reformatted during the final image processing pipeline.
         """
 
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
         # 1. Initial cleansing
         data_df = data_df.copy()
-
-        # 2. Retrieve file formats in parallel
-        self._logger.info("Starting parallel DICOM format inspection")
 
         if 'actual_file_format' not in data_df.columns:
             must_inspect = True
@@ -424,7 +500,7 @@ class CSVMetadataHandler:
         except Exception as e:
             critical_msg = f"Data inconsistency - Coordinate scaling failed: {str(e)}"
 
-            self.logger.error(
+            self._logger.error(
                 critical_msg,
                 exc_info=True,
                 extra={"action": "scale_series_format", "error_type": type(e).__name__}
@@ -440,6 +516,11 @@ class CSVMetadataHandler:
             .rename(columns={'expected_series_target': 'actual_file_format'})
         )
 
+        self._logger.info(
+            f"Function {class_name}.{func_name} completed successfully",
+            extra={"status": "success"}
+        )
+
         return data_df
 
     def _get_file_formats(
@@ -449,6 +530,14 @@ class CSVMetadataHandler:
         """
         Retrieve DICOM dimensions from dictionary record
         """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
         try:
             study_id = int(float(record['study_id']))
             series_id = int(float(record['series_id']))
@@ -463,6 +552,11 @@ class CSVMetadataHandler:
 
             # Note : GetSize() returns a tuple (Width, Height, Depth), analog to (x, y, z)
             result = (full_size[0], full_size[1])
+
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
 
             return (result)  # Returns (Width, Height)
 
@@ -480,18 +574,71 @@ class CSVMetadataHandler:
             Includes detailed logging for each step of the merge process.
         """
 
-        self._logger.info("Starting metadata merge process", extra={"action": "merge_metadata"})
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
         try:
+            with pd.option_context(
+                'display.max_columns', None,   # Unlimited columns
+                'display.expand_frame_repr', False,  # No multi-blocks split
+                'display.max_colwidth', None   # No cell truncation
+            ):
+                tmp_train_df = self._melt_and_clean_train_df()
+                debug_msg = (
+                    "After calling _melt_and_clean_train_df: "
+                    f"tmp_train_df = \n{tmp_train_df.head(25)}"
+                )
+                self._logger.debug(debug_msg)
 
-            tmp_train_df = self._melt_and_clean_train_df()
-            tmp_train_df = self._merge_with_label_coordinates(tmp_train_df)
-            merged_df = self._merge_with_series_descriptions(tmp_train_df)
-            merged_df = self._normalize_identifier_types(merged_df)
+                tmp_train_df = self._merge_with_label_coordinates(tmp_train_df)
+                debug_msg = (
+                    "After calling _merge_with_label_coordinates: "
+                    f"tmp_train_df = \n{tmp_train_df.head(25)}"
+                )
+                self._logger.debug(debug_msg)
 
-            self._logger.info(
-                "Metadata merge completed successfully",
-                extra={"status": "success", "final_shape": merged_df.shape}
-            )
+                merged_df = self._merge_with_series_descriptions(tmp_train_df)
+                debug_msg = (
+                    "After calling _merge_with_series_descriptions: "
+                    f"merged_df = \n{merged_df.head(25)}"
+                )
+                self._logger.debug(debug_msg)
+
+                # Identify records with at least one null value
+                # axis=1 checks row-wise; .any() returns True if any column is NaN
+                mask = merged_df.isna().any(axis=1)
+                null_records_df = merged_df.loc[mask]
+
+                # DEBUG: display all the records with null values (if there are any)
+                if not null_records_df.empty:
+                    self._logger.debug(
+                        f"Found {len(null_records_df)} records with null values:\n"
+                        f"{null_records_df.to_string()}"
+                    )
+
+                # Remove all the records with null elements
+                merged_df = merged_df.dropna()
+                self._logger.info(
+                    f"Dataframe format after null values are removed: {merged_df.shape}"
+                )
+
+                # Normalize numeric types and standardize string casing
+                merged_df = self._normalize_identifier_types(merged_df)
+                debug_msg = (
+                    "After calling _normalize_identifier_types: "
+                    f"merged_df = \n{merged_df.head(25)}"
+                )
+                self._logger.debug(debug_msg)
+
+                self._logger.info(
+                    f"Function {class_name}.{func_name} completed successfully",
+                    extra={"status": "success"}
+                )
+
             return merged_df
 
         except Exception as e:
@@ -506,6 +653,13 @@ class CSVMetadataHandler:
         """
         Melt and clean the training DataFrame.
         """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
 
         try:
             tmp_train_df = self._train_df.melt(
@@ -545,6 +699,11 @@ class CSVMetadataHandler:
             # This ensures study_id is an integer for subsequent joins
             tmp_train_df['study_id'] = tmp_train_df['study_id'].astype('int64')
 
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
             return tmp_train_df
 
         except Exception as e:
@@ -560,28 +719,49 @@ class CSVMetadataHandler:
         Merge the DataFrame with label coordinates.
         """
 
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
+        # DEBUG: Marker to visualize the shape of self._label_coords_df
+        # (Only the 25 first line of the DataFrame).
+        self._logger.debug(f"self._label_coords_df = \n{self._label_coords_df.head(25)}")
+
         try:
             self._logger.info("Merging with label coordinates...", extra={"step": 3})
             self._label_coords_df['condition_level'] = (
                 self._label_coords_df['condition'] + '_' + self._label_coords_df['level']
             )
 
-            self._label_coords_df['condition_level'] = (
-                self._label_coords_df['condition_level']
-                .str.replace(" ", "_", regex=False)
-                .str.replace("/", "_", regex=False)
+            # Create a local copy to avoid mutating self._label_coords_df permanently
+            coords_prepared_df = self._label_coords_df.copy()
+
+            coords_prepared_df['condition_level'] = (
+                coords_prepared_df['condition'].str.replace(r" ", "_", regex=True) +
+                '_' +
+                coords_prepared_df['level'].str.replace(r"[ /]", "_", regex=True)
             )
 
-            self._label_coords_df = self._label_coords_df.drop(columns=['condition', 'level'])
+            # DEBUG: Marker to visualize the shape of coords_prepared_df
+            # (Only the 25 first line of the DataFrame).
+            self._logger.debug(f"coords_prepared_df = \n{coords_prepared_df.head(25)}")
+
+            coords_prepared_df = coords_prepared_df.drop(columns=['condition', 'level'])
 
             merged_df = df.merge(
-                self._label_coords_df,
+                coords_prepared_df,
                 on=["study_id", 'condition_level'],
-                how='inner'
+                how='left'
             )
 
             if merged_df.empty:
-                critical_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+                critical_msg = (
+                    "Merge result is empty. No matching 'study_id' and 'condition_level' "
+                    "found between input data and label coordinates."
+                )
 
                 self._logger.critical(
                     critical_msg,
@@ -590,9 +770,24 @@ class CSVMetadataHandler:
                 )
                 raise ValueError(critical_msg)
 
+            # When no issue is found, the location is shifted outside of the
+            # image frame.
+            condition = (
+                merged_df['severity']
+                .str.lower()
+                .str.contains("normal */ *mild", regex=True)
+            )
+            merged_df['x'] = np.where(condition, -1, merged_df['x'])
+            merged_df['y'] = np.where(condition, -1, merged_df['y'])
+
             self._logger.info(
                 f"Merged with label coordinates. Shape: {merged_df.shape}",
                 extra={"step": 3, "shape": merged_df.shape}
+            )
+
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
             )
 
         except Exception as e:
@@ -600,7 +795,7 @@ class CSVMetadataHandler:
             self._logger.critical(
                 critical_msg,
                 exc_info=True,
-                extra={"status": "failure", "error": str({e})}
+                extra={"status": "failure", "error": str(e)}
             )
             raise e
 
@@ -611,10 +806,17 @@ class CSVMetadataHandler:
         Merge the DataFrame with series descriptions.
         """
 
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
         try:
             self._logger.info("Merging with series descriptions...", extra={"step": 4})
 
-            merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='inner')
+            merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='left')
 
             if merged_df.empty:
                 critical_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
@@ -628,6 +830,11 @@ class CSVMetadataHandler:
             self._logger.info(
                 f"Merged with series descriptions. Final shape: {merged_df.shape}",
                 extra={"step": 4, "final_shape": merged_df.shape}
+            )
+
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
             )
 
         except Exception as e:
@@ -646,13 +853,35 @@ class CSVMetadataHandler:
         Normalize identifier types.
         """
 
-        self._logger.info("Normalizing identifier types...", extra={"step": 5})
-        df['study_id'] = df['study_id'].astype(np.int64)
-        df['series_id'] = df['series_id'].astype(np.int64)
-        df['instance_number'] = df['instance_number'].astype(int)
-        df.columns = [c.lower() for c in df.columns]
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
 
-        return df
+        self._logger.info(
+            f"Starting function {class_name}.{func_name}"
+        )
+
+        try:
+            self._logger.info("Normalizing identifier types...", extra={"step": 5})
+            df['study_id'] = df['study_id'].astype(np.int64)
+            df['series_id'] = df['series_id'].astype(np.int64)
+            df['instance_number'] = df['instance_number'].astype(int)
+            df.columns = [c.lower() for c in df.columns]
+
+            self._logger.info(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
+            return df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str({e})}
+            )
+            raise e
 
     @log_method()
     def _encode_dataframe(
@@ -670,9 +899,9 @@ class CSVMetadataHandler:
             Args:
                 metadata_df: The DataFrame containing metadata to be converted.
                     Example of column values: {
-                                                "condition_level": "spinal_canal_stenosis_l1-2",
-                                                "severity": "Normal/Mild", ...
-                                                }
+                        "condition_level": "spinal_canal_stenosis_l1-2",
+                        "severity": "Normal/Mild", ...
+                    }
 
             Returns:
                 pd.DataFrame: The DataFrame with the specified columns converted to integer values.
@@ -703,8 +932,9 @@ class CSVMetadataHandler:
             # Apply encoding to each column
             metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
 
-            msg_info = "Function _encode_dataframe completed successfully"
+            msg_info = f"Function {class_name}.{func_name} completed successfully"
             logger.info(msg_info, extra={"status": "success"})
+
             return metadata_df
 
         except Exception as e:
@@ -738,7 +968,11 @@ class CSVMetadataHandler:
                 Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
         """
         func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
         logger = logger or self._logger
+
+        logger.info(f"Starting function {class_name}.{func_name}")
 
         mappings = {}
         try:
@@ -758,6 +992,9 @@ class CSVMetadataHandler:
                 self._logger.info(
                     f"Created mapping for '{column}': {len(values)} categories found."
                 )
+
+            msg_info = f"Function {class_name}.{func_name} completed successfully"
+            logger.info(msg_info, extra={"status": "success"})
 
             return mappings
 
@@ -788,13 +1025,32 @@ class CSVMetadataHandler:
             Returns:
                 pd.DataFrame: The DataFrame with the specified columns converted to integer values.
         """
-        update_metadata_df = metadata_df.copy()
-        for column in columns_to_encode:
-            update_metadata_df[column] = (
-                update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
-            )
 
-        return update_metadata_df
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.info(f"Starting function {class_name}.{func_name}")
+
+        try:
+            update_metadata_df = metadata_df.copy()
+            for column in columns_to_encode:
+                update_metadata_df[column] = (
+                    update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
+                )
+
+            msg_info = f"Function {class_name}.{func_name} completed successfully"
+            self._logger.info(msg_info, extra={"status": "success"})
+
+            return update_metadata_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
+            raise
 
     @log_method()
     def _create_string_to_int_mapper(
