@@ -103,6 +103,8 @@ class LumbarDicomTFRecordDataset():
                              where inputs_dict contains the 3D volumes for each series.
         """
 
+        self._logger.debug("Starting function generate_tfrecord_dataset")
+
         # Check the list of TFRecord file is not empty
         nb_tfrecord_files = len(tfrecord_list)
 
@@ -147,7 +149,11 @@ class LumbarDicomTFRecordDataset():
 
         # 4. Interleave multiple TFRecord files to overlap I/O and preprocessing latency
         dataset = dataset.interleave(
-            lambda x: tf.data.TFRecordDataset(x, buffer_size=buffer_size_bytes),
+            lambda x: tf.data.TFRecordDataset(
+                x,
+                buffer_size=buffer_size_bytes,
+                compression_type="GZIP"
+            ),
             cycle_length=cycle_length,         # Read multiple TFRecord files at once
             block_length=block_length,  # Read the entire patient before switching
             num_parallel_calls=num_parallel_calls,  # Parallelize the IO
@@ -160,14 +166,11 @@ class LumbarDicomTFRecordDataset():
             num_parallel_calls=num_parallel_calls
         )
 
-        # 6. Skip corrupted records automatically
-        # dataset = dataset.ignore_errors()
-
-        # 7. Group all records found in the file (1 file = 1 patient)
+        # 6. Group all records found in the file (1 file = 1 patient)
         # We don't drop remainder here to catch all available frames
         dataset = dataset.batch(group_studies)
 
-        # 8. Reconstruct 3D volumes (sorting and padding)
+        # 7. Reconstruct 3D volumes (sorting and padding)
         # This is the most CPU-intensive step, distributed across cores
         dataset = dataset.map(
             lambda images, metadata, labels: process_study_multi_series(
@@ -176,7 +179,7 @@ class LumbarDicomTFRecordDataset():
             num_parallel_calls=num_parallel_calls
         )
 
-        # 9. Final formatting into model-ready dictionary
+        # 8. Final formatting into model-ready dictionary
         # Formatting inside interleave allows for immediate cleanup of intermediate tensors
         dataset = dataset.map(
             lambda volumes, study_id, label: format_for_model(
@@ -185,14 +188,16 @@ class LumbarDicomTFRecordDataset():
             num_parallel_calls=num_parallel_calls
         )
 
-        # 10. Batching several studies (patients) together.
+        # 9. Batching several studies (patients) together.
         # Note: Set batch_size carefully based on GPU VRAM (3D volumes are heavy).
         dataset = dataset.batch(batch_size, drop_remainder=True)
 
-        # 11. Ensure the dataset provides an infinite stream of batches
+        # 10. Ensure the dataset provides an infinite stream of batches
         dataset = dataset.repeat()
 
-        # 12. Prefetch the next batch in the background to hide latency
+        # 11. Prefetch the next batch in the background to hide latency
         dataset = dataset.prefetch(prefetch_batches)
+
+        self._logger.debug("Function generate_tfrecord_dataset completed successfully")
 
         return dataset

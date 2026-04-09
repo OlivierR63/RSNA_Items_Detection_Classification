@@ -16,7 +16,7 @@ from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomT
 from src.core.utils.logger import get_current_logger, log_method
 from src.core.callbacks.log_training_callbacks import LogTrainingCallbacks
 from src.core.callbacks.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
-from src.core.callbacks.cpu_temperature_monitor_callback import CPUTemperatureMonitorCallback
+# from src.core.callbacks.cpu_temperature_monitor_callback import CPUTemperatureMonitorCallback
 from src.core.utils.monitoring_utils import log_memory_usage
 
 
@@ -295,15 +295,15 @@ class ModelTrainer:
         # Initialize your custom hardware and metrics monitor
         system_cfg = self._config["system"]
         memory_threshold_percent_str = system_cfg["memory_threshold_percent"]
-        threshold_temperature_str = system_cfg["threshold_temperature"]
+        # threshold_temperature_str = system_cfg["threshold_temperature"]
 
         memory_threshold_percent = float(memory_threshold_percent_str)
-        threshold_temperature = float(threshold_temperature_str)
+        # threshold_temperature = float(threshold_temperature_str)
 
         monitor_callback = SystemResourceMonitorCallbacks(
             memory_threshold_percent=float(memory_threshold_percent)
         )
-        cpu_temperature_callback = CPUTemperatureMonitorCallback(threshold_temperature)
+        # cpu_temperature_callback = CPUTemperatureMonitorCallback(threshold_temperature)
 
         # Simplified print callback for batch monitoring
         print_callback = LambdaCallback(
@@ -339,7 +339,7 @@ class ModelTrainer:
         callbacks = [
             sync_epoch_callback,
             monitor_callback,
-            cpu_temperature_callback,
+            # cpu_temperature_callback,
             training_progress_callback,
             print_callback,
             ProgbarLogger(),

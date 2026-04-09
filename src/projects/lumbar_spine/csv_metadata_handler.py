@@ -54,7 +54,7 @@ class CSVMetadataHandler:
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
-        self._logger.info("Starting CSVMetadataHandler object initialization")
+        self._logger.debug("Starting CSVMetadataHandler object initialization")
 
         # Load and ensure all data is treated as string initially to prevent merging errors.
         self._dicom_studies_dir = Path(dicom_studies_dir)
@@ -71,7 +71,7 @@ class CSVMetadataHandler:
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
 
-        self._logger.info("CSVMetadataHandler initialization completed")
+        self._logger.debug("CSVMetadataHandler initialization completed")
 
     def _setup_paths(
         self,
@@ -86,7 +86,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(f"Starting function {class_name}.{func_name}")
+        self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         raw_paths = {
             'series_description': series_description,
@@ -94,7 +94,6 @@ class CSVMetadataHandler:
             'label_raw': label_coordinates,
             'label_enriched': label_enriched
         }
-        self._logger.debug(f"raw_path = {raw_paths}")
 
         root_dir_cfg = self._config.get("root_dir", None)
         if root_dir_cfg is None:
@@ -119,7 +118,7 @@ class CSVMetadataHandler:
             # the / operator leaves it unchanged.
             self._paths_dict[key] = Path(root_dir_cfg) / path
 
-        self._logger.info(
+        self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
             extra={"status": "success"}
         )
@@ -141,7 +140,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(f"Starting function {class_name}.{func_name}")
+        self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         # Load core metadata files
         self._train_df = pd.read_csv(self._paths_dict['train'])
@@ -230,7 +229,7 @@ class CSVMetadataHandler:
                 self._label_coords_df['actual_file_format'].map(format_map)
             )
 
-        self._logger.info(
+        self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
             extra={"status": "success"}
         )
@@ -277,7 +276,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(f"Starting function {class_name}.{func_name}")
+        self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
             # Perform the initial merge and preprocessing upon instantiation.
@@ -315,7 +314,7 @@ class CSVMetadataHandler:
                 logger.warning(warning_msg)
 
             else:
-                self._logger.info(
+                self._logger.debug(
                     f"Function {class_name}.{func_name} completed successfully",
                     extra={"status": "success"}
                 )
@@ -356,7 +355,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(f"Starting function {class_name}.{func_name}")
+        self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
             data_df = (
@@ -372,7 +371,7 @@ class CSVMetadataHandler:
                 .dropna()
             )
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -427,7 +426,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -516,7 +515,7 @@ class CSVMetadataHandler:
             .rename(columns={'expected_series_target': 'actual_file_format'})
         )
 
-        self._logger.info(
+        self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
             extra={"status": "success"}
         )
@@ -534,7 +533,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -553,7 +552,7 @@ class CSVMetadataHandler:
             # Note : GetSize() returns a tuple (Width, Height, Depth), analog to (x, y, z)
             result = (full_size[0], full_size[1])
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -570,14 +569,14 @@ class CSVMetadataHandler:
 
     def _merge_metadata(self) -> pd.DataFrame:
         """
-            Merges the training DataFrame with label coordinates and series descriptions.
-            Includes detailed logging for each step of the merge process.
+        Merges the training DataFrame with label coordinates and series descriptions.
+        Includes detailed logging for each step of the merge process.
         """
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -634,7 +633,7 @@ class CSVMetadataHandler:
                 )
                 self._logger.debug(debug_msg)
 
-                self._logger.info(
+                self._logger.debug(
                     f"Function {class_name}.{func_name} completed successfully",
                     extra={"status": "success"}
                 )
@@ -657,7 +656,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -699,7 +698,7 @@ class CSVMetadataHandler:
             # This ensures study_id is an integer for subsequent joins
             tmp_train_df['study_id'] = tmp_train_df['study_id'].astype('int64')
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -722,7 +721,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -785,7 +784,7 @@ class CSVMetadataHandler:
                 extra={"step": 3, "shape": merged_df.shape}
             )
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -809,7 +808,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -832,7 +831,7 @@ class CSVMetadataHandler:
                 extra={"step": 4, "final_shape": merged_df.shape}
             )
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -856,7 +855,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(
+        self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
 
@@ -867,7 +866,7 @@ class CSVMetadataHandler:
             df['instance_number'] = df['instance_number'].astype(int)
             df.columns = [c.lower() for c in df.columns]
 
-            self._logger.info(
+            self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
@@ -910,7 +909,7 @@ class CSVMetadataHandler:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
-        logger.info(f"Starting function {class_name}.{func_name}")
+        logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
             if metadata_df.empty:
@@ -932,8 +931,8 @@ class CSVMetadataHandler:
             # Apply encoding to each column
             metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
 
-            msg_info = f"Function {class_name}.{func_name} completed successfully"
-            logger.info(msg_info, extra={"status": "success"})
+            msg_debug = f"Function {class_name}.{func_name} completed successfully"
+            logger.debug(msg_debug, extra={"status": "success"})
 
             return metadata_df
 
@@ -972,7 +971,7 @@ class CSVMetadataHandler:
 
         logger = logger or self._logger
 
-        logger.info(f"Starting function {class_name}.{func_name}")
+        logger.debug(f"Starting function {class_name}.{func_name}")
 
         mappings = {}
         try:
@@ -993,8 +992,8 @@ class CSVMetadataHandler:
                     f"Created mapping for '{column}': {len(values)} categories found."
                 )
 
-            msg_info = f"Function {class_name}.{func_name} completed successfully"
-            logger.info(msg_info, extra={"status": "success"})
+            msg_debug = f"Function {class_name}.{func_name} completed successfully"
+            logger.debug(msg_debug, extra={"status": "success"})
 
             return mappings
 
@@ -1029,7 +1028,7 @@ class CSVMetadataHandler:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        self._logger.info(f"Starting function {class_name}.{func_name}")
+        self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
             update_metadata_df = metadata_df.copy()
@@ -1038,8 +1037,8 @@ class CSVMetadataHandler:
                     update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
                 )
 
-            msg_info = f"Function {class_name}.{func_name} completed successfully"
-            self._logger.info(msg_info, extra={"status": "success"})
+            msg_debug = f"Function {class_name}.{func_name} completed successfully"
+            self._logger.debug(msg_debug, extra={"status": "success"})
 
             return update_metadata_df
 
@@ -1081,7 +1080,7 @@ class CSVMetadataHandler:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
-        logger.info(f"Starting function {class_name}.{func_name}")
+        logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
             # Create the primary dictionary {string: integer} using enumeration.
@@ -1093,7 +1092,9 @@ class CSVMetadataHandler:
             reverse_mapping = {idx: key for idx, key in enumerate(observed_pathologies_lst)}
 
             def mapper(key: str) -> int:
-                """Maps an input string to its corresponding integer index."""
+                """
+                Maps an input string to its corresponding integer index.
+                """
                 # Use .get() to return the mapped integer.
                 # Returns -1 if the input string is not found (unknown category).
                 return mapping.get(key, -1)
@@ -1104,8 +1105,10 @@ class CSVMetadataHandler:
             mapper.reverse_mapping = reverse_mapping
 
             # Return the callable function
-            logger.info(f"Function {class_name}.{func_name} completed successfully",
-                        extra={"status": "success"})
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
             return mapper
 
         except Exception as e:

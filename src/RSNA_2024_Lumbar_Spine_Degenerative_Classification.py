@@ -6,6 +6,7 @@ import sys
 import logging
 from pathlib import Path
 import gc
+import json
 from keras.models import load_model
 
 from src.core.utils.logger import setup_logger, get_current_logger
@@ -428,7 +429,28 @@ def main():
             # Extract DICOM images and metadata from source directories
             # and serialize them into dedicated TFRecord files (one per patient)
             tfrecord_files_manager = TFRecordFilesManager(config, logger)
-            tfrecord_files_manager.generate_tfrecord_files()
+            actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
+
+            # Store the number of tfrecord_files in the cache file
+            tfrecord_dir = Path(paths_cfg['tfrecord'])
+            cache_path = tfrecord_dir / "depth_metadata_cache.json"
+
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                try:
+                    cache_data = json.load(f)
+
+                except json.JSONDecodeError:
+                    # In case the file is empty or corrupted
+                    cache_data = {}
+
+            # Add the new key / value pair:
+            cache_data['actual_nb_tfrecord_files'] = actual_nb_tfrecord_files
+
+            # Rewrite the cache file:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=4)
+
+            logger.info("Cache successfully updated in {cache_path}")
 
             trainer = ModelTrainer(
                 config=config,

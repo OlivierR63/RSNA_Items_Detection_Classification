@@ -74,6 +74,9 @@ def main():
         csv_coordinates_files_df.astype(int).itertuples(index=False, name=None)
     )
 
+    global_min = float('inf')
+    global_max = float('-inf')
+
     with setup_logger("train", log_dir=log_dir, config=config) as logger:
 
         print_and_log_info("\n" + "="*40, logger)
@@ -165,6 +168,18 @@ def main():
                                 logger
                             )
 
+                        # Retrieve min and max pixel values in the file:
+                        image = reader.Execute()  # Read the whole image
+                        pixels = sitk.GetArrayFromImage(image)
+                        current_min = np.min(pixels)
+                        current_max = np.max(pixels)
+
+                        if current_min < global_min:
+                            global_min = current_min
+
+                        if current_max > global_max:
+                            global_max = current_max
+
                     except Exception:
                         continue  # Skip corrupted headers
 
@@ -197,6 +212,21 @@ def main():
         print_and_log_info("\n\n" + "="*40, logger)
         print_and_log_info("SERIES CONSISTENCY SUMMARY", logger)
         print_and_log_info("="*40, logger)
+
+        print_and_log_info(f"Global Minimum Pixel Value: {global_min}", logger)
+        print_and_log_info(f"Global Maximum Pixel Value: {global_max}", logger)
+
+        # Evaluation of pixel dynamic range for storage
+        if global_min >= 0 and global_max <= 255:
+            suggestion = "uint8"
+        elif global_min >= -128 and global_max <= 127:
+            suggestion = "int8"
+        elif global_min >= 0 and global_max <= 65535:
+            suggestion = "uint16"
+        else:
+            suggestion = "int16"
+
+        print_and_log_info(f"Recommended TFRecord pixel storage format: {suggestion}", logger)
 
         # Create a DataFrame for clean display
         df_stats = pd.DataFrame(list(format_consistency_stats.items()),

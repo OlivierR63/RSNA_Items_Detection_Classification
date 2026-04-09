@@ -111,7 +111,7 @@ class TFRecordFilesManager:
         self._max_records = self._config['data_specs']['max_records_per_frame']
 
     @log_method()
-    def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> None:
+    def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> int:
         """
         Generates TFRecord files from DICOM images and associated metadata.
 
@@ -130,13 +130,16 @@ class TFRecordFilesManager:
         Args:
             logger: Automatically injected logger (optional).
 
+        Return:
+            The number of TFRecord files actually generated
+
         Notes:
-            - TFRecord files are only generated if the output directory is empty.
+            - Only missing TFRecord files are generated (resume capability).
             - The DICOM root directory and output directory are specified in the configuration.
         """
 
         logger = logger or self._logger
-        logger.info("Starting generate_tfrecord_file", extra={"action": "generate_tf_records"})
+        logger.debug("Starting generate_tfrecord_file", extra={"action": "generate_tf_records"})
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
@@ -145,36 +148,40 @@ class TFRecordFilesManager:
         dicom_studies_dir = paths_cfg['dicom_studies']
 
         try:
-            # Convert DICOM files to TFRecords (if needed)
-            if not list(self._tfrecord_dir.glob("*.tfrecord")):
+            # 1. Prepare the directories
+            self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
-                # 1. Prepare the directories
-                self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
+            # 2. Load and merge metadata
+            metadata_handler = CSVMetadataHandler(
+                config=self._config,
+                logger=logger,
+                dicom_studies_dir=dicom_studies_dir,
+                **paths_cfg["csv"]
+            )
 
-                # 2. Load and merge metadata
-                metadata_handler = CSVMetadataHandler(
-                    config=self._config,
-                    logger=logger,
-                    dicom_studies_dir=dicom_studies_dir,
-                    **paths_cfg["csv"]
-                )
+            metadata_df = metadata_handler.generate_metadata_dataframe()
+            logger.info("Loaded metadata from CSV files",
+                        extra={"csv": list(paths_cfg["csv"].keys())})
 
-                metadata_df = metadata_handler.generate_metadata_dataframe()
-                logger.info("Loaded metadata from CSV files",
-                            extra={"csv": list(paths_cfg["csv"].keys())})
+            logger.info("  Creating TFRecord files...")
 
-                logger.info("  Creating TFRecord files...")
+            nb_created_tfrecord_files = self._convert_dicom_to_tfrecords(
+                studies_dir=dicom_studies_dir,
+                metadata_df=metadata_df,
+                tfrecord_dir=str(self._tfrecord_dir)
+            )
 
-                self._convert_dicom_to_tfrecords(
-                    studies_dir=dicom_studies_dir,
-                    metadata_df=metadata_df,
-                    tfrecord_dir=str(self._tfrecord_dir)
-                )
-                logger.info("DICOM to TFRecord conversion completed.",
-                            extra={"status": "success"})
-            else:
-                logger.info("Existing TFRecords found. Skipping conversion.",
-                            extra={"status": "skipped"})
+            logger.info(
+                "DICOM to TFRecord conversion completed.",
+                extra={"status": "success"}
+            )
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
+            return nb_created_tfrecord_files
 
         except Exception as e:
             critical_msg = (
@@ -192,7 +199,7 @@ class TFRecordFilesManager:
     @log_method()
     def _convert_dicom_to_tfrecords(self, studies_dir: str, metadata_df: pd.DataFrame,
                                     tfrecord_dir: str, *,
-                                    logger: Optional[logging.Logger] = None) -> None:
+                                    logger: Optional[logging.Logger] = None) -> int:
         """
         Converts DICOM files stored in a hierarchical directory structure into
         TensorFlow TFRecord files, generating one TFRecord file per study.
@@ -204,15 +211,17 @@ class TFRecordFilesManager:
             - logger: Automatically injected logger (optional).
 
         Returns:
-            None: The function saves files to disk but returns nothing.
-
+            int: the number of saved TFRecord files actually saved.
         """
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
+
         logger = logger or self._logger
-        logger.info(f"Starting {class_name}.{func_name}",
-                    extra={"action": "convert_dicom", "dicom_studies_dir": studies_dir})
+        logger.debug(
+            f"Starting {class_name}.{func_name}",
+            extra={"action": "convert_dicom", "dicom_studies_dir": studies_dir}
+        )
 
         # Case empty root directory
         if not any(Path(studies_dir).iterdir()):
@@ -229,6 +238,8 @@ class TFRecordFilesManager:
             tfrecord_path = self._setup_tfrecord_directory(tfrecord_dir)
 
             # Iterate over all items (expected study directories) in the root studies_dir.
+            nb_saved_tfrecord_files = 0
+
             for study_full_path in tqdm(list(Path(studies_dir).iterdir())):
 
                 # Case study_full_path is not a directory
@@ -266,10 +277,28 @@ class TFRecordFilesManager:
                     logger.warning(msg_warning, extra={"status": "incomplete"})
                     continue
 
-                self._process_study(study_full_path, study_metadata_df, tfrecord_path)
+                study_id = study_full_path.name
+                tfrecord_file = tfrecord_path / f"{study_id}.tfrecord"
 
-            logger.info("DICOM to TFRecord conversion completed successfully",
-                        extra={"status": "success"})
+                if tfrecord_file.exists():
+                    logger.info(
+                        f"Processing study {study_id}: file {tfrecord_file} "
+                        "already exists. Skip to the next one."
+                    )
+                    continue
+
+                new_tfrecord_file = self._process_study(
+                    study_full_path, study_metadata_df, tfrecord_path
+                )
+
+                nb_saved_tfrecord_files += int(new_tfrecord_file)
+
+            logger.debug(
+                "DICOM to TFRecord conversion completed successfully",
+                extra={"status": "success"}
+            )
+
+            return nb_saved_tfrecord_files
 
         except Exception as e:
             critical_msg = (
@@ -302,7 +331,7 @@ class TFRecordFilesManager:
         metadata_df: pd.DataFrame,
         tfrecord_dir: Path,
         logger: Optional[logging.Logger] = None
-    ) -> None:
+    ) -> bool:
         """
         Orchestrates the processing of all series within a study
         and saves them into a single TFRecord.
@@ -317,15 +346,17 @@ class TFRecordFilesManager:
             - EmptyDirectoryError: If no items are found in the study directory.
             - SeriesProcessingError: If one or more series fail to process correctly.
 
-        Return: None
+        Return: True if the study has been registered i a TFRecord file. False if not.
         """
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
-        logger.info(f"Starting {class_name}.{func_name}",
-                    extra={"action": "process_study", "study_dir": study_path})
+        logger.debug(
+            f"Starting {class_name}.{func_name}",
+            extra={"action": "process_study", "study_dir": study_path}
+        )
 
         study_id = study_path.name
 
@@ -349,7 +380,7 @@ class TFRecordFilesManager:
                     "Skipped study"
                 )
                 logger.error(error_msg)
-                return
+                return False
 
             series_list = list(study_path.iterdir())
             nb_series = len(series_list)
@@ -361,10 +392,11 @@ class TFRecordFilesManager:
                     "Skip to the next one"
                 )
                 logger.error(error_msg)
-                return
+                return False
 
             # Case nb_series > 0
-            with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
+            options = tf.io.TFRecordOptions(compression_type="GZIP")
+            with tf.io.TFRecordWriter(str(tfrecord_path), options=options) as writer:
                 for series_path in series_list:
                     # Case series_full_path is not a directory: skip to the next series
                     if not series_path.is_dir():
@@ -386,6 +418,21 @@ class TFRecordFilesManager:
                         nb_skipped_series += 1
                         continue
 
+            # Safety: cleansing if complete failure
+            if nb_skipped_series == nb_series:
+                if tfrecord_path.exists():
+                    # Remove the empty file}
+                    tfrecord_path.unlink()
+
+                error_msg = (
+                    f"Issue in function {class_name}.{func_name}."
+                    f"All the series of the study {study_id} were skipped"
+                    "Therefore, it is put aside for the model training stage."
+                )
+
+                logger.error(error_msg, extra={"status": "failure"})
+                return False
+
             if nb_skipped_series > 0:
                 warning_msg = (
                     f"Issue in function {class_name}.{func_name}."
@@ -402,7 +449,7 @@ class TFRecordFilesManager:
                 )
 
             else:  # last case : nb_series > 0 and nb_skipped_series == 0
-                logger.info(
+                logger.debug(
                     f"Function {class_name}.{func_name}: "
                     f"study {study_id} processing completed successfully.",
                     extra={
@@ -412,6 +459,8 @@ class TFRecordFilesManager:
                     }
                 )
 
+            return True
+
         except Exception as e:
             # Log the specific study failure before re-raising
             logger.critical(
@@ -419,7 +468,7 @@ class TFRecordFilesManager:
                 exc_info=True,
                 extra={"study_id": study_id, "status": "failure"}
             )
-            raise  # Keep propagating the error
+            return False
 
     @log_method()
     def _process_single_series_instance(
@@ -466,8 +515,7 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
-        logger.info(f"Starting {class_name}.{func_name}",
-                    extra={"action": "_process_single_series_instance", "series_path": series_path})
+        logger.debug(f"Starting {class_name}.{func_name}")
 
         study_path = series_path.parent
         study_id = study_path.name
@@ -515,7 +563,7 @@ class TFRecordFilesManager:
                 self._process_series(series_path, input_features_df, labels_df, writer)
             )
 
-            logger.info(
+            logger.debug(
                 f"Function {class_name}.{func_name}: "
                 f"study {study_id} processing completed successfully.",
                 extra={
@@ -547,7 +595,12 @@ class TFRecordFilesManager:
         """
         Orchestrates series processing by handling stats, padding, and iteration.
         """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
         logger = logger or self._logger
+        logger.debug(f"Starting {class_name}.{func_name}")
+
         series_id, study_id = series_path.name, series_path.parent.name
 
         try:
@@ -588,6 +641,12 @@ class TFRecordFilesManager:
 
             nb_dicom = len(dicom_files)
             nb_padding = len(full_sequence) - nb_dicom
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
+
             return nb_success, nb_failures, nb_dicom, nb_padding
 
         except Exception as e:
@@ -612,6 +671,8 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
+
+        logger.debug(f"Starting {class_name}.{func_name}")
 
         try:
             depth_target = self._config["series_depth"]
@@ -644,6 +705,11 @@ class TFRecordFilesManager:
 
                 for i in range(tail_count):
                     sequence.append(max_i + 1 + i)
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
 
             return sequence
 
@@ -732,6 +798,8 @@ class TFRecordFilesManager:
 
         logger = logger or self._logger
 
+        logger.debug(f"Starting {class_name}.{func_name}")
+
         try:
             if isinstance(series_path, (str, Path)):
                 dicom_paths = list(Path(series_path).glob("*.dcm"))
@@ -779,6 +847,11 @@ class TFRecordFilesManager:
                 rtrn_value = (min_val, min_val)
             else:
                 rtrn_value = int(global_min), int(global_max)
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
 
             return rtrn_value
 
@@ -829,6 +902,8 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
         logger = logger or self._logger
 
+        logger.debug(f"Starting {class_name}.{func_name}")
+
         # Construct the specific file path only if it's a real DICOM
         current_file_path = series_path / f"{instance_num}.dcm" if not is_padding else None
 
@@ -856,6 +931,12 @@ class TFRecordFilesManager:
 
             # Serialize and write to TFRecord
             writer.write(features.SerializeToString())
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
+
             return True
 
         except Exception as e:
@@ -922,38 +1003,44 @@ class TFRecordFilesManager:
             series_meta = input_features_df[input_features_df['series_id'] == series_id].iloc[0]
             description_code = int(series_meta['series_description'])
 
-            # 3. Create the 1x1 dummy pixel (uint16 to match DICOM depth)
+            # 3. Create the 1x1 dummy pixel (int16 to match DICOM depth)
             # We use 0 as the "null" value.
             padding_val = self._config['models']['backbone_2d']['scaling']['min']
-            dummy_pixel = (np.ones((1, 1, 1), dtype=np.uint16)*padding_val).tobytes()
+            dummy_pixel_array = np.full((1, 1, 1), padding_val, dtype=np.int16)
+            dummy_pixel = dummy_pixel_array.tobytes()
 
             # 4. Build the Feature Dictionary
             # Ensure keys match exactly those in your real DICOM processing
             features_dict = self._prepare_tf_features(
-                    is_padding=True,
-                    image_bytes=dummy_pixel,
-                    study_id=study_id,
-                    series_id=series_id,
-                    series_min=series_min,
-                    series_max=series_max,
-                    instance_id=instance_num,
-                    img_height=1,
-                    img_width=1,
-                    description=description_code,
-                    labels_df=labels_df,
-                    nb_max_records=self._max_records
-                )
+                is_padding=True,
+                image_bytes=dummy_pixel,
+                study_id=study_id,
+                series_id=series_id,
+                series_min=series_min,
+                series_max=series_max,
+                instance_id=instance_num,
+                img_height=1,
+                img_width=1,
+                description=description_code,
+                labels_df=labels_df,
+                nb_max_records=self._max_records
+            )
 
             features = tf.train.Example(features=tf.train.Features(feature=features_dict))
 
             info_msg = (
                 f"Function {class_name}.{func_name}: "
-                f"Successfully processed padding instance {instance_num} in series {series_path}"
+                "Successfully processed padding instance "
+                f"{instance_num} in series {series_path}"
             )
 
             logger.info(
                 info_msg,
-                extra={"status": "success"}
+                exc_info=True,
+                extra={
+                    "status": "success",
+                    "byte_size": len(dummy_pixel)  # Must be 2 for 1 pixel in int16
+                }
             )
 
             return features
@@ -1005,6 +1092,7 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
+        logger.debug(f"Starting {class_name}.{func_name}")
 
         instance_num = dicom_path.name
         series_path = dicom_path.parent
@@ -1089,6 +1177,8 @@ class TFRecordFilesManager:
 
         logger = logger or self._logger
 
+        logger.debug(f"Starting function {class_name}.{func_name}")
+
         try:
             img = sitk.ReadImage(str(dicom_path))
             img_array = sitk.GetArrayFromImage(img)
@@ -1107,6 +1197,11 @@ class TFRecordFilesManager:
                     extra={"status": "failure"}
                 )
                 raise ValueError(critical_msg)
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
 
             return img_array, img.GetNumberOfComponentsPerPixel()
 
@@ -1138,6 +1233,9 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
+
+        logger.debug(f"Starting function {class_name}.{func_name}")
+
         try:
             series_id = int(dicom_path.parent.name)
             study_id = int(dicom_path.parent.parent.name)
@@ -1170,6 +1268,11 @@ class TFRecordFilesManager:
             target_w, target_h = max_val, max_val
             description = int(relevant_data['series_description'].iloc[0])
 
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
+
             return target_w, target_h, description
 
         except Exception as e:
@@ -1199,6 +1302,8 @@ class TFRecordFilesManager:
 
         logger = logger or self._logger
 
+        logger.debug(f"Starting function {class_name}.{func_name}")
+
         try:
             current_h, current_w = img_array.shape[0], img_array.shape[1]
 
@@ -1216,12 +1321,19 @@ class TFRecordFilesManager:
             pad_left = pad_w // 2
             pad_right = pad_w - pad_left
 
-            return np.pad(
+            rtrn_value = np.pad(
                 img_array,
                 ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
                 mode='constant',
                 constant_values=0
             )
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
+
+            return rtrn_value
 
         except Exception as e:
             critical_msg = (
@@ -1290,6 +1402,8 @@ class TFRecordFilesManager:
 
         logger = logger or self._logger
 
+        logger.debug(f"Starting function {class_name}.{func_name}")
+
         try:
 
             # 1. Ensure condition_level is the index and we have all levels
@@ -1316,7 +1430,7 @@ class TFRecordFilesManager:
                 ])
 
             # 5. Build the feature dictionary
-            return {
+            rtrn_value = {
                 'image': _bytes_feature(image_bytes),
                 'is_padding': _bool_feature(is_padding),
                 'file_format': _int64_list_feature([img_width, img_height]),
@@ -1331,6 +1445,13 @@ class TFRecordFilesManager:
                 'records': _float_list_feature(records_flat),
                 'nb_records': _int64_feature(len(labels_df))
             }
+
+            logger.debug(
+                f"Function {class_name}.{func_name} completed successfully.",
+                extra={"status": "success"}
+            )
+
+            return rtrn_value
 
         except Exception as e:
             critical_msg = (

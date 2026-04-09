@@ -111,7 +111,7 @@ class LogTrainingCallbacks(tf.keras.callbacks.Callback):
         eta_str = strftime("%H:%M:%S", gmtime(eta_seconds))
 
         # Log the performance metrics
-        print(f"\n >>> Step {batch_int + 1:03d} | Time: {step_time:.2f}s | ETA: {eta_str}")
+        print(f"\n >>> Step {batch_int + 1:04d} | Time: {step_time:.2f}s | ETA: {eta_str}")
 
     def on_test_begin(self, logs=None):
         """

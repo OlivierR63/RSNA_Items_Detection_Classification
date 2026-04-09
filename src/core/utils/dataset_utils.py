@@ -130,11 +130,11 @@ def parse_tfrecord_single_element(
     width_t = tf.cast(img_width_t, tf.int32)
 
     # --- 2. Deserialize and Reshape the Image Tensor (Pure TF) ---
-    image_raw_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.uint16)
+    image_raw_tf: tf.Tensor = tf.io.decode_raw(parsed_features_tf["image"], out_type=tf.int16)
 
     # IMPORTANT: decode_raw returns a 1D vector. We MUST reshape it to (H, W, 1)
     # before any image operation like pad or crop.
-    # Before we, we must ensure the data integrity.
+    # Before, we must ensure the data integrity.
 
     expected_size = height_t * width_t
     actual_size = tf.shape(image_raw_tf)[0]
@@ -147,7 +147,6 @@ def parse_tfrecord_single_element(
             f"Format: ({img_height_t}, {img_width_t}), "
             f"Expected size: ({expected_size}), "
             f"Actual size: ({actual_size})"
-
         )
         tf.print(debug_msg)
 
@@ -287,8 +286,8 @@ def stop_process(expected_size, actual_size):
 def python_stop(exp, act):
     # This message is displayed right before the process is killed
     tf.print("\n[FATAL] DATA CORRUPTION DETECTED")
-    tf.print("Expected size:", exp)
-    tf.print("Actual size:  ", act)
+    tf.print("Expected image size (height * width):", exp)
+    tf.print("Actual image size found:  ", act)
 
     # Flush all the buffers and kill the process immediately
     sys.stdout.flush()

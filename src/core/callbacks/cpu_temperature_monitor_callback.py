@@ -37,7 +37,6 @@ class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
             try:
                 w = wmi.WMI(namespace="root\\wmi")
                 temperature_info = w.MSAcpi_ThermalZoneTemperature()[0]
-                print(f"temperature_info = {temperature_info}")
 
                 # Temperature is in tenths of Kelvin, convert to Celsius
                 return (temperature_info.CurrentTemperature / 10.0) - 273.15
@@ -55,8 +54,7 @@ class CPUTemperatureMonitorCallback(tf.keras.callbacks.Callback):
 
         if current_temp is not None:
             # Log every 10 batches to avoid console spam
-            if batch % 10 == 0:
-                print(f" - [CPU Temp] {current_temp:.1f}°C")
+            print(f" - [CPU Temp] {current_temp:.1f}°C")
 
             # Emergency stop if CPU is too hot
             if current_temp > self.temp_threshold:

@@ -63,7 +63,7 @@ system:
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
-  threshold_temperature: 85.0
+  threshold_temperature: 35.0
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
@@ -93,7 +93,7 @@ dataset_steering:
 logging:
   # Level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
   # No other value is allowed
-  level: "DEBUG"
+  level: "INFO"
 
   # Whether to display logs in the terminal
   console_display: False
