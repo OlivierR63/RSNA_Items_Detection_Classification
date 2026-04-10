@@ -69,7 +69,7 @@ system:
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 1       # Equivalent to cycle_length
+    parallel_files: 5       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   
@@ -78,10 +78,10 @@ dataset_steering:
   group_studies: 1          
   
   # Number of final training batches to keep in the pipeline buffer
-  prefetch_batches: 1
+  prefetch_batches: 5
 
   # Use -1 for tf.data.AUTOTUNE
-  num_parallel_calls: 1
+  num_parallel_calls: -1
 
   # Use the cache or not
   use_cache: False
@@ -93,7 +93,7 @@ dataset_steering:
 logging:
   # Level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
   # No other value is allowed
-  level: "INFO"
+  level: "DEBUG"
 
   # Whether to display logs in the terminal
   console_display: False

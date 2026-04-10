@@ -28,7 +28,7 @@ def parse_tfrecord_single_element(
     Operations performed:
     1. Feature Parsing: Extracts image bytes, metadata, and pathology records
        using a predefined feature description.
-    2. Image Decoding & Reshaping: Decodes raw uint16 pixels and reshapes them
+    2. Image Decoding & Reshaping: Decodes raw int16 pixels and reshapes them
        into a (H, W, 1) tensor.
     3. Isometric Resizing: Resizes the image to target dimensions while
        calculating the scaling ratio to maintain aspect ratio consistency.
@@ -121,7 +121,7 @@ def parse_tfrecord_single_element(
     nb_records_t.set_shape([])
     padded_records_t.set_shape([max_records * 4])
 
-    # NOTE: Using tf.uint16, the original Dicom type normalization
+    # NOTE: Using tf.int16, the original Dicom type normalization
     # to float32 happens later.
     # Crucial stage: the image shape is unknown so far.
     # It must be set before applying the "resize" command.
@@ -357,7 +357,7 @@ def perform_deterministic_crop(
     coordinate system of the cropped window.
 
     Args:
-        - raw_image_tf: Original image tensor (H, W, 1) in uint16 or float32.
+        - raw_image_tf: Original image tensor (H, W, 1) in int16 or float32.
         - height_t: Actual height of the raw_image_tf.
         - width_t: Actual width of the raw_image_tf.
         - seed: A shape [2] int32 Tensor (e.g., [series_id, epoch]) used to

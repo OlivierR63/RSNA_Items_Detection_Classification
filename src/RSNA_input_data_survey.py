@@ -59,8 +59,8 @@ def main():
 
     depth_list = []
 
-    log_dir = config["paths"].get("inspection", "logs")  # use "logs" as default if not in config.
-    log_dir += "/logs"
+    # Use "logs" as default if "inspection" not in config.
+    log_dir = Path(config["paths"].get("inspection", "logs")) / "logs"
 
     # This file stores the coordinates of the observed pathologies (condition)
     csv_label_coordinates_df = pd.read_csv(CSV_LABEL_COORDINATES)

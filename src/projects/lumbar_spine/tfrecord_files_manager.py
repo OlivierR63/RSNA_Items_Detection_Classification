@@ -346,7 +346,7 @@ class TFRecordFilesManager:
             - EmptyDirectoryError: If no items are found in the study directory.
             - SeriesProcessingError: If one or more series fail to process correctly.
 
-        Return: True if the study has been registered i a TFRecord file. False if not.
+        Return: True if the study has been registered in a TFRecord file. False if not.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -364,7 +364,7 @@ class TFRecordFilesManager:
 
         nb_skipped_series = 0
         columns = [
-            'study_id', 'series_id', 'series_description', 'instance_number', 'actual_file_format'
+            'study_id', 'series_id', 'series_description', 'instance_number', 'target_series_format'
         ]
         input_features_df = metadata_df[columns].drop_duplicates()
         labels_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
@@ -537,8 +537,6 @@ class TFRecordFilesManager:
                 f"Issue in function {func_name}.{class_name}: "
                 f"Series {series_path.name} in study {study_id}: "
                 "No matching metadata related with that series found.\n"
-                # "-> Consequence: This series will not be considered "
-                # "during training or evaluation.\n"
                 "-> Root Cause: This may be due to missing "
                 "or inconsistent records in the CSV files.\n"
                 "-> Action: Please check the CSV files "
@@ -553,10 +551,6 @@ class TFRecordFilesManager:
                     "study_id": study_id
                 }
             )
-
-            # dicom_files_list = list(series_path.glob("*.dcm"))
-            # nb_files = len(dicom_files_list)
-            # return 0, 0, nb_files, 0
 
         try:
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
@@ -1108,7 +1102,7 @@ class TFRecordFilesManager:
             img_array, num_components = self._load_normalized_dicom(dicom_path, logger)
 
             # 2. Get target formatting metadata
-            target_w, target_h, description = self._get_target_metadata(
+            target_w, target_h, description = self._get_series_target_format_metadata(
                 dicom_path,
                 input_features_df,
                 logger
@@ -1123,7 +1117,7 @@ class TFRecordFilesManager:
             )
 
             # 4. Serialize to TF Example
-            img_bytes = img_array.astype(np.uint16).tobytes()
+            img_bytes = img_array.astype(np.int16).tobytes()
 
             features_dict = self._prepare_tf_features(
                 is_padding=False,
@@ -1217,7 +1211,7 @@ class TFRecordFilesManager:
             )
             raise
 
-    def _get_target_metadata(
+    def _get_series_target_format_metadata(
         self,
         dicom_path: Path,
         input_features_df: pd.DataFrame,
@@ -1237,6 +1231,7 @@ class TFRecordFilesManager:
         logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
+            instance_id = int(dicom_path.stem)
             series_id = int(dicom_path.parent.name)
             study_id = int(dicom_path.parent.parent.name)
 
@@ -1247,7 +1242,7 @@ class TFRecordFilesManager:
 
             relevant_data = input_features_df.loc[
                 mask,
-                ['actual_file_format', 'series_description']
+                ['target_series_format', 'series_description']
             ]
 
             if relevant_data.empty:
@@ -1260,12 +1255,39 @@ class TFRecordFilesManager:
                 raise ValueError(critical_msg)
 
             # Calculate target format (square based on max dimension)
-            target_format_df = relevant_data['actual_file_format'].unique()
-            all_dimensions = [dim for fmt in target_format_df for dim in fmt[:2]]
-            max_val = max(all_dimensions)
+            target_format_df = relevant_data['target_series_format'].unique()
+
+            if target_format_df.size != 1:
+                critical_msg = (
+                    f"Data Error in {class_name}.{func_name} : study = {study_id}, "
+                    f"series = {series_id}, instance = {instance_id}"
+                    f"There must be only one target format per series.\n"
+                    f"Found {target_format_df.size} instead: {target_format_df}"
+                )
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             # target_format is (Width, Height)
-            target_w, target_h = max_val, max_val
+            target_w, target_h = target_format_df[0]
+
+            if target_w != target_h:
+                critical_msg = (
+                    f"Wrong target format in {class_name}.{func_name} : study = {study_id}, "
+                    f"series = {series_id}, instance = {instance_id}"
+                    f"width and height must be the same.\n"
+                    f"Found {target_w}, {target_h} instead"
+                )
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
+
             description = int(relevant_data['series_description'].iloc[0])
 
             logger.debug(

@@ -165,7 +165,7 @@ class CSVMetadataHandler:
 
         # DEBUG: check columns of self._label_coords_df right after loading from CSV file
         self._logger.debug(
-            f"features list of self._label_coords_df: {self._label_coords_df.columns}"
+            f"features list of self._label_coords_df: \n{self._label_coords_df.columns}"
         )
 
         # 1. Cleanse input data (converts everything to lowercase strings)
@@ -217,16 +217,16 @@ class CSVMetadataHandler:
             )
             raise  # Re-raise to stop the pipeline if data integrity is compromised
 
-        # 3. Deserialize 'actual_file_format' from string to Python tuple
-        if 'actual_file_format' in self._label_coords_df.columns:
-            unique_formats = self._label_coords_df['actual_file_format'].unique()
+        # 3. Deserialize 'raw_file_format' from string to Python tuple
+        if 'raw_file_format' in self._label_coords_df.columns:
+            unique_formats = self._label_coords_df['raw_file_format'].unique()
             format_map = {
                 fmt: ast.literal_eval(fmt.strip()) if isinstance(fmt, str) else fmt
                 for fmt in unique_formats if pd.notna(fmt)
             }
 
-            self._label_coords_df['actual_file_format'] = (
-                self._label_coords_df['actual_file_format'].map(format_map)
+            self._label_coords_df['raw_file_format'] = (
+                self._label_coords_df['raw_file_format'].map(format_map)
             )
 
         self._logger.debug(
@@ -406,7 +406,7 @@ class CSVMetadataHandler:
                 This DataFrame is supposedly cleansed
 
         Returns:
-            pd.DataFrame: A sanitized DataFrame with 'actual_file_format' and
+            pd.DataFrame: A sanitized DataFrame with 'raw_file_format' and
                 'expected_file_format' columns, and updated unified coordinates.
 
         Note:
@@ -433,10 +433,10 @@ class CSVMetadataHandler:
         # 1. Initial cleansing
         data_df = data_df.copy()
 
-        if 'actual_file_format' not in data_df.columns:
+        if 'raw_file_format' not in data_df.columns:
             must_inspect = True
         else:
-            must_inspect = data_df['actual_file_format'].dropna().empty
+            must_inspect = data_df['raw_file_format'].dropna().empty
 
         if must_inspect:
             # The dataframe is transformed in a list of dictionaries for the multithreading.
@@ -449,12 +449,12 @@ class CSVMetadataHandler:
                     total=len(records),
                     desc="Reading file formats"
                 ))
-            data_df['actual_file_format'] = formats
+            data_df['raw_file_format'] = formats
 
         try:
             # 3. Unify format per series
             # Determine the "expected" format (the largest) for each series
-            series_groups = data_df.groupby('series_id')['actual_file_format']
+            series_groups = data_df.groupby('series_id')['raw_file_format']
 
             # Identify mixed series for logging purposes
             mixed_series = series_groups.apply(lambda x: len(set(x)) > 1)
@@ -469,23 +469,31 @@ class CSVMetadataHandler:
 
             # Map the largest format found in each series as the target
             # the string format must be converted into a tuple, using ast.
-            series_target = series_groups.apply(
-                lambda x: max(set(x), key=lambda f: f[0]*f[1])
-            ).to_dict()
+            def get_max_square_format(formats_in_series):
+                all_dims = [dim for format in formats_in_series for dim in format]
+                max_dim = max(all_dims)
+                return (max_dim, max_dim)
 
-            data_df['expected_series_target'] = data_df['series_id'].map(series_target)
+            series_target = series_groups.apply(get_max_square_format).to_dict()
+
+            # DEBUG
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: series_target = {series_target}"
+            )
+
+            data_df['target_series_format'] = data_df['series_id'].map(series_target)
 
             # 4. Adapt coordinates based on format differences
             self._logger.info("Adapting coordinates using vectorized operations")
 
             # Extract dimensions into separate series for calculation
             # Actual format  (width, height)
-            actual_w = data_df['actual_file_format'].str[0]
-            actual_h = data_df['actual_file_format'].str[1]
+            actual_w = data_df['raw_file_format'].str[0]
+            actual_h = data_df['raw_file_format'].str[1]
 
             # Expected_series_target: (width, height)
-            target_w = data_df['expected_series_target'].str[0]
-            target_h = data_df['expected_series_target'].str[1]
+            target_w = data_df['target_series_format'].str[0]
+            target_h = data_df['target_series_format'].str[1]
 
             # Calculate padding offset (centered padding logic)
             # offset = (Target_Dim - Actual_Dim) / 2
@@ -510,10 +518,8 @@ class CSVMetadataHandler:
         info_msg = f"Coordinate unification complete. {modified_mask.sum()} labels updated."
         self._logger.info(info_msg)
 
-        data_df = (
-            data_df.drop(columns=['actual_file_format'])
-            .rename(columns={'expected_series_target': 'actual_file_format'})
-        )
+        # DEBUG
+        self._logger.debug(f"Function {class_name}.{func_name}: data_df = \n{data_df}")
 
         self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
