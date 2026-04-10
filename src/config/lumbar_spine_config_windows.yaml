@@ -93,7 +93,7 @@ dataset_steering:
 logging:
   # Level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
   # No other value is allowed
-  level: "DEBUG"
+  level: "INFO"
 
   # Whether to display logs in the terminal
   console_display: False

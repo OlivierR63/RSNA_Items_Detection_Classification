@@ -7,6 +7,7 @@ import pandas as pd
 import pydicom
 import SimpleITK as sitk
 import inspect
+import ast
 from src.core.utils.logger import log_method
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from pathlib import Path
@@ -1272,7 +1273,15 @@ class TFRecordFilesManager:
                 raise ValueError(critical_msg)
 
             # target_format is (Width, Height)
-            target_w, target_h = target_format_df[0]
+
+            target_raw_value = target_format_df[0]
+
+            if isinstance(target_raw_value, str):
+                target_tuple = ast.literal_eval(target_raw_value)
+            else:
+                target_tuple = target_raw_value
+
+            target_w, target_h = target_tuple[:2]
 
             if target_w != target_h:
                 critical_msg = (
