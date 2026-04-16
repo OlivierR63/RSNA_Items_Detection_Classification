@@ -10,8 +10,8 @@ paths:
   csv:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
-    label_enriched: "/kaggle/working/csv_file/train_label_coordinates_format.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
+    instances_series_format: "/kaggle/working/csv_file/train_train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -58,7 +58,7 @@ system:
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
-  threshold_temperature: 85.0
+  chunksize: 50 # 50 for HDD. 500 is acceptable for SSD
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)

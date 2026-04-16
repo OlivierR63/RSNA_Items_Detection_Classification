@@ -125,7 +125,7 @@ class LumbarDicomTFRecordDataset():
         interleave_cfg = steering_cfg.get('interleave')
         cycle_length = interleave_cfg.get('parallel_files')
         block_length = interleave_cfg.get('block_per_file') * total_slices_per_patient
-        deterministic = interleave_cfg.get('deterministic')
+        deterministic_setting = interleave_cfg.get('deterministic')
 
         num_parallel_calls = (
             tf.data.AUTOTUNE if steering_cfg.get('num_parallel_calls') == -1
@@ -157,7 +157,7 @@ class LumbarDicomTFRecordDataset():
             cycle_length=cycle_length,         # Read multiple TFRecord files at once
             block_length=block_length,  # Read the entire patient before switching
             num_parallel_calls=num_parallel_calls,  # Parallelize the IO
-            deterministic=deterministic     # Keep order predictable
+            deterministic=deterministic_setting     # Keep order predictable
         )
 
         # 5. Parse individual TFRecord elements (serialized frames)

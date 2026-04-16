@@ -63,20 +63,6 @@ class EmptyDirectoryError(Exception):
     pass
 
 
-class SeriesProcessingError(Exception):
-    """
-    Exception raised when some series failed to be processed
-    """
-    pass
-
-
-class MissingLabelsError(Exception):
-    """
-    Exception raised when some series failed to be processed
-    """
-    pass
-
-
 class TFRecordFilesManager:
     """
     Manager responsible for orchestrating the conversion of medical imaging studies
@@ -255,6 +241,7 @@ class TFRecordFilesManager:
                 # Case directory study_full_path is empty
                 if not any(study_full_path.iterdir()):
                     msg_warning = (
+                        f"Function {class_name}.{func_name}:\n"
                         f"Skipping empty directory {study_full_path} "
                         f"in root directory {studies_dir}"
                     )
@@ -268,6 +255,7 @@ class TFRecordFilesManager:
                 # Case missing metadata
                 if study_metadata_df.empty:
                     msg_warning = (
+                        f"Function {class_name}.{func_name}:\n"
                         f"Skipping study {study_full_path.name} due to missing metadata. "
                         "This study will not be considered during training or evaluation "
                         "and the relevant TFRecord file will not be generated."
@@ -294,9 +282,13 @@ class TFRecordFilesManager:
 
                 nb_saved_tfrecord_files += int(new_tfrecord_file)
 
+            outcome = "completed successfully" if nb_saved_tfrecord_files is True else "failed"
+            status = "success" if nb_saved_tfrecord_files is True else "failure"
+
+            debug_msg = f"DICOM to TFRecord conversion {outcome}"
             logger.debug(
-                "DICOM to TFRecord conversion completed successfully",
-                extra={"status": "success"}
+                debug_msg,
+                extra={"status": f"{status}"}
             )
 
             return nb_saved_tfrecord_files
@@ -463,12 +455,25 @@ class TFRecordFilesManager:
             return True
 
         except Exception as e:
-            # Log the specific study failure before re-raising
-            logger.critical(
-                f"Failed to process study {study_id}: {str(e)}",
+            # Log the specific study failure before re-raising et erase the file TFRecord
+            # if it already exists
+            error_msg = (
+                f"Error in {class_name}.{func_name}. "
+                f"Failed to process study {study_id}: {str(e)}"
+            )
+
+            logger.error(
+                error_msg,
                 exc_info=True,
                 extra={"study_id": study_id, "status": "failure"}
             )
+
+            if tfrecord_path.exists():
+                logger.error(
+                    f"Remove file {study_id}.tfrecord"
+                )
+                tfrecord_path.unlink()
+
             return False
 
     @log_method()
@@ -528,7 +533,7 @@ class TFRecordFilesManager:
                 f"in study: {study_path}"
             )
             logger.warning(msg_warning, extra={"status": "incomplete"})
-            return 0, 0, 0
+            return 0, 0, 0, 0
 
         series_id = int(series_path.name)
         series_metadata_df = input_features_df[input_features_df['series_id'] == series_id]
@@ -536,7 +541,7 @@ class TFRecordFilesManager:
         if series_metadata_df.empty:
             warning_msg = (
                 f"Issue in function {func_name}.{class_name}: "
-                f"Series {series_path.name} in study {study_id}: "
+                f"Series {series_path.name} skipped in study {study_id}: "
                 "No matching metadata related with that series found.\n"
                 "-> Root Cause: This may be due to missing "
                 "or inconsistent records in the CSV files.\n"
@@ -552,6 +557,8 @@ class TFRecordFilesManager:
                     "study_id": study_id
                 }
             )
+
+            return 0, 0, 0, 0
 
         try:
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
@@ -950,7 +957,8 @@ class TFRecordFilesManager:
                     "instance": instance_num
                 }
             )
-            return False
+            # return False
+            raise
 
     def _generate_padding_features(
         self,
@@ -988,6 +996,8 @@ class TFRecordFilesManager:
             }
         )
 
+        # input_features_df['series_id'] = input_features_df["series_id"].astype(np.int64)
+
         try:
             # 1. Basic Identifiers
             series_id = int(series_path.stem)
@@ -995,8 +1005,10 @@ class TFRecordFilesManager:
 
             # 2. Extract metadata from input_features_df for this series
             # We take the first match as metadata (description, etc.) is series-consistent
-            series_meta = input_features_df[input_features_df['series_id'] == series_id].iloc[0]
-            description_code = int(series_meta['series_description'])
+            series_meta_df = input_features_df[input_features_df['series_id'] == series_id]
+            description_code = (
+                -1 if series_meta_df.empty else int(series_meta_df['series_description'].iloc[0])
+            )
 
             # 3. Create the 1x1 dummy pixel (int16 to match DICOM depth)
             # We use 0 as the "null" value.
@@ -1031,7 +1043,6 @@ class TFRecordFilesManager:
 
             logger.info(
                 info_msg,
-                exc_info=True,
                 extra={
                     "status": "success",
                     "byte_size": len(dummy_pixel)  # Must be 2 for 1 pixel in int16

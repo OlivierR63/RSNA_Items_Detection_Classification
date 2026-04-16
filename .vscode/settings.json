@@ -15,6 +15,7 @@
         "autouse",
         "caplog",
         "capsys",
+        "chunksize",
         "clipnorm",
         "colwidth",
         "conftest",

@@ -21,4 +21,4 @@ if (Test-Path $LOG) {
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # We use -u for unbuffered python output so Tee-Object shows logs in real-time
-& $PY -u $SRC 2>&1 | Tee-Object -FilePath $LOG
+& $PY -u $SRC 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath $LOG

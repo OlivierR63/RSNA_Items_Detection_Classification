@@ -199,6 +199,8 @@ def get_or_build_model(
                 custom_objects=ModelFactory.CUSTOM_OBJECTS,
                 safe_mode=False,
             )
+            info_msg = ("Model loading completed.")
+            logger.info(info_msg)
             return model
 
         except Exception as e_1:

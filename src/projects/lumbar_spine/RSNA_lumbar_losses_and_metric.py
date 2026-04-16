@@ -2,6 +2,7 @@
 
 import tensorflow as tf
 import logging
+from src.core.utils.logger import get_current_logger
 
 
 def compute_rsna_loss_core(y_true, y_pred):
@@ -79,14 +80,14 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger = None,
         name: str = 'rsna_main_score',
         **kwargs
     ):
         """
         Initializes the metric's state variables.
         """
-        self._logger = logger
+        self._logger = logger or get_current_logger()
 
         self._logger.debug(f"Starting initializing RSNAKaggleMetric ; **kwargs = {kwargs}")
 

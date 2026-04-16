@@ -1,7 +1,7 @@
 # coding: utf-8
 
-from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+import pydicom
 from typing import Tuple, Dict, List
 import pandas as pd
 import numpy as np
@@ -11,6 +11,7 @@ import logging
 import inspect
 import ast
 from pathlib import Path
+from multiprocessing import Pool, cpu_count
 from src.core.utils.logger import log_method
 
 
@@ -19,6 +20,32 @@ def to_tuple(val: str) -> Tuple[int, int]:
     Helper function to manage str vs. tuple
     """
     return ast.literal_eval(val) if isinstance(val, str) else val
+
+
+def _extract_dicom_metadata_task(
+    file_path: str
+) -> Optional[Tuple[int, int, int, Tuple[int, int]]]:
+
+    """
+    Worker function optimized for Windows pickling.
+    Using string path for better compatibility between processes.
+    """
+    try:
+        path_obj = Path(file_path)
+
+        # Fast extraction from path string
+        instance_number = int(path_obj.stem)
+        series_id = int(path_obj.parent.name)
+        study_id = int(path_obj.parent.parent.name)
+
+        # LIGHTWEIGHT READ: stop_before_pixels is vital for HDD performance
+        # to minimize the amount of data pulled from the disk.
+        ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+
+        return (study_id, series_id, instance_number, (int(ds.Columns), int(ds.Rows)))
+
+    except Exception:
+        return None
 
 
 class CSVMetadataHandler:
@@ -35,22 +62,38 @@ class CSVMetadataHandler:
         dicom_studies_dir: str,
         series_description: str,
         label_coordinates: str,
-        label_enriched: str,
+        instances_series_format: str,
         train: str,
         config: dict,
         logger: Optional[logging.Logger] = None
     ) -> None:
         """
-        Initializes the handler by setting up paths and triggering data loading.
+        Initializes the CSV metadata handler and orchestrates data loading.
+
+        This handler centralizes access to medical metadata by cross-referencing
+        DICOM structures with labels and ensuring dimensional consistency across series.
 
         Args:
-            dicom_studies_dir (str): Path to the DICOM files directory.
-            description (str): Path to the series descriptions CSV.
-            label_coordinates (str): Path to the label coordinates CSV.
-            label_enriched (str): Path to the enriched labels CSV.
-            train (str): Path to the training labels CSV.
-            config (dict): Configuration dictionary for processing.
-            logger (Optional[logging.Logger]): Optional logger instance.
+            dicom_studies_dir: Root directory path containing the hierarchical
+                DICOM studies (StudyID/SeriesID/InstanceID.dcm).
+            series_description: Path to the CSV mapping SeriesID to their
+                anatomical views (e.g., Sagittal T1, Axial T2).
+            label_coordinates: Path to the CSV containing ground truth landmark
+                coordinates (x, y) for various spinal conditions.
+            instances_series_format: Path to the inventory CSV documenting the
+                original dimensions (W, H) of all ~142,000 instances and the
+                calculated reference target format for each series.
+                Note: Format values are parsed from strings to tuples via ast.literal_eval.
+            train: Path to the main training labels CSV containing the
+                target classes (Normal/Mild/Severe) per study.
+            config: Global configuration dictionary containing processing
+                hyperparameters and environment paths.
+            logger: Dedicated logger instance for tracking data loading
+                integrity and potential CSV inconsistencies.
+
+        Raises:
+            FileNotFoundError: If any of the mandatory CSV paths are invalid.
+            ValueError: If the configuration dictionary is missing critical keys.
         """
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
@@ -63,10 +106,11 @@ class CSVMetadataHandler:
         self._paths_dict: dict[str, Path] = {}
         self._series_desc_df = None
         self._label_coords_df = None
+        self._instances_series_format_df = None
         self._train_df = None
 
         # Setup file paths
-        self._setup_paths(series_description, label_coordinates, label_enriched, train)
+        self._setup_paths(series_description, label_coordinates, instances_series_format, train)
 
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
@@ -77,7 +121,7 @@ class CSVMetadataHandler:
         self,
         series_description: str,
         label_coordinates: str,
-        label_enriched: str,
+        instances_series_format: str,
         train: str
     ) -> None:
         """
@@ -91,8 +135,8 @@ class CSVMetadataHandler:
         raw_paths = {
             'series_description': series_description,
             'train': train,
-            'label_raw': label_coordinates,
-            'label_enriched': label_enriched
+            'label_coordinates': label_coordinates,
+            'instances_series_format': instances_series_format
         }
 
         root_dir_cfg = self._config.get("root_dir", None)
@@ -117,6 +161,8 @@ class CSVMetadataHandler:
             # If it is already an absolute path (e.g., "/kaggle/input/..."),
             # the / operator leaves it unchanged.
             self._paths_dict[key] = Path(root_dir_cfg) / path
+
+        self._logger.debug(f"self._paths_dict = {self._paths_dict}")
 
         self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
@@ -151,17 +197,27 @@ class CSVMetadataHandler:
             f"features list of self._series_desc_df: {self._series_desc_df.columns}"
         )
 
-        # Decide which coordinates file to use
-        if self._paths_dict['label_enriched'].is_file():
-            target_path = self._paths_dict['label_enriched']
-            self._logger.info(f"Loading enriched coordinates from: {target_path.name}")
+        # Load the cache format file when it exists.
+        # In the other case, explore all the dicom files and build
+        # the cache file for a next time
+        format_path = self._paths_dict['instances_series_format']
+        if format_path.is_file():
+            self._instances_series_format_df = pd.read_csv(format_path)
         else:
-            target_path = self._paths_dict['label_raw']
-            self._logger.info(
-                f"Loading raw coordinates from: {target_path.name}"
-            )
+            self._instances_series_format_df = self._get_instances_series_format()
 
-        self._label_coords_df = pd.read_csv(target_path)
+            output_path = self._paths_dict['instances_series_format']
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            self._instances_series_format_df.to_csv(output_path, index=False)
+
+        # Load coordinates file
+        coords_path = self._paths_dict['label_coordinates']
+        self._logger.info(
+            f"Loading raw coordinates from: {coords_path.name}"
+        )
+
+        self._label_coords_df = pd.read_csv(coords_path)
 
         # DEBUG: check columns of self._label_coords_df right after loading from CSV file
         self._logger.debug(
@@ -172,8 +228,11 @@ class CSVMetadataHandler:
         self._train_df = self._filter_null_dataframe_values(self._train_df)
         self._series_desc_df = self._filter_null_dataframe_values(self._series_desc_df)
         self._label_coords_df = self._filter_null_dataframe_values(self._label_coords_df)
+        self._instances_series_format_df = (
+            self._filter_null_dataframe_values(self._instances_series_format_df)
+        )
 
-        # DEBUG: Visualize all the columns of self._series_desc_df and self.__label_coords_df
+        # DEBUG: Visualize all the columns of self._series_desc_df and self._label_coords_df
         # after _filter_null_dataframe_values
         if self._series_desc_df is not None:
             self._logger.debug(f"self._series_desc_df columns = {self._series_desc_df.columns}")
@@ -181,28 +240,25 @@ class CSVMetadataHandler:
         if self._label_coords_df is not None:
             self._logger.debug(f"self._label_coords_df columns = {self._label_coords_df.columns}")
 
+        if self._instances_series_format_df is not None:
+            self._logger.debug(
+                f"self._label_coords_df columns = {self._instances_series_format_df.columns}"
+            )
+
         # 2. Convert identifiers with error handling
         try:
             self._series_desc_df[['study_id', 'series_id']] = (
-                self._series_desc_df[['study_id', 'series_id']].astype('int64')
+                self._series_desc_df[['study_id', 'series_id']].astype(np.int64)
             )
 
             int_cols = ['study_id', 'series_id', 'instance_number']
             self._label_coords_df[int_cols] = (
-                self._label_coords_df[int_cols].astype('int64')
+                self._label_coords_df[int_cols].astype(np.int64)
             )
 
             self._label_coords_df[['x', 'y']] = (
                 self._label_coords_df[['x', 'y']].astype(float)
             )
-
-            if not self._paths_dict['label_enriched'].is_file():
-                self._label_coords_df = self._scale_series_format_locations(self._label_coords_df)
-
-                output_path = self._paths_dict['label_enriched']
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-
-                self._label_coords_df.to_csv(output_path, index=False)
 
         except ValueError as e:
             # Critical: stop pipeline if data types cannot be guaranteed
@@ -216,18 +272,6 @@ class CSVMetadataHandler:
                 extra={"status": "failure"}
             )
             raise  # Re-raise to stop the pipeline if data integrity is compromised
-
-        # 3. Deserialize 'raw_file_format' from string to Python tuple
-        if 'raw_file_format' in self._label_coords_df.columns:
-            unique_formats = self._label_coords_df['raw_file_format'].unique()
-            format_map = {
-                fmt: ast.literal_eval(fmt.strip()) if isinstance(fmt, str) else fmt
-                for fmt in unique_formats if pd.notna(fmt)
-            }
-
-            self._label_coords_df['raw_file_format'] = (
-                self._label_coords_df['raw_file_format'].map(format_map)
-            )
 
         self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
@@ -334,7 +378,7 @@ class CSVMetadataHandler:
 
     def _filter_null_dataframe_values(
         self,
-        data_df: pd.DataFrame
+        df: pd.DataFrame
     ) -> pd.DataFrame:
         """
         Removes null values and standardizes all remaining data into lowercase strings.
@@ -357,16 +401,22 @@ class CSVMetadataHandler:
 
         self._logger.debug(f"Starting function {class_name}.{func_name}")
 
+        data_df = df.copy()
+
         try:
             data_df = (
                 # 1. Remove actual NaN/None values
                 data_df.dropna()
+
                 # 2. Convert remaining data to strings
                 .astype(str)
+
                 # 3. Standardize text format
                 .apply(lambda s: s.str.lower().str.strip())
+
                 # 4. Handle cases with "nan" strings
                 .replace('nan', pd.NA)
+
                 # 5. Final sweep of newly created nulls
                 .dropna()
             )
@@ -379,48 +429,126 @@ class CSVMetadataHandler:
 
         except Exception as e:
             critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
-            self.logger.critical(
+            self._logger.critical(
                 critical_msg,
                 exc_info=True,
                 extra={"status": "failure"}
             )
+            raise
 
-    def _scale_series_format_locations(
-        self,
-        data_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    def _get_instances_series_format(self) -> pd.DataFrame:
         """
-        Unifies coordinates based on series-level DICOM resolution.
+        Scans DICOM files and extracts dimensions.
+        Save outcome in CSV file
+        Optimized for Windows 10 and HDD environments.
+        """
 
-        This method performs a multi-step cleaning and standardization process:
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
 
-        2. Inspects DICOM file headers in parallel to retrieve actual pixel dimensions.
-        3. Identifies the target format for each series (based on the largest dimensions
-           found within that series).
-        4. Calculates and applies a centered padding offset to (x, y) coordinates for
-           any file not matching the series' target format.
+        root_path = Path(self._dicom_studies_dir).resolve()
+
+        if self._logger:
+            self._logger.info(f"Starting scan on HDD: {root_path}")
+
+        try:
+            # 1. Step 1: Gather paths (Sequential on HDD is faster for discovery)
+            all_dcm_files = [str(dcm_file) for dcm_file in root_path.rglob("*.dcm")]
+            total_files = len(all_dcm_files)
+
+            # 2. Step 2: Parallel processing with limited workers
+            # IMPORTANT FOR HDD: Do not use all CPU cores.
+            # Too many concurrent disk requests will cause "Disk Thrashing" on a HDD.
+            # We limit to 2 or 4 workers max to keep disk I/O semi-sequential.
+            num_workers = min(cpu_count(), 4)
+
+            if self._logger:
+                self._logger.info(f"Processing {total_files} files using {num_workers} workers.")
+
+            results: List[Tuple] = []
+
+            # 'chunksize' is increased to 50 (see yaml config file) to reduce the overhead of
+            # communication between CPU and HDD.
+            chunksize = self._config['system']['chunksize']
+            with Pool(processes=num_workers) as pool:
+                for res in tqdm(
+                    pool.imap_unordered(
+                        _extract_dicom_metadata_task,
+                        all_dcm_files,
+                        chunksize=chunksize
+                    ),
+                    total=total_files,
+                    desc="HDD Metadata Extraction"
+                ):
+                    if res:
+                        results.append(res)
+
+            # 3. Assemble and Sort
+            data_df = pd.DataFrame(results, columns=[
+                'study_id',
+                'series_id',
+                'instance_number',
+                'instance_format'
+            ])
+
+            data_df = data_df.sort_values(
+                by=['study_id', 'series_id', 'instance_number']
+            ).reset_index(drop=True)
+
+            # 4. Add a new feature "target_series_format" to the dataframe
+            data_df = self._calculate_target_series_format(data_df)
+
+            # DEBUG : display the 500 headlines of the dataframe
+            self._logger.debug(f"data_df = \n{data_df}")
+
+            if self._logger:
+                self._logger.info(f"Extraction complete. {len(data_df)} instances cataloged.")
+                self._logger.debug(
+                    f"Function {class_name}.{func_name} completed successfully",
+                    extra={"status": "success"}
+                )
+
+            return data_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in Function {class_name}.{func_name}: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure"}
+            )
+            raise
+
+    def _calculate_target_series_format(self, df: pd.DataFrame) -> None:
+
+        """
+        Harmonizes the image dimensions within each series to a uniform square format.
+
+        This method identifies the largest dimension (width or height) across all
+        instances of a given series and defines a square target format (max_dim, max_dim).
+        This ensures spatial consistency for 3D/volumetric processing and prevents
+        anatomical distortion during subsequent padding or resizing steps.
+
+        The calculated format is mapped back to the input DataFrame in a new column.
 
         Args:
-            data_df (pd.DataFrame): The raw metadata DataFrame containing
-                at least 'study_id', 'series_id', 'instance_number', 'x', and 'y'.
-                This DataFrame is supposedly cleansed
+            df (pd.DataFrame): The main metadata DataFrame containing at least
+                'series_id' and 'instance_format' columns.
+                Note: 'instance_format' may contain string representations of tuples
+                (e.g., "(320, 320)") which are safely converted using ast.literal_eval.
 
         Returns:
-            pd.DataFrame: A sanitized DataFrame with 'raw_file_format' and
-                'expected_file_format' columns, and updated unified coordinates.
+            None: The 'target_series_format' column is added in-place to the data_df.
 
-        Note:
-            A preliminary screening session showed several DICOM file formats used
-            in the training data. While series are usually consistent, 35 series
-            contain mixed formats (e.g., 640x640 and 608x608 simultaneously).
+        Process:
+            1. Scans 'instance_format' and ensures all values are Python tuples.
+            2. Groups data by 'series_id' to find the global maximum dimension per series.
+            3. Creates a square (N, N) reference tuple for each series.
+            4. Maps these reference formats back to every instance in the DataFrame.
 
-            To ensure downstream consistency, all files within a series are aligned
-            to the largest detected format. Coordinates are updated in the DataFrame
-            to reflect the future centered padding (e.g., a +16 pixel shift for
-            608 to 640 conversion).
-
-            The physical DICOM files remain unchanged at this stage and will be
-            reformatted during the final image processing pipeline.
+        Debug:
+            Logs a sample (first 10 entries) of the mapping dictionary to verify
+            the homogenization logic without flooding the log files.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -430,103 +558,47 @@ class CSVMetadataHandler:
             f"Starting function {class_name}.{func_name}"
         )
 
-        # 1. Initial cleansing
-        data_df = data_df.copy()
-
-        if 'raw_file_format' not in data_df.columns:
-            must_inspect = True
-        else:
-            must_inspect = data_df['raw_file_format'].dropna().empty
-
-        if must_inspect:
-            # The dataframe is transformed in a list of dictionaries for the multithreading.
-            records = data_df.to_dict('records')
-
-            # By default, max_workers=None use the number of processors x5
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                formats = list(tqdm(
-                    executor.map(self._get_file_formats, records),
-                    total=len(records),
-                    desc="Reading file formats"
-                ))
-            data_df['raw_file_format'] = formats
+        data_df = df.copy()
 
         try:
-            # 3. Unify format per series
-            # Determine the "expected" format (the largest) for each series
-            series_groups = data_df.groupby('series_id')['raw_file_format']
+            # Unify format per series
 
-            # Identify mixed series for logging purposes
-            mixed_series = series_groups.apply(lambda x: len(set(x)) > 1)
-            mixed_series_ids = mixed_series[mixed_series].index.to_list()
+            # CRITICAL: Ensure instance_format is a tuple, not a string from CSV
+            if isinstance(data_df['instance_format'].iloc[0], str):
+                data_df['instance_format'] = data_df['instance_format'].apply(ast.literal_eval)
 
-            if mixed_series_ids:
-                warning_msg = f"Detected {len(mixed_series_ids)} series with mixed DICOM formats"
-                self._logger.warning(
-                    warning_msg,
-                    extra={"mixed_series_ids": mixed_series_ids}
-                )
-
-            # Map the largest format found in each series as the target
-            # the string format must be converted into a tuple, using ast.
-            def get_max_square_format(formats_in_series):
-                all_dims = [dim for format in formats_in_series for dim in format]
-                max_dim = max(all_dims)
-                return (max_dim, max_dim)
-
-            series_target = series_groups.apply(get_max_square_format).to_dict()
-
-            # DEBUG
-            self._logger.debug(
-                f"Function {class_name}.{func_name}: series_target = {series_target}"
+            # Determine the largest dimension for each series
+            series_max_dim_df = data_df.groupby('series_id')['instance_format'].apply(
+                lambda formats: max([dim for img_format in formats for dim in img_format])
             )
 
+            # Create the square format tuple
+            series_target = series_max_dim_df.apply(lambda m: (m, m)).to_dict()
+
+            # Safer debug for large dataset: ony log the 10 first lines
+            sample_target = dict(list(series_target.items())[:10])
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: Sample of series_target =\n{sample_target}"
+            )
+
+            # Map back to the dataframe
             data_df['target_series_format'] = data_df['series_id'].map(series_target)
 
-            # 4. Adapt coordinates based on format differences
-            self._logger.info("Adapting coordinates using vectorized operations")
+            self._logger.debug(
+                    f"Function {class_name}.{func_name} completed successfully",
+                    extra={"status": "success"}
+                )
 
-            # Extract dimensions into separate series for calculation
-            # Actual format  (width, height)
-            actual_w = data_df['raw_file_format'].str[0]
-            actual_h = data_df['raw_file_format'].str[1]
-
-            # Expected_series_target: (width, height)
-            target_w = data_df['target_series_format'].str[0]
-            target_h = data_df['target_series_format'].str[1]
-
-            # Calculate padding offset (centered padding logic)
-            # offset = (Target_Dim - Actual_Dim) / 2
-            offset_x = (target_w - actual_w) / 2.0
-            offset_y = (target_h - actual_h) / 2.0
-
-            # Apply the shift to all rows at once
-            data_df['x'] += offset_x
-            data_df['y'] += offset_y
+            return data_df
 
         except Exception as e:
-            critical_msg = f"Data inconsistency - Coordinate scaling failed: {str(e)}"
-
-            self._logger.error(
+            critical_msg = f"Fatal error in Function {class_name}.{func_name}: {e}"
+            self._logger.critical(
                 critical_msg,
                 exc_info=True,
-                extra={"action": "scale_series_format", "error_type": type(e).__name__}
+                extra={"status": "failure"}
             )
-            raise ValueError(critical_msg)
-
-        modified_mask = (offset_x != 0) | (offset_y != 0)
-        info_msg = f"Coordinate unification complete. {modified_mask.sum()} labels updated."
-        self._logger.info(info_msg)
-
-        # DEBUG
-        self._logger.debug(f"Function {class_name}.{func_name}: data_df = \n{data_df}")
-
-        self._logger.debug(
-            f"Function {class_name}.{func_name} completed successfully",
-            extra={"status": "success"}
-        )
-
-        return data_df
+            raise
 
     def _get_file_formats(
         self,
@@ -575,8 +647,28 @@ class CSVMetadataHandler:
 
     def _merge_metadata(self) -> pd.DataFrame:
         """
-        Merges the training DataFrame with label coordinates and series descriptions.
-        Includes detailed logging for each step of the merge process.
+        Orchestrates the complete metadata pipeline for training.
+
+        Execution steps:
+            1. Melt and clean main training labels.
+            2. Merge with ground truth (x, y) coordinates.
+            3. Merge with series descriptions (anatomical views).
+            4. Merge with DICOM instance dimensions and target formats.
+            5. Clean missing records and revise coordinates for centered padding.
+            6. Normalize types for database consistency.
+
+        Note:
+            A preliminary screening session showed several DICOM file formats used
+            in the training data. While series are usually consistent, 35 series
+            contain mixed formats (e.g., 640x640 and 608x608 simultaneously).
+
+            To ensure downstream consistency, all files within a series are aligned
+            to the largest detected format. Coordinates are updated in the DataFrame
+            to reflect the future centered padding (e.g., a +16 pixel shift for
+            608 to 640 conversion).
+
+            The physical DICOM files REMAIN UNCHANGED AT THIS STAGE. They will be
+            reformatted during the final image processing pipeline.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -592,50 +684,50 @@ class CSVMetadataHandler:
                 'display.expand_frame_repr', False,  # No multi-blocks split
                 'display.max_colwidth', None   # No cell truncation
             ):
-                tmp_train_df = self._melt_and_clean_train_df()
+                tmp_train_1_df = self._melt_and_clean_train_df()
                 debug_msg = (
                     "After calling _melt_and_clean_train_df: "
-                    f"tmp_train_df = \n{tmp_train_df.head(25)}"
+                    f"tmp_train_1_df = \n{tmp_train_1_df.head(25)}"
                 )
                 self._logger.debug(debug_msg)
 
-                tmp_train_df = self._merge_with_label_coordinates(tmp_train_df)
+                tmp_train_2_df = self._merge_with_label_coordinates(tmp_train_1_df)
                 debug_msg = (
                     "After calling _merge_with_label_coordinates: "
-                    f"tmp_train_df = \n{tmp_train_df.head(25)}"
+                    f"tmp_train_2_df = \n{tmp_train_2_df.head(25)}"
                 )
                 self._logger.debug(debug_msg)
 
-                merged_df = self._merge_with_series_descriptions(tmp_train_df)
+                tmp_train_3_df = self._merge_with_series_descriptions(tmp_train_2_df)
                 debug_msg = (
                     "After calling _merge_with_series_descriptions: "
-                    f"merged_df = \n{merged_df.head(25)}"
+                    f"tmp_train_3_df sample = \n{tmp_train_3_df.head(25)}"
                 )
                 self._logger.debug(debug_msg)
 
-                # Identify records with at least one null value
-                # axis=1 checks row-wise; .any() returns True if any column is NaN
-                mask = merged_df.isna().any(axis=1)
-                null_records_df = merged_df.loc[mask]
-
-                # DEBUG: display all the records with null values (if there are any)
-                if not null_records_df.empty:
-                    self._logger.debug(
-                        f"Found {len(null_records_df)} records with null values:\n"
-                        f"{null_records_df.to_string()}"
-                    )
-
-                # Remove all the records with null elements
-                merged_df = merged_df.dropna()
-                self._logger.info(
-                    f"Dataframe format after null values are removed: {merged_df.shape}"
+                merged_df = self._merge_with_instances_and_series_format(tmp_train_3_df)
+                debug_msg = (
+                    "After calling _merge_with_instances_and_series_format: "
+                    f"merged_df sample = \n{merged_df.head(25)}"
                 )
+                self._logger.debug(debug_msg)
+
+                cleansed_df = self._remove_null_data(merged_df)
+
+                # Update the coordinates in case the image is padded and enlarged
+                # into the series format.
+                revised_xy_df = self._revise_xy_coords_in_merged_dataframe(cleansed_df)
+                debug_msg = (
+                    "After calling _revise_xy_coords_in_merged_dataframe: "
+                    f"revised_xy_df sample = \n{revised_xy_df.head(25)}"
+                )
+                self._logger.debug(debug_msg)
 
                 # Normalize numeric types and standardize string casing
-                merged_df = self._normalize_identifier_types(merged_df)
+                normalized_df = self._normalize_identifier_types(revised_xy_df)
                 debug_msg = (
                     "After calling _normalize_identifier_types: "
-                    f"merged_df = \n{merged_df.head(25)}"
+                    f"normalized_df = \n{normalized_df.head(25)}"
                 )
                 self._logger.debug(debug_msg)
 
@@ -644,11 +736,14 @@ class CSVMetadataHandler:
                     extra={"status": "success"}
                 )
 
-            return merged_df
+            return normalized_df
 
         except Exception as e:
+            critical_msg = (
+                f"Fatal error in function {class_name}.{func_name}, while merging data: {e}"
+            )
             self._logger.critical(
-                f"Error merging metadata: {str(e)}",
+                critical_msg,
                 exc_info=True,
                 extra={"status": "failure", "error": str(e)}
             )
@@ -702,7 +797,36 @@ class CSVMetadataHandler:
 
             # CRITICAL: Force types for merging
             # This ensures study_id is an integer for subsequent joins
-            tmp_train_df['study_id'] = tmp_train_df['study_id'].astype('int64')
+            tmp_train_df['study_id'] = tmp_train_df['study_id'].astype(np.int64)
+
+            # Count the number of lines with one null value or more.
+            # Remove all the lines with null values
+            nb_null_lines = tmp_train_df.isna().any(axis=1).sum()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: there are {nb_null_lines} "
+                "lines with one null value or more in the DataFrame when merge "
+                "is completed."
+            )
+            tmp_train_df = tmp_train_df.dropna()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: "
+                "Remove null values from the dataframe"
+            )
+
+            if tmp_train_df.empty:
+                critical_msg = (
+                    "Merge result is empty. No matching 'study_id' and 'condition_level' "
+                    "found between input data and label coordinates."
+                )
+
+                self._logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
 
             self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
@@ -712,8 +836,12 @@ class CSVMetadataHandler:
             return tmp_train_df
 
         except Exception as e:
+            critical_msg = (
+                f"Fatal error in {class_name}.{func_name} "
+                f"(melting and cleaning training DataFrame): {str(e)}"
+            )
             self._logger.critical(
-                f"Error melting and cleaning training DataFrame: {str(e)}",
+                critical_msg,
                 exc_info=True,
                 extra={"status": "failure", "error": str(e)}
             )
@@ -730,6 +858,7 @@ class CSVMetadataHandler:
         self._logger.debug(
             f"Starting function {class_name}.{func_name}"
         )
+        data_df = df.copy()
 
         # DEBUG: Marker to visualize the shape of self._label_coords_df
         # (Only the 25 first line of the DataFrame).
@@ -756,10 +885,26 @@ class CSVMetadataHandler:
 
             coords_prepared_df = coords_prepared_df.drop(columns=['condition', 'level'])
 
-            merged_df = df.merge(
+            merged_df = data_df.merge(
                 coords_prepared_df,
                 on=["study_id", 'condition_level'],
                 how='left'
+            )
+
+            # Count the number of lines with one null value or more.
+            # Remove all the lines with null values
+            nb_null_lines = merged_df.isna().any(axis=1).sum()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: there are {nb_null_lines} "
+                "lines with one null value or more in the DataFrame when merge "
+                "is completed."
+            )
+            merged_df = merged_df.dropna()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: "
+                "Remove null values from the dataframe"
             )
 
             if merged_df.empty:
@@ -802,7 +947,7 @@ class CSVMetadataHandler:
                 exc_info=True,
                 extra={"status": "failure", "error": str(e)}
             )
-            raise e
+            raise
 
         return merged_df
 
@@ -818,13 +963,41 @@ class CSVMetadataHandler:
             f"Starting function {class_name}.{func_name}"
         )
 
+        data_df = df.copy()
+        for col in ['study_id', 'series_id']:
+            data_df[col] = data_df[col].astype(np.int64)
+
         try:
             self._logger.info("Merging with series descriptions...", extra={"step": 4})
 
-            merged_df = df.merge(self._series_desc_df, on=['study_id', 'series_id'], how='left')
+            merged_df = data_df.merge(
+                self._series_desc_df,
+                on=['study_id', 'series_id'],
+                how='left'
+            )
+
+            # Count the number of lines with one null value or more.
+            # Remove all the lines with null values
+            nb_null_lines = merged_df.isna().any(axis=1).sum()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: there are {nb_null_lines} "
+                "lines with one null value or more in the DataFrame when merge "
+                "is completed."
+            )
+            merged_df = merged_df.dropna()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: "
+                "Remove null values from the dataframe"
+            )
 
             if merged_df.empty:
-                critical_msg = "function pd.DataFrame.merge() failed. Empty DataFrame"
+                critical_msg = (
+                    "Merge result is empty. No matching 'study_id' and 'condition_level' "
+                    "found between input data and label coordinates."
+                )
+
                 self._logger.critical(
                     critical_msg,
                     exc_info=True,
@@ -833,7 +1006,7 @@ class CSVMetadataHandler:
                 raise ValueError(critical_msg)
 
             self._logger.info(
-                f"Merged with series descriptions. Final shape: {merged_df.shape}",
+                f"Merging with series descriptions completed. Final shape: {merged_df.shape}",
                 extra={"step": 4, "final_shape": merged_df.shape}
             )
 
@@ -847,15 +1020,19 @@ class CSVMetadataHandler:
             self._logger.critical(
                 critical_msg,
                 exc_info=True,
-                extra={"status": "failure", "error": str({e})}
+                extra={"status": "failure", "error": str(e)}
             )
-            raise e
+            raise
 
         return merged_df
 
-    def _normalize_identifier_types(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _merge_with_instances_and_series_format(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Normalize identifier types.
+        Enriches the training metadata with DICOM image dimensions.
+
+        Adds 'instance_format' (original size) and 'target_series_format' (homogenized size)
+        columns to the DataFrame. This metadata is required for future coordinate
+        adjustments and image padding.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -865,33 +1042,261 @@ class CSVMetadataHandler:
             f"Starting function {class_name}.{func_name}"
         )
 
+        data_df = df.copy()
+        self._logger.debug(f"data_df = {data_df.head(50).to_string()}")
+
+        duplicate_df = self._instances_series_format_df.copy()
+
+        for col in ['study_id', 'series_id', 'instance_number']:
+            data_df[col] = data_df[col].astype(np.int64)
+            duplicate_df[col] = duplicate_df[col].astype(np.int64)
+
         try:
-            self._logger.info("Normalizing identifier types...", extra={"step": 5})
-            df['study_id'] = df['study_id'].astype(np.int64)
-            df['series_id'] = df['series_id'].astype(np.int64)
-            df['instance_number'] = df['instance_number'].astype(int)
-            df.columns = [c.lower() for c in df.columns]
+            self._logger.info("Merging with instances and series formats...", extra={"step": 5})
+
+            merged_df = data_df.merge(
+                duplicate_df,
+                on=['study_id', 'series_id', 'instance_number'],
+                how='left'
+            )
+
+            # Count the number of lines with one null value or more.
+            # Remove all the lines with null values
+            nb_null_lines = merged_df.isna().any(axis=1).sum()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: there are {nb_null_lines} "
+                "lines with one null value or more in the DataFrame when merge "
+                "is completed."
+            )
+            merged_df = merged_df.dropna()
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name}: "
+                "Remove null values from the dataframe"
+            )
+
+            if merged_df.empty:
+                critical_msg = (
+                    "Merge result is empty. No matching 'study_id' and 'condition_level' "
+                    "found between input data and label coordinates."
+                )
+
+                self._logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise ValueError(critical_msg)
+
+            self._logger.info(
+                (
+                    "Merging with instances and series formats dataframe completed. "
+                    f"Final shape: {merged_df.shape}"
+                ),
+                extra={"step": 5, "final_shape": merged_df.shape}
+            )
 
             self._logger.debug(
                 f"Function {class_name}.{func_name} completed successfully",
                 extra={"status": "success"}
             )
 
-            return df
+            return merged_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in _merge_with_instances_and_series_format: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str(e)}
+            )
+            raise
+
+    def _remove_null_data(self, df: pd.DataFrame):
+        """
+        Removes records containing any null values and logs the dropped data.
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.debug(
+            f"Starting function {class_name}.{func_name}"
+        )
+
+        try:
+            data_df = df.copy()
+
+            self._logger.info("Removing null metadata in the dataframe...", extra={"step": 6})
+
+            # Identify records with at least one null value
+            # axis=1 checks row-wise; .any() returns True if any column is NaN
+            mask = data_df.isna().any(axis=1)
+            null_records_df = data_df.loc[mask]
+
+            # DEBUG: display all the records with null values (if there are any)
+            if not null_records_df.empty:
+                warning_msg = (
+                    f"Found {len(null_records_df)} records with null values. They will be dropped"
+                    f"{null_records_df.to_string()}"
+                )
+                self._logger.warning(warning_msg)
+
+                debug_msg = (
+                    f"Null records detailed view:\n {null_records_df.to_string()}"
+                )
+                self._logger.debug(debug_msg)
+
+            # Remove all the records with null elements
+            data_df = data_df.dropna()
+
+            info_msg = (
+                f"Null values removed from the dataframe. "
+                f"Final shape: {data_df.shape}"
+            )
+            self._logger.info(
+                info_msg,
+                extra={"step": 6, "final_shape": data_df.shape}
+            )
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
+            return data_df
 
         except Exception as e:
             critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
             self._logger.critical(
                 critical_msg,
                 exc_info=True,
-                extra={"status": "failure", "error": str({e})}
+                extra={"status": "failure"}
             )
-            raise e
+            raise
+
+    def _revise_xy_coords_in_merged_dataframe(
+            self,
+            df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Adjusts (x, y) coordinates based on centered padding offsets.
+        Ensures coordinates remain valid even if some format data is missing.
+        """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.debug(
+            f"Starting function {class_name}.{func_name}"
+        )
+
+        data_df = df.copy()
+
+        try:
+            # Adapt coordinates based on format differences
+            self._logger.info("Adapting coordinates using vectorized operations", extra={"step": 7})
+
+            # Extract dimensions into separate series for calculation
+            # Actual format  (width, height)
+            def safe_parse(val):
+                if pd.isna(val) or not isinstance(val, str):
+                    return val
+                try:
+                    return ast.literal_eval(val)
+                except (ValueError, SyntaxError):
+                    return None
+
+            data_df['instance_format'] = data_df['instance_format'].apply(safe_parse)
+            data_df['target_series_format'] = data_df['target_series_format'].apply(safe_parse)
+
+            # Identify valid rows to prevent propagating NaNs to coordinates
+            mask = (
+                data_df['instance_format'].notna()
+                & data_df['target_series_format'].notna()
+                & (data_df['severity'] != 'normal/mild')
+            )
+
+            # Actual image format (width, height)
+            actual_w = data_df.loc[mask, 'instance_format'].str[0].astype(np.int64)
+            actual_h = data_df.loc[mask, 'instance_format'].str[1].astype(np.int64)
+
+            # Target series format: (width, height)
+            target_w = data_df.loc[mask, 'target_series_format'].str[0].astype(np.int64)
+            target_h = data_df.loc[mask, 'target_series_format'].str[1].astype(np.int64)
+
+            # Calculate padding offset (centered padding logic)
+            offset_x = (target_w - actual_w) / 2.0
+            offset_y = (target_h - actual_h) / 2.0
+
+            # Apply the shift to all rows at once
+            data_df.loc[mask, 'x'] += offset_x
+            data_df.loc[mask, 'y'] += offset_y
+
+            # Make the x and y coordinates linked with the 'normal/mild'
+            # case remain out of the image frame
+            mask_2 = data_df['severity'] == 'normal/mild'
+            data_df.loc[mask_2, 'x'] = -1.0
+            data_df.loc[mask_2, 'y'] = -1.0
+
+            self._logger.info("All coordinates revised successfully", extra={"step": 7})
+            self._logger.debug(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
+            return data_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str(e)}
+            )
+            raise
+
+    def _normalize_identifier_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Standardizes identifier types and column naming for database consistency.
+        """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        self._logger.debug(
+            f"Starting function {class_name}.{func_name}"
+        )
+
+        data_df = df.copy()
+
+        try:
+            self._logger.info("Normalizing identifier types...", extra={"step": 5})
+            data_df['study_id'] = data_df['study_id'].astype(np.int64)
+            data_df['series_id'] = data_df['series_id'].astype(np.int64)
+            data_df['instance_number'] = data_df['instance_number'].astype(int)
+            data_df.columns = [c.lower() for c in data_df.columns]
+
+            self._logger.debug(
+                f"Function {class_name}.{func_name} completed successfully",
+                extra={"status": "success"}
+            )
+
+            return data_df
+
+        except Exception as e:
+            critical_msg = f"Fatal error in {class_name}.{func_name}: {e}"
+            self._logger.critical(
+                critical_msg,
+                exc_info=True,
+                extra={"status": "failure", "error": str(e)}
+            )
+            raise
 
     @log_method()
     def _encode_dataframe(
         self,
-        metadata_df: pd.DataFrame,
+        data_df: pd.DataFrame,
         *,
         logger: Optional[logging.Logger] = None
     ) -> pd.DataFrame:
@@ -902,7 +1307,7 @@ class CSVMetadataHandler:
             or machine learning models,replacing descriptive strings with compact integers.
 
             Args:
-                metadata_df: The DataFrame containing metadata to be converted.
+                data_df: The DataFrame containing metadata to be converted.
                     Example of column values: {
                         "condition_level": "spinal_canal_stenosis_l1-2",
                         "severity": "Normal/Mild", ...
@@ -918,7 +1323,7 @@ class CSVMetadataHandler:
         logger.debug(f"Starting function {class_name}.{func_name}")
 
         try:
-            if metadata_df.empty:
+            if data_df.empty:
                 critical_msg = "Empty DataFrame"
 
                 self._logger.critical(
@@ -932,10 +1337,10 @@ class CSVMetadataHandler:
             columns_to_encode = ["condition_level", "series_description", "severity"]
 
             # Create mappings for each column
-            mappings = self._create_mappings(metadata_df, columns_to_encode)
+            mappings_dict = self._create_mappings(data_df, columns_to_encode)
 
             # Apply encoding to each column
-            metadata_df = self._apply_encodings(metadata_df, columns_to_encode, mappings)
+            metadata_df = self._apply_encodings(data_df, columns_to_encode, mappings_dict)
 
             msg_debug = f"Function {class_name}.{func_name} completed successfully"
             logger.debug(msg_debug, extra={"status": "success"})
@@ -943,10 +1348,7 @@ class CSVMetadataHandler:
             return metadata_df
 
         except Exception as e:
-            critical_msg = (
-                f"Fatal error in function {class_name}.{func_name}: {str(e)}"
-            )
-
+            critical_msg = f"Fatal error in function {class_name}.{func_name}: {str(e)}"
             logger.critical(
                 critical_msg,
                 exc_info=True,
@@ -1018,14 +1420,14 @@ class CSVMetadataHandler:
     @log_method()
     def _apply_encodings(self, metadata_df: pd.DataFrame,
                          columns_to_encode: List[str],
-                         mappings: Dict[str, Dict]) -> pd.DataFrame:
+                         mappings_dict: Dict[str, Dict]) -> pd.DataFrame:
         """
             Applies the encoding mappings to each specified column in the DataFrame.
 
             Args:
                 metadata_df: The DataFrame containing metadata to be converted.
                 columns_to_encode: Dictionary mapping column names to their mapping variable names.
-                mappings: Dictionary of mapping dictionaries for each column.
+                mappings_dict: Dictionary of mapping dictionaries for each column.
 
             Returns:
                 pd.DataFrame: The DataFrame with the specified columns converted to integer values.
@@ -1040,7 +1442,7 @@ class CSVMetadataHandler:
             update_metadata_df = metadata_df.copy()
             for column in columns_to_encode:
                 update_metadata_df[column] = (
-                    update_metadata_df[column].map(mappings[column]).fillna(-1).astype(int)
+                    update_metadata_df[column].map(mappings_dict[column]).fillna(-1).astype(int)
                 )
 
             msg_debug = f"Function {class_name}.{func_name} completed successfully"
@@ -1091,11 +1493,11 @@ class CSVMetadataHandler:
         try:
             # Create the primary dictionary {string: integer} using enumeration.
             # The integer (i) corresponds to the string's index + 1 in the list.
-            mapping = {key: idx for idx, key in enumerate(observed_pathologies_lst)}
+            mapping_dict = {key: idx for idx, key in enumerate(observed_pathologies_lst)}
 
             # Create the optional reverse dictionary {integer: string}
             # for inspection/deserialization.
-            reverse_mapping = {idx: key for idx, key in enumerate(observed_pathologies_lst)}
+            reverse_mapping_dict = {idx: key for idx, key in enumerate(observed_pathologies_lst)}
 
             def mapper(key: str) -> int:
                 """
@@ -1103,12 +1505,12 @@ class CSVMetadataHandler:
                 """
                 # Use .get() to return the mapped integer.
                 # Returns -1 if the input string is not found (unknown category).
-                return mapping.get(key, -1)
+                return mapping_dict.get(key, -1)
 
             # Attach the mapping dictionaries as attributes to the mapper function.
             # This allows users to inspect or reverse the mapping later.
-            mapper.mapping = mapping
-            mapper.reverse_mapping = reverse_mapping
+            mapper.mapping = mapping_dict
+            mapper.reverse_mapping = reverse_mapping_dict
 
             # Return the callable function
             logger.debug(

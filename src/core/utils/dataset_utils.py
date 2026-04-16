@@ -8,9 +8,6 @@ import sys
 # Third party library
 import tensorflow as tf
 
-# Local module
-from src.core.utils.logger import get_current_logger
-
 
 # Define the dataset mapping helper functions
 def parse_tfrecord_single_element(
@@ -55,10 +52,15 @@ def parse_tfrecord_single_element(
         - labels_dict (dict): Dictionary with a 'records' key containing
           a (MAX_RECORDS, 4) float32 tensor of [condition_level, severity, x_norm, y_norm].
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
 
-    logger.debug("Starting function parse_tfrecord_single_element")
+    logging_cfg = config['logging']
+    level_cfg = logging_cfg['level']
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function parse_tfrecord_single_element"),
+        false_fn=lambda: tf.no_op()
+    )
 
     models_cfg = config['models']
     backbone_2d_cfg = models_cfg['backbone_2d']
@@ -67,9 +69,6 @@ def parse_tfrecord_single_element(
 
     data_specs_cfg = config['data_specs']
     max_records = data_specs_cfg['max_records_per_frame']
-
-    logging_cfg = config['logging']
-    level = logging_cfg['level']
 
     # Define the structure of the features stored in the TFRecord.
     feature_description = {
@@ -139,16 +138,20 @@ def parse_tfrecord_single_element(
     expected_size = height_t * width_t
     actual_size = tf.shape(image_raw_tf)[0]
 
-    if level == "DEBUG":
-        debug_msg = (
-            f"Processing -> Study: {study_id_t}, "
-            f"Series: {series_id_t}, "
-            f"Instance: {instance_number_t}, "
-            f"Format: ({img_height_t}, {img_width_t}), "
-            f"Expected size: ({expected_size}), "
-            f"Actual size: ({actual_size})"
-        )
-        tf.print(debug_msg)
+    debug_msg = (
+        f"Processing -> Study: {study_id_t}, "
+        f"Series: {series_id_t}, "
+        f"Instance: {instance_number_t}, "
+        f"Format: ({img_height_t}, {img_width_t}), "
+        f"Expected size: ({expected_size}), "
+        f"Actual size: ({actual_size})"
+    )
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print(debug_msg),
+        false_fn=lambda: tf.no_op()
+    )
 
     check_op = raise_size_error(expected_size, actual_size)
     with tf.control_dependencies([check_op]):
@@ -256,7 +259,11 @@ def parse_tfrecord_single_element(
 
     return_object = (normalized_image_tf, metadata_dict, labels_dict)
 
-    logger.debug("Function parse_tfrecord_single_element completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function parse_tfrecord_single_element completed"),
+        false_fn=lambda: tf.no_op(),
+    )
 
     return return_object
 
@@ -316,10 +323,13 @@ def create_padding_image(
         - offset (tf.float32): A zero translation vector [0.0, 0.0].
     """
 
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config['logging']['level']
 
-    logger.debug("Starting function create_padding_image")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function create_padding_image"),
+        false_fn=lambda: tf.no_op()
+    )
 
     min_val = config['models']['backbone_2d']['scaling']['min']
     model_2d_height, model_2d_width, _ = config["models"]["backbone_2d"]["img_shape"]
@@ -328,7 +338,11 @@ def create_padding_image(
         dtype=tf.float32
     ) * min_val
 
-    logger.debug("Function create_padding_image completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function create_padding_image completed"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # Return neutral values to avoid affecting coordinate calculations
     return padding, tf.constant(1.0, dtype=tf.float32), tf.constant([0.0, 0.0], dtype=tf.float32)
@@ -372,10 +386,13 @@ def perform_deterministic_crop(
         - offset_vector (tf.float32): Vector [x_offset, y_offset] (float32)
           containing negative integers representing the crop origin.
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config['logging']['level']
 
-    logger.debug("Starting function perform_deterministic_crop")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function perform_deterministic_crop"),
+        false_fn=lambda: tf.no_op()
+    )
 
     models_cfg = config.get('models', None)
     if models_cfg is None:
@@ -442,7 +459,11 @@ def perform_deterministic_crop(
         -tf.cast(off_y, tf.float32)
     ])
 
-    logger.debug("Function perform_deterministic_crop completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function perform_deterministic_crop completed"),
+        false_fn=lambda: tf.no_op()
+    )
 
     return tf.cast(final_img, tf.float32), scaling_ratio, offset_vector
 
@@ -456,10 +477,14 @@ def perform_resize(
     """
     Performs isometric resizing and centering.
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
 
-    logger.debug("Starting function perform_resize")
+    level_cfg = config['logging']['level']
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function perform_resize"),
+        false_fn=lambda: tf.no_op()
+    )
 
     models_cfg = config['models']
     backbone_2d_cfg = models_cfg['backbone_2d']
@@ -485,7 +510,12 @@ def perform_resize(
     width_offset_t = tf.cast((model_2d_width - new_w) // 2, tf.float32)
     height_offset_t = tf.cast((model_2d_height - new_h) // 2, tf.float32)
 
-    logger.debug("Function perform_resize completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function perform_resize completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return final_img, scaling_ratio, tf.stack([width_offset_t, height_offset_t])
 
 
@@ -502,10 +532,14 @@ def normalize_image(
     This ensures that background padding remains at absolute zero even after
     Min-Max scaling and range shifting.
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
 
-    logger.debug("Starting function normalize_image")
+    level_cfg = config['logging']['level']
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function normalize_image"),
+        false_fn=lambda: tf.no_op()
+    )
 
     model_cfg = config["models"]
 
@@ -528,7 +562,12 @@ def normalize_image(
     # Rescale to target range
     rescaled_image = normalized * (max_scaling_value - min_scaling_value) + min_scaling_value
 
-    logger.debug("Function normalize_image completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function normalize_image completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return rescaled_image
 
 
@@ -577,10 +616,13 @@ def process_study_multi_series(
                - study_id: The unified identifier for the study (scalar).
                - reduced_labels: Study-level diagnostic labels (compacted).
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config['logging']['level']
 
-    logger.debug("Starting function process_study_multi_series")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function process_study_multi_series"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # --- 1. Define Search Targets (Integer Codes) ---
     # Based on the internal mapping: 0: "Sagittal T1", 1: "Sagittal T2", 2: "Axial T2"
@@ -646,10 +688,22 @@ def process_study_multi_series(
     # in the labels dictionary without explicit Python loops.
     reduced_labels = tf.nest.map_structure(reduce_to_first_element, labels)
 
+    # Extraction complete: res_t1, res_t2, and res_ax now hold their own extracted
+    # and stacked tensors. The original 'images' and 'meta' can be released.
+    # The labels can be removed after extraction
+    del meta
+    del images
+    del labels
+
     # Return the structured data required by LumbarDicomTFRecordDataset._format_for_model :
     rtrn_value = (res_t1, res_t2, res_ax), study_id, reduced_labels
 
-    logger.debug("Function process_study_multi_series completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function process_study_multi_series completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return rtrn_value
 
 
@@ -724,10 +778,14 @@ def process_single_series_description(
               Values: [sampling_flag, first_slice_index, target_desc_tensor].
               Note: target_desc_tensor is the encoded anatomical view.
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
 
-    logger.debug("Starting function process_single_series_description")
+    level_cfg = config['logging']['level']
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function process_single_series_description"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # Convert to int32 for stable comparison.
     current_desc = tf.cast(all_meta['series_description'], tf.int32)
@@ -749,14 +807,19 @@ def process_single_series_description(
         mask_has_data,
         true_fn=lambda: process_valid_series(
             all_images, all_meta, desc_mask, target_desc_tensor,
-            series_depth, height, width, nb_channels, is_training
+            series_depth, height, width, nb_channels, config, is_training
         ),
         false_fn=lambda: process_empty_series(
             target_desc_tensor, series_depth, height, width, config
         )
     )
 
-    logger.debug("Function process_single_series_description completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function process_single_series_description completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return rtrn_value
 
 
@@ -769,6 +832,7 @@ def process_valid_series(
     height: int,
     width: int,
     nb_channels: int,
+    config: Dict[str, Any],
     is_training: bool = True
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -804,10 +868,13 @@ def process_valid_series(
               Values: [sampling_flag, first_slice_index, target_desc_tensor].
     """
 
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config['logging']['level']
 
-    logger.debug("Starting function process_valid_series")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function process_valid_series"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # --- 1. Filtering by Description ---
     d_images = tf.boolean_mask(all_images, desc_mask)
@@ -861,7 +928,7 @@ def process_valid_series(
     # 5. Select image sampling mode
     slice_sampling_flag, indices = tf.cond(
         tf.logical_and(is_training, tf.greater(actual_count, series_depth)),
-        lambda: get_indices_on_images(actual_count, series_depth),
+        lambda: get_indices_on_images(actual_count, series_depth, config),
         # Default: Uniform Global sampling (for Val or small series)
         lambda: (
             False,
@@ -926,14 +993,19 @@ def process_valid_series(
         axis=0
     )
 
-    logger.debug("Function process_valid_series completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function process_valid_series completed"),
+        false_fn=lambda: tf.no_op()
+    )
 
     return final_vol, slice_metadata, series_metadata
 
 
 def get_indices_on_images(
     actual_count_tf: tf.Tensor,
-    series_depth: int
+    series_depth: int,
+    config: Dict[str, Any]
 ) -> Tuple[bool, int]:
     """
     Determines which slice indices to extract from a series based on a sampling strategy.
@@ -958,10 +1030,13 @@ def get_indices_on_images(
               containing the calculated slice indices [int32].
     """
 
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config['logging']['level']
 
-    logger.debug("Starting function get_indices_on_images")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function get_indices_on_images"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # Decide between Global Resampling or Local Window
     # We use a random variable to choose the mode
@@ -987,7 +1062,12 @@ def get_indices_on_images(
         )
     )
 
-    logger.debug("Function get_indices_on_images completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function get_indices_on_images completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return rtrn_value
 
 
@@ -1024,10 +1104,13 @@ def process_empty_series(
             - series_metadata (tf.Tensor): Sentinel info vector (3,) [int32].
               Values: [sampling_flag=0, first_slice_index=0, target_desc_tensor].
     """
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config["logging"]["level"]
 
-    logger.debug("Starting function process_empty_series")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function process_empty_series"),
+        false_fn=lambda: tf.no_op()
+    )
 
     # 1. Constants and Type Casting
     s_depth = tf.cast(series_depth, tf.int32)
@@ -1075,7 +1158,12 @@ def process_empty_series(
     # Finalize shape for the metadata tensor
     slice_metadata = tf.reshape(slice_metadata, meta_shape)
 
-    logger.debug("Function process_empty_series completed")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function process_empty_series completed"),
+        false_fn=lambda: tf.no_op()
+    )
+
     return empty_vol, slice_metadata, series_metadata
 
 
@@ -1105,11 +1193,15 @@ def format_for_model(
         tuple: (inputs_dict, targets_dict) ready for model.fit().
     """
 
-    # Retrieve the logger already instantiated
-    logger = get_current_logger()
+    level_cfg = config["logging"]["level"]
 
-    logger.debug("Starting function format_for_model")
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Starting function format_for_model"),
+        false_fn=lambda: tf.no_op()
+    )
 
+    # Extract config values
     model_cfg = config["models"]
     backbone_2d_cfg = model_cfg["backbone_2d"]
     img_shape = backbone_2d_cfg["img_shape"]
@@ -1119,9 +1211,9 @@ def format_for_model(
     data_specs_cfg = config["data_specs"]
     max_records = data_specs_cfg["max_records_per_frame"]
 
-    # Retrieve the config of the expected shapes
+    # Target shapes for validation
     model_2d_height, model_2d_width, model_2d_nb_channels = img_shape
-    target_shape = [series_depth, model_2d_height, model_2d_width, model_2d_nb_channels]
+    target_shape = [series_depth, img_shape[0], img_shape[1], img_shape[2]]
     meta_target_shape = [series_depth, 4]
     series_target_shape = [3]
 
@@ -1130,25 +1222,31 @@ def format_for_model(
 
     # --- 2. Build Inputs Dictionary ---
     # These keys MUST exactly match the names defined in ModelFactory.build_multi_series_model()
+    # Note: tensors are assumed to be float32 from previous steps.
     # Use tf.ensure_shape to guarantee dimensions without breaking the graph flow
     features = {
         "study_id": tf.reshape(tf.cast(study_id_tf, tf.int64), [1]),
-        "img_sag_t1": tf.ensure_shape(tf.cast(sag_t1[0], tf.float32), target_shape),
-        "slice_metadata_t1": tf.ensure_shape(tf.cast(sag_t1[1], tf.float32), meta_target_shape),
-        "series_metadata_t1": tf.reshape(tf.cast(sag_t1[2], tf.int32), series_target_shape),
-        "img_sag_t2": tf.ensure_shape(tf.cast(sag_t2[0], tf.float32), target_shape),
-        "slice_metadata_t2": tf.ensure_shape(tf.cast(sag_t2[1], tf.float32), meta_target_shape),
-        "series_metadata_t2": tf.reshape(tf.cast(sag_t2[2], tf.int32), series_target_shape),
-        "img_axial_t2": tf.ensure_shape(tf.cast(axial[0], tf.float32), target_shape),
-        "slice_metadata_axial_t2": tf.ensure_shape(
-            tf.cast(axial[1], tf.float32),
-            meta_target_shape
-        ),
-        "series_metadata_axial_t2": tf.reshape(tf.cast(axial[2], tf.int32), series_target_shape)
+
+        # Sagittal T1
+        "img_sag_t1": tf.ensure_shape(sag_t1[0], target_shape),
+        "slice_metadata_t1": tf.ensure_shape(sag_t1[1], meta_target_shape),
+        "series_metadata_t1": tf.reshape(sag_t1[2], series_target_shape),
+
+        # Sagittal T2
+        "img_sag_t2": tf.ensure_shape(sag_t2[0], target_shape),
+        "slice_metadata_t2": tf.ensure_shape(sag_t2[1], meta_target_shape),
+        "series_metadata_t2": tf.reshape(sag_t2[2], series_target_shape),
+
+        # Axial T2
+        "img_axial_t2": tf.ensure_shape(axial[0], target_shape),
+        "slice_metadata_axial_t2": tf.ensure_shape(axial[1], meta_target_shape),
+        "series_metadata_axial_t2": tf.reshape(axial[2], series_target_shape)
     }
 
+    # Explicitly clear the unpacking tuples to free references
+    del sag_t1, sag_t2, axial, study_volumes_tf
+
     # --- 3. Build Targets Dictionary ---
-    labels_dict = {}
 
     # Traceability: Pass the study_id back out to verify data integrity during inference
     # Expanded to (1,) or (batch, 1) to match the Lambda layer output shape
@@ -1165,23 +1263,64 @@ def format_for_model(
     # 2. Reorder the entire records tensor using these indices
     sorted_records = tf.gather(records_raw, sort_indices)
 
+    # Final labels formatting
     # Classification target (Severity: 0, 1, or 2): explicit cast to int32
     # before one-hot encoding.
     severity_labels = tf.cast(sorted_records[:, 1], tf.int32)
-    labels_dict["severity_output"] = tf.cast(tf.one_hot(severity_labels, depth=3), tf.float32)
+    labels_dict = {
+        "severity_output": tf.cast(
+            tf.one_hot(severity_labels, depth=3),
+            tf.float32
+        ),
+        "location_output": tf.cast(
+            sorted_records[:, 2:4],
+            tf.float32
+        )
+    }
 
-    # Regression target (Coordinates: Normalized X, Y)
-    # Remark: No need there to append [tf.newaxis], because records[:, 2:4] is already
-    # a Rank-1 tensor (vector of size 2) and not a Rank-0 tensor (scalar)..
-    labels_dict["location_output"] = tf.cast(sorted_records[:, 2:4], tf.float32)
+    # Clean up intermediate label tensors
+    del records_raw, sorted_records, sort_indices
 
-    # IMPORTANT: Force float32 across the entire features dictionary.
-    # This loop serves as a final safety check to prevent dtype mismatch.
-    # features = {k: tf.cast(v, tf.float32) for k, v in features.items()}
+    # --- Debug & Assertions (Only if log level is DEBUG) ---
+    if config["logging"]["level"] == "DEBUG":
 
-    # Do the same for labels to be absolutely safe
-    labels_dict = {k: tf.cast(v, tf.float32) for k, v in labels_dict.items()}
+        # We define a function that performs all type assertions
+        # This is wrapped so it only exists in the Graph if DEBUG is True
+        def perform_debug_assertions():
+            # Assertions for Features (Inputs)
+            # Study ID is the only int64
+            tf.debugging.assert_type(
+                features["study_id"],
+                tf.int64,
+                message="study_id must be int64"
+            )
 
-    logger.debug("Function format_for_model completed")
+            # Images and Slice Metadata MUST be float32
+            tf.debugging.assert_type(features["img_sag_t1"], tf.float32)
+            tf.debugging.assert_type(features["img_sag_t2"], tf.float32)
+            tf.debugging.assert_type(features["img_axial_t2"], tf.float32)
+            tf.debugging.assert_type(features["slice_metadata_t1"], tf.float32)
+
+            # Series metadata are categorical codes (int32)
+            tf.debugging.assert_type(features["series_metadata_t1"], tf.int32)
+
+            # Assertions for Labels (Targets)
+            tf.debugging.assert_type(labels_dict["severity_output"], tf.float32)
+            tf.debugging.assert_type(labels_dict["location_output"], tf.float32)
+
+            # Optional: Use tf.print to log dtypes in the console during execution
+            # This will show up in your terminal/logs while the dataset is running
+            tf.print("DEBUG: Dataset Batch types verified (float32/int32/int64 check passed)")
+
+            return tf.constant(True)  # tf.cond needs a return value
+
+        # We trigger the assertions within the Graph
+        _ = tf.cond(tf.constant(True), perform_debug_assertions, lambda: tf.constant(True))
+
+    tf.cond(
+        tf.equal(level_cfg, "DEBUG"),
+        true_fn=lambda: tf.print("Function format_for_model completed"),
+        false_fn=lambda: tf.no_op()
+    )
 
     return features, labels_dict

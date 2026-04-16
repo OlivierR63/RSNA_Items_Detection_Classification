@@ -340,11 +340,11 @@ class ConfigLoader:
             )
             raise ValueError(error_msg)
 
-        label_enriched_csv = csv_cfg.get('label_enriched', None)
-        if label_enriched_csv is None:
+        instances_series_format_csv = csv_cfg.get('instances_series_format', None)
+        if instances_series_format_csv is None:
             error_msg = (
                 "Fatal error in check_config_compliance: "
-                "the setting variable 'paths -> csv -> label_enriched' is required "
+                "the setting variable 'paths -> csv -> instances_series_format' is required "
                 "but was not found. Please check your YAML file structure."
             )
             raise ValueError(error_msg)
@@ -705,11 +705,11 @@ class ConfigLoader:
             )
             raise ValueError(error_msg)
 
-        threshold_temperature = system_cfg.get("threshold_temperature", None)
-        if threshold_temperature is None:
+        chunksize = system_cfg.get("chunksize", None)
+        if chunksize is None:
             error_msg = (
                 "Fatal error in check_config_compliance: "
-                "the setting variable 'system -> threshold_temperature' is required "
+                "the setting variable 'system -> chunksize' is required "
                 "but was not found. Please check your YAML file structure."
             )
             raise ValueError(error_msg)

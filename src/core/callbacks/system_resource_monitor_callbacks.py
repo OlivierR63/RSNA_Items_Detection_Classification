@@ -78,7 +78,11 @@ class SystemResourceMonitorCallbacks(tf.keras.callbacks.Callback):
 
         # 2. Trigger the Python Garbage Collector
         # This forces the immediate release of unreferenced objects in RAM
-        gc.collect()
+        nb_objects = gc.collect()
 
         # 3. Optional: Print a confirmation message to the console
-        print(f"\n[System] Memory cleanup completed after Epoch {epoch + 1}")
+        msg = (
+            f"\n[System] Memory cleanup completed after Epoch {epoch + 1}: "
+            f"Released {nb_objects} unreferenced objects"
+        )
+        print(msg)

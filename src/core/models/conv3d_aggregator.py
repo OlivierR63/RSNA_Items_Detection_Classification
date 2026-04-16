@@ -2,10 +2,11 @@
 
 from keras import layers
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
+from src.core.utils.logger import get_current_logger
 
 
 class Conv3DAggregator(layers.Layer):
-    def __init__(self, config, backbone_2d_output_shape, logger, series_depth, **kwargs):
+    def __init__(self, config, backbone_2d_output_shape, series_depth, logger=None, **kwargs):
         """
         Initializes the 3D aggregator layer.
 
@@ -29,7 +30,7 @@ class Conv3DAggregator(layers.Layer):
         self._series_depth = series_depth
         self._backbone2d_output_shape = backbone_2d_output_shape
         self._config = config
-        self._logger = logger
+        self._logger = logger or get_current_logger()
 
         # 1. Extracting configuration parameters
         model_3d_cfg = self._config['models']['head_3d']
@@ -67,7 +68,7 @@ class Conv3DAggregator(layers.Layer):
 
         self.global_pool = layers.GlobalAveragePooling3D()
 
-    def call(self, x, suffix=""):
+    def call(self, x):
         """
         Executes the 3D aggregation logic using pre-instantiated layers.
         """

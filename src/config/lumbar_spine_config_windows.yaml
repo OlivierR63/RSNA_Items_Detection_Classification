@@ -14,8 +14,8 @@ paths:
   csv:
     series_description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
     label_coordinates: "../../data/lumbar_spine/csv/train_label_coordinates.csv"
-    label_enriched: "../../data/lumbar_spine/csv/train_label_coordinates_format.csv"
     train: "../../data/lumbar_spine/csv/train.csv"
+    instances_series_format: "../../data/lumbar_spine/csv/train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -39,7 +39,7 @@ models:
 # ----------------- Training & Compilation ----------------
 training:
   batch_size: 1
-  epochs: 2
+  epochs: 4
   train_split_ratio: 0.8
 
 optimizer:
@@ -63,7 +63,7 @@ system:
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
-  threshold_temperature: 35.0
+  chunksize: 50 # 50 for HDD. 500 is acceptable for SSD
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
@@ -78,7 +78,7 @@ dataset_steering:
   group_studies: 1          
   
   # Number of final training batches to keep in the pipeline buffer
-  prefetch_batches: 5
+  prefetch_batches: -1
 
   # Use -1 for tf.data.AUTOTUNE
   num_parallel_calls: -1
