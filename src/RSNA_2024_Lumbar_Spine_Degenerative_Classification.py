@@ -1,31 +1,20 @@
 # coding: utf-8
 
 # ----------------- Standard imports --------------------------------------------------------
+from typing import TYPE_CHECKING
 import signal
 import sys
 import logging
 from pathlib import Path
 import gc
 import json
-from keras.models import load_model
-
-from src.core.utils.logger import setup_logger, get_current_logger
-# from src.core.utils.system_stream_tee import SystemStreamTee
-from src.core.utils.clean_logs import clean_old_logs
-from src.core.models.model_factory import ModelFactory
-from src.projects.lumbar_spine.model_trainer import ModelTrainer
-from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
-from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
-    rsna_weighted_log_loss,
-    RSNAKaggleMetric
-)
-from src.config.config_loader import ConfigLoader
-
-# ----------------- TensorFlow and projects imports -----------------------------------------
-import tensorflow as tf
 import os
 
+if TYPE_CHECKING:
+    import tensorflow as tf
 
+
+# ----------------- TensorFlow and projects imports -----------------------------------------
 def setup_config_symlink(config_dir_path: str) -> None:
     """
     Automates the creation of a symbolic link for the configuration file
@@ -64,30 +53,12 @@ def setup_config_symlink(config_dir_path: str) -> None:
         print(f"Failed to create symlink: {e}")
 
 
-# Select the proper Yaml config file, depending on the current platform : WINDOWS or Kaggle
-setup_config_symlink("src/config")
-
-# 3. Load the configuration EARLY
-# This allows to use config values for OS environment variables if needed
-config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
-config = config_loader.get()
-
-# Apply global TF settings from the config
-training_cfg = config['training']
-
-compilation_cfg = config['compilation']
-run_eagerly_val = compilation_cfg['run_eagerly']
-
-tf.config.run_functions_eagerly(run_eagerly_val)
-tf.data.experimental.enable_debug_mode()  # Optional but helpful for tf.data
-
-# Mute Python-level TensorFlow/Keras warnings
-# This handles warnings such as deprecated 'tf.placeholder' calls within internal Keras modules
-tf.get_logger().setLevel(logging.ERROR)
-
-
 def handle_interrupt(signum, frame):
-    """Handles interrupt signals (Ctrl+C) to ensure proper log closure."""
+    """
+    Handles interrupt signals (Ctrl+C) to ensure proper log closure.
+    """
+    from . import get_current_logger
+
     try:
         logger = get_current_logger()
         logger.info("\nInterruption detected (Ctrl+C). Exiting gracefully...")
@@ -102,7 +73,7 @@ def get_or_build_model(
     depth: int,
     config: dict,
     logger: logging.Logger
-) -> tf.keras.Model:
+) -> 'tf.keras.Model':
 
     """
     Retrieves a pre-existing model from a checkpoint or initializes a new one,
@@ -135,6 +106,14 @@ def get_or_build_model(
             configuration variables are missing.
         Exception: If a fatal error occurs during model factory building or compilation.
     """
+
+    import tensorflow as tf
+    from src.projects.lumbar_spine.model_trainer import ModelTrainer
+    from src.core.models.model_factory import ModelFactory
+    from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
+        rsna_weighted_log_loss,
+        RSNAKaggleMetric
+    )
 
     if depth is None or depth <= 0:
         critical_msg = (
@@ -194,7 +173,7 @@ def get_or_build_model(
 
         try:
             tf.keras.backend.clear_session()
-            model = load_model(
+            model = tf.keras.models.load_model(
                 checkpoint_full_path,
                 custom_objects=ModelFactory.CUSTOM_OBJECTS,
                 safe_mode=False,
@@ -216,6 +195,10 @@ def get_or_build_model(
             nb_output_records=max_records
         )
         model = factory_model.build_multi_series_model()
+
+        # The model is now built, so factory_model can be released now.
+        del factory_model
+        gc.collect()
 
     except Exception as e_2:
         msg_critical = f"Fatal error. Failed to build new model: {e_2}"
@@ -244,7 +227,7 @@ def get_or_build_model(
         msg_warning = f"Warning:  Unable to restore the weights. Falling back to factory. {e_3}"
         logger.warning(
             msg_warning,
-            extra={"status": "restart", "warning": str({e_3})},
+            extra={"status": "restart", "warning": str(e_3)},
             exc_info=True)
 
     try:
@@ -277,17 +260,12 @@ def get_or_build_model(
         # --- Model Compilation ---
         # Adam optimizer with gradient clipping to prevent exploding gradients
         # during multi-task learning.
-        optimizers = {
-            "adam": tf.keras.optimizers.Adam
-        }
 
-        optim = optimizer_cfg['type']
+        optim_type = optimizer_cfg['type'].lower()
+        run_eagerly_val = config['compilation']['run_eagerly']
 
         model.compile(
-            optimizer=optimizers[optim](
-                learning_rate=learning_rate,
-                clipnorm=clip_norm
-            ),
+            optimizer=optim_type,
             loss=losses,
             loss_weights=loss_weights,
             metrics=metrics,
@@ -298,7 +276,7 @@ def get_or_build_model(
         logger.info(
             "New model compiled with weighted losses.",
             extra={
-                "optimizer": optim,
+                "optimizer": optim_type,
                 "learning_rate": learning_rate,
                 "clip_norm": clip_norm
             }
@@ -322,31 +300,55 @@ def main():
         Main function to load configuration, set up the TensorFlow dataset pipeline,
         load and compile the 3D model, and start the training process.
     """
+
     # Define the policy: float16 for computations, float32 for critical variables.
 
-    # Setup signal handler for graceful interruption
-    signal.signal(signal.SIGINT, handle_interrupt)
+    # Select the proper Yaml config file, depending on the current platform : WINDOWS or Kaggle
+    setup_config_symlink("src/config")
 
-    # 1. Load the project configuration
+    # 1. System initialization
+    from src.config.config_loader import ConfigLoader
     config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
     config: dict = config_loader.get()
 
-    # 2. Allow to parallelize operations on the requested number of cores
-    os.environ["TF_USE_LEGACY_KERAS"] = "1"
-
-    # Identification of the environment to best fit the resources
-    is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
-
+    # Threads settings
     system_cfg = config["system"]
     nb_cores_config = system_cfg['nb_cores']
-
-    # Use 7 threads on local PC, but limit to 4 on Kaggle to avoid CPU overload
+    is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
     cpu_threads = nb_cores_config if is_kaggle else 7
 
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
     os.environ["OMP_NUM_THREADS"] = str(cpu_threads)
     os.environ["MKL_NUM_THREADS"] = str(cpu_threads)
-    tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)
-    tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+    # 2. Allow to parallelize operations on the requested number of cores
+    import tensorflow as tf
+    try:
+        tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)
+        tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
+    except RuntimeError:
+        # Unable to change if TF already initialized, but carry on the process
+        print("TF Context already initialized, impossible to update threading.")
+
+    # Project imports
+    from src.core.utils.logger import setup_logger
+    from src.core.utils.clean_logs import clean_old_logs
+    from src.projects.lumbar_spine.model_trainer import ModelTrainer
+    from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
+
+    # Apply global TF settings from the config
+    run_eagerly_val = config['compilation']['run_eagerly']
+
+    tf.config.run_functions_eagerly(run_eagerly_val)
+    tf.data.experimental.enable_debug_mode()  # Optional but helpful for tf.data
+
+    # Mute Python-level TensorFlow/Keras warnings
+    # This handles warnings such as deprecated 'tf.placeholder' calls within internal Keras modules
+    tf.get_logger().setLevel(logging.ERROR)
+
+    # Setup signal handler for graceful interruption
+    signal.signal(signal.SIGINT, handle_interrupt)
 
     # ---------------- Environmental configuration (before any TF import) -----------------------
     # Suppress TensorFlow C++ environmental logs
@@ -355,29 +357,14 @@ def main():
     #   '2' = filter INFO & WARNING,
     #   '3' = filter all including ERROR
 
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
     # Disable oneDNN custom operations messages
     # This prevents warnings regarding slight numerical differences due to floating-point round-off
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
     paths_cfg = config['paths']
 
-    # Mirror all the console and error output toward a dedicated file
-    # system_stream_tee_path = paths_cfg['log_mirror']
-
-    # Initialize the system tee to capture stdout/stderr
-    # mirror = SystemStreamTee(system_stream_tee_path)
-    # sys.stdout = mirror
-    # sys.stderr = mirror
-    # log_file_fd = mirror._log_file.fileno()
-    # os.dup2(log_file_fd, sys.stderr.fileno())
-    # os.dup2(log_file_fd, sys.stdout.fileno())
-
     # 2. Initialize logger with process-specific context
-    log_dir = paths_cfg["output"]
-
-    log_dir = Path(log_dir) / "logs"
+    log_dir = Path(paths_cfg["output"]) / "logs"
 
     config = config_loader.get()
 
@@ -485,7 +472,6 @@ def main():
         log_retention_days = system_cfg['log_retention_days']
 
         clean_old_logs(days=int(log_retention_days))
-        # mirror.close()
 
 
 if __name__ == "__main__":

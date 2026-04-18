@@ -544,6 +544,42 @@ class ConfigLoader:
             )
             raise ValueError(error_msg)
 
+        loss_balancer_cfg = training_cfg.get('loss_balancer', None)
+        if loss_balancer_cfg is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> loss_balancer' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        momentum = loss_balancer_cfg.get('momentum', None)
+        if momentum is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> loss_balancer -> momentum' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        min_weight = loss_balancer_cfg.get('min_weight', None)
+        if min_weight is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> loss_balancer -> min_weight' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
+        max_weight = loss_balancer_cfg.get('max_weight', None)
+        if max_weight is None:
+            error_msg = (
+                "Fatal error in check_config_compliance: "
+                "the setting variable 'training -> loss_balancer -> max_weight' is required "
+                "but was not found. Please check your YAML file structure."
+            )
+            raise ValueError(error_msg)
+
         optimizer_cfg = self._config.get('optimizer', None)
         if optimizer_cfg is None:
             error_msg = (

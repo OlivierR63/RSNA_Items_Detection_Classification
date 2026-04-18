@@ -33,9 +33,14 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 8
-  epochs: 5
+  batch_size: 1
+  epochs: 4
   train_split_ratio: 0.8
+  # Metadata for the dynamic loss balancing strategy
+  loss_balancer:
+    momentum: 0.5        # Inertia factor (0.5 = balanced, 0.9 = very stable)
+    min_weight: 0.5      # Minimum multiplier for location loss
+    max_weight: 15.0     # Maximum multiplier for location loss
 
 optimizer:
   type: adam
@@ -47,9 +52,11 @@ callbacks:
   resume_mode: last # 2 modes: "best" or "last" 
 
 compilation:
+  # Initial weights for Epoch 1. These will be updated dynamically 
+  # by the LossBalancerCallback after each epoch.
   loss_weights:
     severity_output: 1.0
-    location_output: 30.0
+    location_output: 10.0
   run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------

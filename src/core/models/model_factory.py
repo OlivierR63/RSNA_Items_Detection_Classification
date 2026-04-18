@@ -3,6 +3,7 @@
 import pandas as pd
 import tensorflow as tf
 import logging
+import gc
 from pathlib import Path
 from keras import layers, Model
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
@@ -167,7 +168,7 @@ class ModelFactory:
         )
 
         slice_metadata_t1 = layers.Input(
-            shape=(self._series_depth, 4),
+            shape=(self._series_depth, 2),
             name="slice_metadata_t1"
         )
 
@@ -184,7 +185,7 @@ class ModelFactory:
         )
 
         slice_metadata_t2 = layers.Input(
-            shape=(self._series_depth, 4),
+            shape=(self._series_depth, 2),
             name="slice_metadata_t2"
         )
 
@@ -201,7 +202,7 @@ class ModelFactory:
         )
 
         slice_metadata_axial_t2 = layers.Input(
-            shape=(self._series_depth, 4),
+            shape=(self._series_depth, 2),
             name="slice_metadata_axial_t2"
         )
 
@@ -268,7 +269,14 @@ class ModelFactory:
             name="global_fusion"
         )
 
-        lay_z = layers.Dense(512, activation='relu')(global_features)
+        # Add a new squeeze_and_excitation spatial block, which aims to balance
+        # the influence of each series in the final outcome
+        global_features = self._squeeze_excitation_block(global_features, ratio=16)
+
+        lay_z = layers.Dense(1024, activation='relu')(global_features)
+        lay_z = layers.Dropout(0.3)(lay_z)
+
+        lay_z = layers.Dense(512, activation='relu')(lay_z)
         lay_z = layers.Dropout(0.3)(lay_z)
 
         # --- 6. Outputs and Traceability ---
@@ -278,8 +286,11 @@ class ModelFactory:
         # Severity head: (Batch, 25, 3)
         # Note: 3 values per row, because 3 probabilities are calculated,
         # for each potential state (Normal/ Moderate/Severe).
-        sev_branch = layers.Dense(256, activation='relu', name="severity_features")(lay_z)
-        sev_branch = layers.Dropout(0.3, name="severity_dropout")(sev_branch)
+        sev_branch = layers.Dense(512, activation='relu', name="severity_features_1")(lay_z)
+        sev_branch = layers.BatchNormalization(name="severity_head_bn")(sev_branch)
+        sev_branch = layers.Dropout(0.3, name="severity_dropout_1")(sev_branch)
+        sev_branch = layers.Dense(256, activation='relu', name="severity_features_2")(sev_branch)
+        sev_branch = layers.Dropout(0.3, name="severity_dropout_2")(sev_branch)
         severity_flat = layers.Dense(self._nb_output_records*3, name="severity_flat")(sev_branch)
 
         out_severity = layers.Reshape(
@@ -297,8 +308,11 @@ class ModelFactory:
         # Dedicated branch for regression with stronger regularization
         # Location head: (Batch, 25, 2)
         # Coordinates are normalized; Sigmoid activation constrains outputs between 0 and 1.
-        loc_branch = layers.Dense(256, activation='relu', name="location_features")(lay_z)
-        loc_branch = layers.Dropout(0.5, name="location_dropout")(loc_branch)
+        loc_branch = layers.Dense(512, activation='relu', name="location_features_1")(lay_z)
+        loc_branch = layers.BatchNormalization(name="severity_loc_bn")(loc_branch)
+        loc_branch = layers.Dropout(0.5, name="location_dropout_1")(loc_branch)
+        loc_branch = layers.Dense(256, activation='relu', name="location_features_2")(loc_branch)
+        loc_branch = layers.Dropout(0.5, name="location_dropout_2")(loc_branch)
         loc_flat = layers.Dense(self._nb_output_records * 2, name="loc_flat")(loc_branch)
 
         output_location = layers.Reshape(
@@ -337,9 +351,56 @@ class ModelFactory:
             outputs=pathology_level_location_output_list,
             name="RSNA_MultiSeries_Model"
         )
+
+        # Release all the intermediate variables
+        del feat_sag_t1, feat_sag_t2, feat_ax_t2, global_features, lay_z
+        del sev_branch, loc_branch, severity_flat, loc_flat
+
+        gc.collect()
+
         self._logger.info("Building model completed")
 
         return model
+
+    def _squeeze_excitation_block(self, input_tensor, ratio=16):
+        """
+        Implementation of a Squeeze-and-Excitation block.
+        Args:
+            input_tensor: The input features (after global_fusion or Conv3D)
+            ratio: Reduction ratio for the bottleneck (default 16)
+        """
+        # Get the number of channels/filters
+        init = input_tensor
+        channel_axis = -1
+        filters = init.shape[channel_axis]
+        se_shape = (1, filters)
+
+        # 1. Squeeze: Global Average Pooling
+        # If input is 2D (after Flatten/Dense), we skip Pooling and use the vector directly
+        if len(init.shape) == 2:
+            se = init
+        else:
+            se = layers.GlobalAveragePooling2D()(init)
+
+        se = layers.Reshape(se_shape)(se)
+
+        # 2. Excitation: Bottleneck MLP
+        se = layers.Dense(
+            filters // ratio,
+            activation='relu',
+            kernel_initializer='he_normal',
+            use_bias=False
+        )(se)
+
+        se = layers.Dense(
+            filters,
+            activation='sigmoid',
+            kernel_initializer='he_normal',
+            use_bias=False
+        )(se)
+
+        # 3. Scale: Multiply input by learned weights
+        return layers.multiply([init, se])
 
     def _process_branch(
         self,
@@ -376,6 +437,9 @@ class ModelFactory:
         # (e.g., Conv3D, LSTM, or GlobalAverage)
         x_aggreg3d = self._aggregator3d(x_backbone)
 
+        # Release useless variable
+        del x_backbone
+
         # Flatten the slice_metadata_input tensor
         name_str = f"flatten_slice_metadata_{suffix}"
         slice_metadata_flat = layers.Flatten(name=name_str)(slice_metadata_input)
@@ -402,6 +466,9 @@ class ModelFactory:
             name=f"view_embed_{suffix}"
         )(view_code)
 
+        # Release useless variable
+        del view_code
+
         # Flatten from (Batch, 1, 8) to (Batch, 8)
         view_embedding = layers.Flatten(name=f"flatten_embed_{suffix}")(view_embedding)
 
@@ -415,6 +482,16 @@ class ModelFactory:
             ],
             name=f"merged_feat_{suffix}"
         )
+
+        # Release the useless variables
+        del x_aggreg3d
+        del slice_metadata_flat
+        del series_flags
+        del view_embedding
+
+        # gc.collect() is not invoked here to avoid redundant overhead,
+        # as this utility is called multiple times during model construction.
+        # A single global collection after the full model assembly is more efficient.
 
         return combined_branch
 
@@ -438,5 +515,10 @@ class ModelFactory:
         # Embedding dimension: set to 8 as a power of 2 that provides
         # enough expressive capacity for 3-5 views while staying lightweight.
         output_dim = 8
+
+        # Release useless data
+        del csv_description_df
+        del descriptions_list
+        gc.collect()
 
         return nb_descriptions, output_dim

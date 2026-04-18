@@ -6,7 +6,7 @@ import tensorflow as tf
 import gc
 
 
-class SystemResourceMonitorCallbacks(tf.keras.callbacks.Callback):
+class SystemResourceMonitorCallback(tf.keras.callbacks.Callback):
     """
     Callback for monitoring system resources and managing memory during training.
 

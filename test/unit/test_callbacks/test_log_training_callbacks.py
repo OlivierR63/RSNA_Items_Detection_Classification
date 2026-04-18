@@ -1,6 +1,6 @@
 # coding: utf-8
 
-from src.core.callbacks.log_training_callbacks import LogTrainingCallbacks
+from src.core.callbacks.log_training_callback import LogTrainingCallback
 
 
 def test_log_training_callbacks_full_cycle(mock_logger, caplog):
@@ -8,7 +8,7 @@ def test_log_training_callbacks_full_cycle(mock_logger, caplog):
     Test the full lifecycle of the training callback to reach 100% coverage.
     """
     # 1. Initialization
-    callback = LogTrainingCallbacks(logger=mock_logger)
+    callback = LogTrainingCallback(logger=mock_logger)
 
     # Keras typically sets a 'params' dict on the callback before training
     callback.params = {'epochs': 2, 'steps': 10}

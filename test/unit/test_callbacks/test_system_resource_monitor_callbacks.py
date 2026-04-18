@@ -3,7 +3,7 @@
 import pytest
 import psutil
 from unittest.mock import MagicMock, patch
-from src.core.callbacks.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
+from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallbacks
 
 
 class TestSystemResourceMonitorCallbacks:

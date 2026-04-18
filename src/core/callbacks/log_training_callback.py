@@ -6,7 +6,7 @@ import os
 from time import time, perf_counter, strftime, gmtime
 
 
-class LogTrainingCallbacks(tf.keras.callbacks.Callback):
+class LogTrainingCallback(tf.keras.callbacks.Callback):
     """
     Custom callback to monitor training performance, timing, and progress.
 

@@ -14,8 +14,9 @@ import tensorflow as tf
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from src.core.utils.logger import get_current_logger, log_method
-from src.core.callbacks.log_training_callbacks import LogTrainingCallbacks
-from src.core.callbacks.system_resource_monitor_callbacks import SystemResourceMonitorCallbacks
+from src.core.callbacks.log_training_callback import LogTrainingCallback
+from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
+from src.core.callbacks.dynamic_loss_balancer_callback import DynamicLossBalancerCallback
 from src.core.utils.monitoring_utils import log_memory_usage
 
 
@@ -69,6 +70,13 @@ class ModelTrainer:
 
         # Test line: if the error is here, it's a scope issue
         self._model_depth = model_depth
+
+        # Initializing the TF Variable with the starting metadata
+        self._loss_weight_var = tf.Variable(
+            config['compilation']['loss_weights']['location_output'],
+            dtype=tf.float32,
+            trainable=False
+        )
 
         self._nb_train = None
         self._nb_val = None
@@ -218,6 +226,13 @@ class ModelTrainer:
                 is_training=False
             )
 
+            # 6. Release the useless entities
+            del all_tfrecord_files
+            del shuffled_tfrecord_list
+            del train_list
+            del val_list
+
+            gc.collect()
             logger.info("Training and validation dataset created successfully.",
                         extra={"status": "success"})
 
@@ -297,7 +312,7 @@ class ModelTrainer:
 
         memory_threshold_percent = float(memory_threshold_percent_str)
 
-        monitor_callback = SystemResourceMonitorCallbacks(
+        monitor_callback = SystemResourceMonitorCallback(
             memory_threshold_percent=float(memory_threshold_percent)
         )
 
@@ -327,7 +342,19 @@ class ModelTrainer:
             f"{validation_steps} validation steps."
         )
 
-        training_progress_callback = LogTrainingCallbacks(logger, validation_steps)
+        training_progress_callback = LogTrainingCallback(logger, validation_steps)
+
+        momentum = self._config['training']['loss_balancer']['momentum']
+        min_weight = self._config['training']['loss_balancer']['min_weight']
+        max_weight = self._config['training']['loss_balancer']['max_weight']
+
+        dynamic_loss_balancer_callback = DynamicLossBalancerCallback(
+            weight_variable=self._loss_weight_var,
+            momentum=momentum,
+            min_weight=min_weight,
+            max_weight=max_weight,
+            logger=logger
+        )
 
         callbacks_cfg = self._config['callbacks']
         patience_cfg = callbacks_cfg['patience']
@@ -339,6 +366,7 @@ class ModelTrainer:
             training_progress_callback,
             print_callback,
             ProgbarLogger(),
+            dynamic_loss_balancer_callback,
 
             # Save the best version of the model for final inference
             tf.keras.callbacks.ModelCheckpoint(
@@ -371,11 +399,18 @@ class ModelTrainer:
             )
         ]
 
-        logger.info("Training callbacks configured.",
-                    extra={"callbacks": [callback.__class__.__name__ for callback in callbacks]})
+        logger.info(
+            "Training callbacks configured.",
+            extra={"callbacks": [callback.__class__.__name__ for callback in callbacks]}
+        )
+
+        epochs_cfg = training_cfg["epochs"]
 
         # Clear session and collect garbage to maximize available VRAM before fitting
+        del training_cfg
+        del callbacks_cfg
         gc.collect()
+
         log_memory_usage(
             stage_name="Pre-fit memory state",
             process=self._process,
@@ -383,8 +418,6 @@ class ModelTrainer:
         )
 
         try:
-            epochs_cfg = training_cfg["epochs"]
-
             # Execute the training loop
             history = self._model.fit(
                 self._train_dataset,
