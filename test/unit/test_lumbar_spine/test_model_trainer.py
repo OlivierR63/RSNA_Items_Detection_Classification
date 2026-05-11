@@ -2,6 +2,7 @@
 
 import pytest
 import tensorflow as tf
+import tf_keras
 from pathlib import Path
 import shutil
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,7 @@ class TestModelTrainer:
         Local fixture to initialize ModelTrainer.
         Note: The model itself is mocked as it's not the unit under test.
         """
-        mock_model = MagicMock(spec=tf.keras.Model)
+        mock_model = MagicMock(spec=tf_keras.Model)
 
         # Ensure the expected TFRecord directory exists for path resolution tests
         mock_config["paths"]["tfrecord"].mkdir(parents=True, exist_ok=True)

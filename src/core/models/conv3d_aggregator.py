@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
-from keras import layers
+import tf_keras
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
 from src.core.utils.logger import get_current_logger
+from src.config.config_loader import ConfigLoader
 
 
-class Conv3DAggregator(layers.Layer):
-    def __init__(self, config, backbone_2d_output_shape, series_depth, logger=None, **kwargs):
+class Conv3DAggregator(tf_keras.layers.Layer):
+    def __init__(self, backbone_2d_output_shape, series_depth, logger=None, **kwargs):
         """
         Initializes the 3D aggregator layer.
 
@@ -16,8 +17,6 @@ class Conv3DAggregator(layers.Layer):
         support static graph execution (run_eagerly=False) and weight sharing.
 
         Args:
-            config (dict): Global configuration dictionary containing 'models/head_3d'
-                hyperparameters (e.g., filter counts).
             backbone_2d_output_shape (tuple): The shape of the feature maps produced
                 by the 2D backbone, used to calculate spatial and channel dimensions.
             logger (logging.Logger): Logger instance for tracking the layer
@@ -29,7 +28,7 @@ class Conv3DAggregator(layers.Layer):
         super().__init__(**kwargs)
         self._series_depth = series_depth
         self._backbone2d_output_shape = backbone_2d_output_shape
-        self._config = config
+        self._config = ConfigLoader().get()
         self._logger = logger or get_current_logger()
 
         # 1. Extracting configuration parameters
@@ -46,38 +45,56 @@ class Conv3DAggregator(layers.Layer):
             channels=channels
         )
 
-        self.reshape_layer = layers.Reshape(
+        self.reshape_layer = tf_keras.layers.Reshape(
             (self._series_depth, height, width, channels)
         )
 
-        self.conv3d_1 = layers.Conv3D(
+        self.conv3d_1_local = tf_keras.layers.Conv3D(
             filters=self.filters,
             kernel_size=(3, 3, 3),
             activation='relu',
-            padding='same'
+            padding='same',
+            name='conv3D_local'
         )
-        self.bn_1 = layers.BatchNormalization()
 
-        self.conv3d_2 = layers.Conv3D(
+        self.conv3d_1_dilated = tf_keras.layers.Conv3D(
+            filters=self.filters,
+            kernel_size=(3, 3, 3),
+            dilation_rate=(2, 1, 1),
+            activation='relu',
+            padding='same',
+            name='conv3D_dilated'
+        )
+        self.bn_1 = tf_keras.layers.BatchNormalization()
+        self.spatial_dropout = tf_keras.layers.SpatialDropout3D(0.2)
+        self.concat = tf_keras.layers.Concatenate()
+
+        self.conv3d_2 = tf_keras.layers.Conv3D(
             filters=self.filters * 2,
             kernel_size=(3, 3, 3),
             activation='relu',
             padding='same'
         )
-        self.bn_2 = layers.BatchNormalization()
+        self.bn_2 = tf_keras.layers.BatchNormalization()
 
-        self.global_pool = layers.GlobalAveragePooling3D()
+        self.global_pool = tf_keras.layers.GlobalAveragePooling3D()
 
-    def call(self, x):
+    def call(self, x, training=None):
         """
         Executes the 3D aggregation logic using pre-instantiated layers.
+        The argument 'training' is automatically injected by Keras.
         """
         # We just call the layers created in the function __init__
         x_lay = self.padding_layer(x)
         x_lay = self.reshape_layer(x_lay)
 
-        x_lay = self.conv3d_1(x_lay)
+        x_local = self.conv3d_1_local(x_lay)
+        x_dilated = self.conv3d_1_dilated(x_lay)
+
+        # Both "local" and "dilated" views are merged
+        x_lay = self.concat([x_local, x_dilated])
         x_lay = self.bn_1(x_lay)
+        x_lay = self.spatial_dropout(x_lay, training=training)
 
         x_lay = self.conv3d_2(x_lay)
         x_lay = self.bn_2(x_lay)

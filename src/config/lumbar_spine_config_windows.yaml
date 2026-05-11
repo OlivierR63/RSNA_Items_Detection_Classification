@@ -6,10 +6,11 @@
 paths:
   dicom_studies: "../../data/lumbar_spine/dicom/training/"
   tfrecord: "../../data/lumbar_spine/tfrecords"
+  tfrecord_metadata_cache: "../../data/lumbar_spine/output/cache_metadata"
   output: "../../data/lumbar_spine/output/"
   checkpoint: "../../data/lumbar_spine/output/checkpoints"
   log_mirror: "../../data/lumbar_spine/output/logs/full_session_output.log"
-  tf_cache: "F:/tensorflow_cache/lumbar_train"
+  tf_cache: "../../data/tensorflow_cache"
   inspection: "../../data/lumbar_spine/input_data_inspection/"
   csv:
     series_description: "../../data/lumbar_spine/csv/train_series_descriptions.csv"
@@ -29,7 +30,7 @@ models:
     type: "MobileNetV2"
     #type: "ResNet50"
     img_shape: [224, 224, 3]
-    freeze: True
+    freeze: False
     scaling: {"min": -1.0, "max": 1.0}
 
   head_3d:
@@ -38,7 +39,7 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 5
+  batch_size: 1
   epochs: 10
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
@@ -49,7 +50,7 @@ training:
 
 optimizer:
   type: adam
-  learning_rate: 0.0001
+  learning_rate: 1e-6
   clipnorm: 1.0
 
 callbacks:
@@ -61,7 +62,13 @@ compilation:
   # by the LossBalancerCallback after each epoch.
   loss_weights:
     severity_output: 1.0
-    location_output: 10.0
+    location_output: 10
+
+  class_weights:
+    Normal/Mild: 1.0
+    Moderate: 2.0
+    Severe: 4.0
+
   run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
@@ -85,6 +92,7 @@ dataset_steering:
   group_studies: 1          
   
   # Number of final training batches to keep in the pipeline buffer
+  # Positive integer value. Use -1 for tf.data.AUTOTUNE.
   prefetch_batches: -1
 
   # Use -1 for tf.data.AUTOTUNE

@@ -1,12 +1,12 @@
 # coding: utf-8
 
-import tensorflow as tf
+import tf_keras
 import psutil
 import os
 from time import time, perf_counter, strftime, gmtime
 
 
-class LogTrainingCallback(tf.keras.callbacks.Callback):
+class LogTrainingCallback(tf_keras.callbacks.Callback):
     """
     Custom callback to monitor training performance, timing, and progress.
 

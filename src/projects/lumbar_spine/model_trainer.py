@@ -8,9 +8,10 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional, Any
-from keras.callbacks import LambdaCallback, ProgbarLogger
+from tf_keras.callbacks import LambdaCallback, ProgbarLogger, ReduceLROnPlateau
 
 import tensorflow as tf
+import tf_keras
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
 from src.core.utils.logger import get_current_logger, log_method
@@ -18,6 +19,7 @@ from src.core.callbacks.log_training_callback import LogTrainingCallback
 from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
 from src.core.callbacks.dynamic_loss_balancer_callback import DynamicLossBalancerCallback
 from src.core.utils.monitoring_utils import log_memory_usage
+from src.config.config_loader import ConfigLoader
 
 
 class ModelTrainer:
@@ -37,19 +39,16 @@ class ModelTrainer:
 
     def __init__(
         self,
-        model: tf.keras.Model,
-        config: dict,
+        model: tf_keras.Model,
         logger: Optional[logging.Logger] = None,
         model_depth: int = 1
     ) -> None:
 
         """
-        Initializes the ModelTrainer with the model, configuration, and tracking tools.
+        Initializes the ModelTrainer with the model, configuration setup, and tracking tools.
 
         Args:
-            - model (tf.keras.Model): The compiled Keras model to be trained.
-            - config (dict): Configuration dictionary containing hyperparameters,
-                directory paths, and training settings.
+            - model (tf_keras.Model): The compiled Keras model to be trained.
             - logger (Optional[logging.Logger]): Logger instance for process tracking.
                 Defaults to the current system logger if not provided.
             - model_depth (int): The depth of the 3D input volume, used for
@@ -58,12 +57,12 @@ class ModelTrainer:
 
         # Force a clean break between lines
         self._model = model
-        self._config = config
+        self._config = ConfigLoader().get()
         self._logger = logger or get_current_logger()
         self._process = psutil.Process(os.getpid())
 
         # Define the directory where the TFRecord files shall be stored.
-        self._tfrecord_dir = Path(config["paths"]["tfrecord"]).resolve()
+        self._tfrecord_dir = Path(self._config["paths"]["tfrecord"]).resolve()
 
         # Define the pattern to match all TFRecord files in the directory.
         self._tfrecord_pattern = str(self._tfrecord_dir / "*.tfrecord")
@@ -73,7 +72,7 @@ class ModelTrainer:
 
         # Initializing the TF Variable with the starting metadata
         self._loss_weight_var = tf.Variable(
-            config['compilation']['loss_weights']['location_output'],
+            self._config['compilation']['loss_weights']['location_output'],
             dtype=tf.float32,
             trainable=False
         )
@@ -190,7 +189,6 @@ class ModelTrainer:
             )
 
             self._dataset_manager = LumbarDicomTFRecordDataset(
-                self._config,
                 self._logger,
                 self._model_depth
             )
@@ -356,6 +354,14 @@ class ModelTrainer:
             logger=logger
         )
 
+        lr_scheduler = ReduceLROnPlateau(
+            monitor='val_severity_output_rsna_main_score',
+            factor=0.2,
+            patience=2,
+            min_lr=1e-7,
+            verbose=1
+        )
+
         callbacks_cfg = self._config['callbacks']
         patience_cfg = callbacks_cfg['patience']
 
@@ -367,9 +373,10 @@ class ModelTrainer:
             print_callback,
             ProgbarLogger(),
             dynamic_loss_balancer_callback,
+            lr_scheduler,
 
             # Save the best version of the model for final inference
-            tf.keras.callbacks.ModelCheckpoint(
+            tf_keras.callbacks.ModelCheckpoint(
                 filepath=str(best_path),
                 save_best_only=True,
                 monitor="val_loss",
@@ -377,14 +384,14 @@ class ModelTrainer:
             ),
 
             # Save the state of the last epoch to enable 'load_model' resume logic
-            tf.keras.callbacks.ModelCheckpoint(
+            tf_keras.callbacks.ModelCheckpoint(
                 filepath=str(last_path),
                 save_best_only=False,
                 verbose=1
             ),
 
             # Stop training if validation loss plateaus.
-            tf.keras.callbacks.EarlyStopping(
+            tf_keras.callbacks.EarlyStopping(
                 monitor="val_loss",
                 patience=patience_cfg,
                 restore_best_weights=True,
@@ -392,7 +399,7 @@ class ModelTrainer:
             ),
 
             # Export log for visualization in tensorboard
-            tf.keras.callbacks.TensorBoard(
+            tf_keras.callbacks.TensorBoard(
                 log_dir=str((Path(output_dir) / "tensorboard_logs").resolve()),
                 histogram_freq=1,
                 profile_batch=(0)

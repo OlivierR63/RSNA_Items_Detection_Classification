@@ -1,9 +1,10 @@
 # coding: utf-8
 
 import logging
-import tensorflow as tf
-from keras import layers, Model
+import tf_keras
 import os
+from src.config.config_loader import ConfigLoader
+
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
 
@@ -16,66 +17,20 @@ class Backbone2D:
     provides metadata about output dimensions for downstream components.
     """
 
-    def __init__(self, config: dict, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger):
 
         self._logger = logger
-        self._config = config
+        self._config = ConfigLoader().get()
 
         try:
-            models_cfg = config.get("models", None)
-
-            if models_cfg is None:
-                error_msg = (
-                    "Fatal error: the parameter 'models' is required but was not found. "
-                    "Please check your YAML file structure."
-                )
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
-
+            models_cfg = self._config.get("models", None)
             backbone_cfg = models_cfg.get("backbone_2d", None)
-            if backbone_cfg is None:
-                error_msg = (
-                    "Fatal error: the parameter 'models -> backbone_2d' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
-
             raw_shape = backbone_cfg.get("img_shape", None)
-            if raw_shape is None:
-                error_msg = (
-                    "Fatal error: the parameter 'models -> backbone_2d -> img_shape' "
-                    "is required but was not found. "
-                    "Please check your YAML file structure."
-                )
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
 
             self._input_shape = tuple(int(dim) for dim in raw_shape)
 
-            if len(self._input_shape) != 3:
-                error_msg = f"img_shape must have 3 dimensions (H,W,C), got {self._input_shape}"
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
-
             self._model_name = backbone_cfg.get("type", None)
-            if self._model_name is None:
-                error_msg = (
-                    "Fatal error: the parameter 'models -> backbone_2d -> type' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
-
             self._freeze = backbone_cfg.get("freeze", False)
-            if self._freeze is None:
-                error_msg = (
-                    "Fatal error: the parameter 'models -> backbone_2d -> freeze' is required "
-                    "but was not found. Please check your YAML file structure."
-                )
-                self._logger.error(error_msg, exc_info=True)
-                raise ValueError(error_msg)
-
             self._model = self._build_backbone()
 
         except Exception as e:
@@ -83,24 +38,19 @@ class Backbone2D:
             self._logger.error(msg, exc_info=True)
             raise RuntimeError(msg)
 
-    def _build_backbone(self) -> Model:
+    def _build_backbone(self) -> tf_keras.Model:
 
         builders = {
             "MobileNetV2": self._build_mobilenet,
             "ResNet50": self._build_resnet50
         }
 
-        if self._model_name not in builders:
-            msg_error = f"Unsupported backbone: {self._model_name}"
-            self._logger.error(msg_error, exc_info=True)
-            raise ValueError(msg_error)
-
         return builders[self._model_name]()
 
     def _build_mobilenet(self):
         height, width, channels = self._input_shape
 
-        base_model = tf.keras.applications.MobileNetV2(
+        base_model = tf_keras.applications.MobileNetV2(
             input_shape=(int(height), int(width), int(channels)),
             include_top=False,
             weights="imagenet"
@@ -108,7 +58,7 @@ class Backbone2D:
 
         base_model.trainable = not self._freeze
 
-        input_tensor = layers.Input(
+        input_tensor = tf_keras.layers.Input(
             shape=(height, width, channels),
             dtype="float32",
             name="input_2d_main"
@@ -116,7 +66,7 @@ class Backbone2D:
 
         output = base_model(input_tensor, training=not self._freeze)
 
-        return Model(
+        return tf_keras.Model(
             inputs=input_tensor,
             outputs=output,
             name="backbone_2d_model"
@@ -126,13 +76,13 @@ class Backbone2D:
 
         height, width, channels = self._input_shape
 
-        input_tensor = layers.Input(
+        input_tensor = tf_keras.layers.Input(
             shape=(height, width, channels),
             dtype="float32",
             name="input_2d_main"
         )
 
-        base_model = tf.keras.applications.ResNet50(
+        base_model = tf_keras.applications.ResNet50(
             include_top=False,
             weights="imagenet",
             input_tensor=input_tensor
@@ -141,13 +91,13 @@ class Backbone2D:
         base_model.trainable = not self._freeze
 
         # Ensure the output is returned through the functional API model
-        return Model(
+        return tf_keras.Model(
             inputs=input_tensor,
             outputs=base_model.output,
             name="backbone_2d_model"
         )
 
-    def get_model(self) -> Model:
+    def get_model(self) -> tf_keras.Model:
         """
         Returns the constructed Keras Model instance
         """

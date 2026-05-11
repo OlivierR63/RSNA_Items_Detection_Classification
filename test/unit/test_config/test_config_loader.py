@@ -114,8 +114,8 @@ class TestConfigLoader:
         # 1. Setup empty directories
         empty_dir = tmp_path / "empty_dicom"
         empty_dir.mkdir()
-        tfr_dir = tmp_path / "tfrecord"
-        tfr_dir.mkdir()
+        tfr_cache_dir = tmp_path / "tfrecord_cache"
+        tfr_cache_dir.mkdir()
 
         # 2. Create a valid dummy config file
         # We use mock_config to ensure all required fields (logging, etc.) are present
@@ -130,7 +130,7 @@ class TestConfigLoader:
 
         # 4. Execute and Assert
         depth = loader.calculate_series_depth(
-            tfrecord_dir=str(tfr_dir),
+            tfrecord_cache_dir=str(tfr_cache_dir),
             dicom_studies_dir=str(empty_dir),
             percentile=95,
             logger=mock_logger
@@ -153,19 +153,19 @@ class TestConfigLoader:
         paths = loader.get()["paths"]
 
         # 2. Ensure the TFRecord directory exists for cache placement
-        tfr_dir = Path(paths["tfrecord"])
-        tfr_dir.mkdir(parents=True, exist_ok=True)
+        tfr_cache_dir = Path(paths["tfrecord_metadata_cache"])
+        tfr_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 3. Create a corrupt cache file with invalid JSON content
         # This simulates a file that exists but cannot be parsed by the json module
-        cache_file = tfr_dir / "depth_metadata_cache.json"
+        cache_file = tfr_cache_dir / "cache.json"
         cache_file.write_text("INVALID_JSON_CONTENT")
 
         # 4. Execute the depth calculation while capturing logs
         # The function should catch the JSON decode error and log a warning instead of crashing
         with caplog.at_level(logging.WARNING):
             depth = loader.calculate_series_depth(
-                tfrecord_dir=str(tfr_dir),
+                tfrecord_cache_dir=str(tfr_cache_dir),
                 dicom_studies_dir=paths["dicom_studies"],
                 percentile=95,
                 logger=mock_logger
@@ -191,12 +191,12 @@ class TestConfigLoader:
         # 1. Initialize loader and retrieve directory paths
         loader = ConfigLoader(str(yaml_config_path))
         paths = loader.get()["paths"]
-        tfr_dir = paths["tfrecord"]
+        tfr_cache_dir = paths["tfrecord_metadata_cache"]
         dicom_dir = Path(paths["dicom_studies"])
 
         # 2. First execution: Generate and save the initial cache file
-        loader.calculate_series_depth(tfr_dir, str(dicom_dir), 95, mock_logger)
-        cache_file = Path(tfr_dir) / "depth_metadata_cache.json"
+        loader.calculate_series_depth(tfr_cache_dir, str(dicom_dir), 95, mock_logger)
+        cache_file = Path(tfr_cache_dir) / "cache.json"
         mtime_initial = cache_file.stat().st_mtime
 
         # 3. Introduce a small delay to ensure a measurable difference in mtime
@@ -209,7 +209,7 @@ class TestConfigLoader:
 
         # 5. Second execution: Recalculate depth
         # The loader should detect that the source directory is newer than the cache
-        loader.calculate_series_depth(tfr_dir, str(dicom_dir), 95, mock_logger)
+        loader.calculate_series_depth(tfr_cache_dir, str(dicom_dir), 95, mock_logger)
 
         # 6. Assertion: Verify that the cache file was overwritten (new mtime)
         assert cache_file.stat().st_mtime > mtime_initial
@@ -228,10 +228,10 @@ class TestConfigLoader:
         # 1. Initialize loader with the provided YAML fixture
         loader = ConfigLoader(str(yaml_config_path))
         paths = loader.get()["paths"]
-        tfr_dir = Path(paths["tfrecord"])
+        tfr_cache_dir = Path(paths["tfrecord_metadata_cache"])
 
         # 2. Ensure the directory exists before attempting to restrict it
-        tfr_dir.mkdir(parents=True, exist_ok=True)
+        tfr_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 3. Use a mock to simulate a PermissionError during file writing.
         # This is necessary because os.chmod does not reliably restrict
@@ -252,7 +252,7 @@ class TestConfigLoader:
             # 4. Capture logs at WARNING level to verify the error handling
             with caplog.at_level(logging.WARNING):
                 depth = loader.calculate_series_depth(
-                    tfrecord_dir=str(tfr_dir),
+                    tfrecord_cache_dir=str(tfr_cache_dir),
                     dicom_studies_dir=paths["dicom_studies"],
                     percentile=95,
                     logger=mock_logger

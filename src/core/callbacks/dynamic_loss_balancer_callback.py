@@ -3,8 +3,8 @@
 # import tensorflow as tf
 import numpy as np
 import tensorflow as tf
-import keras.backend as K
-from keras.callbacks import Callback
+import tf_keras.backend as K
+from tf_keras.callbacks import Callback
 
 
 class DynamicLossBalancerCallback(Callback):
@@ -87,3 +87,20 @@ class DynamicLossBalancerCallback(Callback):
                     " [LossBalancer] Skipping weight update: "
                     "Missing or invalid loss values in logs."
                 )
+
+    def get_config(self):
+        # We only return simple Python types (momentum, limits)
+        # This prevents Keras from looking at self._loss_weight_var
+        return {
+            "momentum": self._momentum,
+            "min_weight": self._min_weight,
+            "max_weight": self._max_weight
+        }
+
+    @classmethod
+    def from_config(cls, config):
+        """
+        Reconstructs the metric. Since the full 'config' dict and 'logger'
+        were not saved, they will default to None.
+        """
+        return cls(weight_variable=None, **config)

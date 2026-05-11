@@ -2,7 +2,7 @@
 
 from unittest.mock import patch, MagicMock, PropertyMock
 import pytest
-import tensorflow as tf
+import tf_keras
 import os
 from contextlib import ExitStack
 
@@ -22,7 +22,7 @@ class TestRSNALumbarClassification:
         """
 
         with ExitStack() as stack:
-            stack.enter_context(patch("tensorflow.keras.metrics.MeanAbsoluteError", MagicMock()))
+            stack.enter_context(patch("tf_keras.metrics.MeanAbsoluteError", MagicMock()))
             mock_metric_class = stack.enter_context(patch.object(src_module, "RSNAKaggleMetric"))
             mock_metric_instance = MagicMock()
             mock_metric_class.return_value = mock_metric_instance
@@ -57,7 +57,7 @@ class TestRSNALumbarClassification:
             mock_path.return_value.resolve.return_value.is_file.return_value = False
 
             local_mock_logger = MagicMock()
-            mock_model = MagicMock(spec=tf.keras.Model)
+            mock_model = MagicMock(spec=tf_keras.Model)
 
             mock_factory = stack.enter_context(patch.object(src_module, "ModelFactory"))
 
@@ -92,7 +92,7 @@ class TestRSNALumbarClassification:
             local_mock_logger = MagicMock()
 
             # Ensure the factory still produces a model
-            mock_model = MagicMock(spec=tf.keras.Model)
+            mock_model = MagicMock(spec=tf_keras.Model)
             mock_factory = stack.enter_context(patch.object(src_module, "ModelFactory"))
             mock_factory.return_value.build_multi_series_model.return_value = mock_model
 

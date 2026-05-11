@@ -8,6 +8,7 @@ from src.core.utils.dataset_utils import (
     process_study_multi_series,
     format_for_model
 )
+from src.config.config_loader import ConfigLoader
 
 
 class LumbarDicomTFRecordDataset():
@@ -17,7 +18,6 @@ class LumbarDicomTFRecordDataset():
 
     def __init__(
         self,
-        config: dict,
         logger: Optional[logging.Logger] = None,
         series_depth: int = 1,
     ) -> None:
@@ -26,11 +26,6 @@ class LumbarDicomTFRecordDataset():
         Initializes the dataset loader with study-specific constraints.
 
         Args:
-            config (dict): Global configuration dictionary containing:
-                - 'max_records': Number of anatomical levels to analyze (e.g., 25).
-                - 'dataset_buffer_size_mb': Memory buffer for TFRecord reading..
-                - 'model_2d/img_shape': Target dimensions for image rescaling.
-
             logger (logging.Logger, optional): Custom logger instance.
                 Defaults to a class-level logger if None.
 
@@ -43,8 +38,7 @@ class LumbarDicomTFRecordDataset():
                 logger if logger is not None and isinstance(logger, logging.Logger)
                 else logging.getLogger(self.__class__.__name__)
             )
-            self._config = config
-            self._MAX_RECORDS = config['data_specs']['max_records_per_frame']
+            self._config = ConfigLoader().get()
             self._series_depth = series_depth
 
             # We define the epoch tracker here.
@@ -95,7 +89,6 @@ class LumbarDicomTFRecordDataset():
             - tfrecord_list (list): List of file paths to the TFRecord files.
             - batch_size (int): Number of studies (patients) per training batch.
             - logger (logging.Logger, optional): Logger for tracking pipeline initialization.
-            - config (dict): project's settings
             - is_training (bool): flag on the current mode : training (True) or validation (False)
 
         Returns:
@@ -162,7 +155,7 @@ class LumbarDicomTFRecordDataset():
 
         # 5. Parse individual TFRecord elements (serialized frames)
         dataset = dataset.map(
-            lambda x: parse_tfrecord_single_element(x, self._current_epoch_var, self._config),
+            lambda x: parse_tfrecord_single_element(x, self._current_epoch_var),
             num_parallel_calls=num_parallel_calls
         )
 
@@ -174,7 +167,7 @@ class LumbarDicomTFRecordDataset():
         # This is the most CPU-intensive step, distributed across cores
         dataset = dataset.map(
             lambda images, metadata, labels: process_study_multi_series(
-                images, metadata, labels, config=self._config, is_training=is_training
+                images, metadata, labels, is_training=is_training
             ),
             num_parallel_calls=num_parallel_calls
         )
@@ -183,7 +176,7 @@ class LumbarDicomTFRecordDataset():
         # Formatting inside interleave allows for immediate cleanup of intermediate tensors
         dataset = dataset.map(
             lambda volumes, study_id, label: format_for_model(
-                volumes, study_id, label, self._config
+                volumes, study_id, label
             ),
             num_parallel_calls=num_parallel_calls
         )

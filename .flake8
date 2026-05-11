@@ -1,2 +1,14 @@
 [flake8]
+
+# Define the maximum allowed line length
 max-line-length = 100
+
+# Display error statistics at the end of the report
+statistics = True
+
+# Output format (optimized for console readability)
+#format = default
+
+# Set the maximum cyclomatic complexity threshold (McCabe)
+# A score above 10 indicates that the function is too complex.
+max-complexity = 10

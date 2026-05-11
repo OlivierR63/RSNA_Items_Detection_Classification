@@ -1,7 +1,6 @@
 # coding: utf-8
 
 # ----------------- Standard imports --------------------------------------------------------
-from typing import TYPE_CHECKING
 import signal
 import sys
 import logging
@@ -9,9 +8,7 @@ from pathlib import Path
 import gc
 import json
 import os
-
-if TYPE_CHECKING:
-    import tensorflow as tf
+import tf_keras
 
 
 # ----------------- TensorFlow and projects imports -----------------------------------------
@@ -73,7 +70,7 @@ def get_or_build_model(
     depth: int,
     config: dict,
     logger: logging.Logger
-) -> 'tf.keras.Model':
+) -> 'tf_keras.Model':
 
     """
     Retrieves a pre-existing model from a checkpoint or initializes a new one,
@@ -98,7 +95,7 @@ def get_or_build_model(
             tracking and error reporting.
 
     Returns:
-        tf.keras.Model: A compiled TensorFlow Keras model ready for training,
+        tf_keras.Model: A compiled TensorFlow Keras model ready for training,
             potentially restored from a previous state.
 
     Raises:
@@ -107,12 +104,12 @@ def get_or_build_model(
         Exception: If a fatal error occurs during model factory building or compilation.
     """
 
-    import tensorflow as tf
+    # import tf_keras
     from src.projects.lumbar_spine.model_trainer import ModelTrainer
     from src.core.models.model_factory import ModelFactory
     from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
         rsna_weighted_log_loss,
-        RSNAKaggleMetric
+        RSNALossAndMetricProvider
     )
 
     if depth is None or depth <= 0:
@@ -172,8 +169,8 @@ def get_or_build_model(
         logger.info(info_msg)
 
         try:
-            tf.keras.backend.clear_session()
-            model = tf.keras.models.load_model(
+            tf_keras.backend.clear_session()
+            model = tf_keras.models.load_model(
                 checkpoint_full_path,
                 custom_objects=ModelFactory.CUSTOM_OBJECTS,
                 safe_mode=False,
@@ -183,7 +180,10 @@ def get_or_build_model(
             return model
 
         except Exception as e_1:
-            logger.warning(f"Failed to load existing model: {e_1}. Trying to restore weights.")
+            logger.warning(
+                f"Failed to load full model from {checkpoint_full_path}: {e_1}. "
+                "Attempting weight salvage logic."
+            )
 
     try:
         info_msg = "No existing model found. Building a new model from factory."
@@ -228,13 +228,17 @@ def get_or_build_model(
         logger.warning(
             msg_warning,
             extra={"status": "restart", "warning": str(e_3)},
-            exc_info=True)
+            exc_info=True
+        )
 
     try:
+        provider = RSNALossAndMetricProvider(logger=logger)
+    
         # --- Define Losses ---
         # Using MSE for location to penalize large spatial errors more heavily
+  
         losses = {
-            "severity_output": rsna_weighted_log_loss,
+            "severity_output": provider.get_loss(),
             "location_output": "mse"
         }
 
@@ -250,10 +254,9 @@ def get_or_build_model(
         }
 
         # --- Define Metrics ---
-        rsna_score = RSNAKaggleMetric(logger=logger)
         metrics = {
-            "severity_output": [rsna_score, "accuracy"],  # Added accuracy for a quick baseline
-            "location_output": [tf.keras.metrics.MeanAbsoluteError(name="mae")],
+            "severity_output": [provider.get_metric(), "accuracy"],  # Added accuracy for a quick baseline
+            "location_output": [tf_keras.metrics.MeanAbsoluteError(name="mae")],
             "study_id_output": None
         }
 
@@ -317,7 +320,7 @@ def main():
     is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
     cpu_threads = nb_cores_config if is_kaggle else 7
 
-    os.environ["TF_USE_LEGACY_KERAS"] = "1"
+    os.environ["TF_USE_LEGACY_KERAS"] = '1'
     os.environ["OMP_NUM_THREADS"] = str(cpu_threads)
     os.environ["MKL_NUM_THREADS"] = str(cpu_threads)
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -385,7 +388,7 @@ def main():
 
                 if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
                     series_depth = config_loader.calculate_series_depth(
-                        tfrecord_dir=paths_cfg["tfrecord"],
+                        tfrecord_cache_dir=paths_cfg["tfrecord_metadata_cache"],
                         dicom_studies_dir=paths_cfg["dicom_studies"],
                         percentile=int(percentile_str),
                         logger=logger
@@ -404,11 +407,11 @@ def main():
 
             # Clear any background memory from the model building phase
             # to free up RAM before the data pipeline starts prefetching.
-            tf.keras.backend.clear_session()
+            tf_keras.backend.clear_session()
 
             # Load the compiled model if it already exists. In the other case, generate
             # a new model and compile it.
-            model: tf.keras.Model = get_or_build_model(series_depth, config, logger)
+            model: tf_keras.Model = get_or_build_model(series_depth, config, logger)
 
             logger.info(
                 "Starting training process.",
@@ -421,8 +424,8 @@ def main():
             actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
 
             # Store the number of tfrecord_files in the cache file
-            tfrecord_dir = Path(paths_cfg['tfrecord'])
-            cache_path = tfrecord_dir / "depth_metadata_cache.json"
+            tfrecord_cache_dir = Path(paths_cfg["tfrecord_metadata_cache"])
+            cache_path = tfrecord_cache_dir / "cache.json"
 
             with open(cache_path, 'r', encoding='utf-8') as f:
                 try:
@@ -439,7 +442,7 @@ def main():
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=4)
 
-            logger.info("Cache successfully updated in {cache_path}")
+            logger.info(f"Cache successfully updated in {cache_path}")
 
             trainer = ModelTrainer(
                 config=config,
@@ -452,7 +455,7 @@ def main():
             trainer.train_model()
 
             # Force Keras to close properly before the end of the script
-            tf.keras.backend.clear_session()
+            tf_keras.backend.clear_session()
             gc.collect()
 
         except Exception as e:

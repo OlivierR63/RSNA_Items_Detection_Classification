@@ -4,8 +4,9 @@ import pandas as pd
 import tensorflow as tf
 import logging
 import gc
+from typing import Dict, Any, Type
 from pathlib import Path
-from keras import layers, Model
+import tf_keras
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
     rsna_weighted_log_loss,
     RSNAKaggleMetric
@@ -13,7 +14,10 @@ from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
 from src.core.models.backbone_2d import Backbone2D
 from src.core.models.conv3d_aggregator import Conv3DAggregator
-from typing import Dict, Any, Type
+from src.core.callbacks.log_training_callback import LogTrainingCallback
+from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
+from src.core.callbacks.dynamic_loss_balancer_callback import DynamicLossBalancerCallback
+from src.config.config_loader import ConfigLoader
 
 
 def minimal_parse(proto):
@@ -44,11 +48,14 @@ class ModelFactory:
         "Conv3DAggregator": Conv3DAggregator,
         "rsna_weighted_log_loss": rsna_weighted_log_loss,
         "RSNAKaggleMetric": RSNAKaggleMetric,
-        "study_id_link": study_id_zero_link
+        "study_id_link": study_id_zero_link,
+        "LogTrainingCallback": LogTrainingCallback,
+        "SystemResourceMonitorCallback": SystemResourceMonitorCallback,
+        "DynamicLossBalancerCallback": DynamicLossBalancerCallback
     }
 
     @classmethod
-    def load_trained_model(cls, model_path: str, compile: bool = True) -> Model:
+    def load_trained_model(cls, model_path: str, compile: bool = True) -> tf_keras.Model:
         """
         Loads a model using a centralized custom objects
 
@@ -57,7 +64,7 @@ class ModelFactory:
             compile: Whether to compile the model after loading.
         """
         try:
-            return tf.keras.models.load_model(
+            return tf_keras.models.load_model(
                 model_path,
                 custom_objects=cls.CUSTOM_OBJECTS,
                 compile=compile
@@ -69,14 +76,13 @@ class ModelFactory:
     def __init__(
         self,
         *,
-        config: Dict[str, Any],
         logger: logging.Logger,
         nb_output_records: int,
         series_depth: int = 0,
-        aggregator3d_class: Type[tf.keras.layers.Layer] = Conv3DAggregator
+        aggregator3d_class: Type[tf_keras.layers.Layer] = Conv3DAggregator
     ) -> None:
 
-        self._config = config
+        self._config = ConfigLoader().get()
         self._logger = logger
         self._nb_output_records = nb_output_records
         self._tfrecord_dir = Path(self._config['paths']['tfrecord'])
@@ -101,7 +107,7 @@ class ModelFactory:
 
     def _define_2d_and_3d_main_components(
         self,
-        aggregator3d_class: Type[tf.keras.layers.Layer]
+        aggregator3d_class: Type[tf_keras.layers.Layer]
     ) -> tuple[Backbone2D, Conv3DAggregator]:
         """
         Initializes and orchestrates the primary feature extraction components.
@@ -112,11 +118,11 @@ class ModelFactory:
         spatial extraction and temporal aggregation.
 
         Args:
-            aggregator3d_class (Type[tf.keras.layers.Layer]): The class reference
+            aggregator3d_class (Type[tf_keras.layers.Layer]): The class reference
                 used to instantiate the 3D sequence aggregator (e.g., Conv3DAggregator).
 
         Returns:
-            tuple[Backbone2D, tf.keras.layers.Layer]: A tuple containing the initialized
+            tuple[Backbone2D, tf_keras.layers.Layer]: A tuple containing the initialized
                 Backbone2D instance and the constructed 3D aggregator instance.
 
         Raises:
@@ -125,12 +131,10 @@ class ModelFactory:
         """
         try:
             backbone2d = Backbone2D(
-                config=self._config,
                 logger=self._logger
             )
 
             aggregator3d = aggregator3d_class(
-                config=self._config,
                 backbone_2d_output_shape=backbone2d.get_output_shape(),
                 series_depth=self._series_depth,
                 logger=self._logger
@@ -149,11 +153,11 @@ class ModelFactory:
         Sagittal T2, and Axial T2 series simultaneously with their respective metadata.
 
         Returns:
-            tf.keras.Model: The compiled multi-output Keras model.
+            tf_keras.Model: The compiled multi-output Keras model.
         """
 
         # --- 1. Define Inputs for study Id ---
-        study_id_layer = layers.Input(shape=(1,), name="study_id", dtype='int64')
+        study_id_layer = tf_keras.layers.Input(shape=(1,), name="study_id", dtype='int64')
 
         # --- 2. Define Inputs for each series ---
         # Images shapes are (self._series_depth, height, width, channels)
@@ -162,51 +166,51 @@ class ModelFactory:
         height, width, channels = self._config['models']['backbone_2d']['img_shape']
 
         # Sagittal T1
-        img_sag_t1 = layers.Input(
+        img_sag_t1 = tf_keras.layers.Input(
             shape=(self._series_depth, height, width, channels),
             name="img_sag_t1"
         )
 
-        slice_metadata_t1 = layers.Input(
+        slice_metadata_t1 = tf_keras.layers.Input(
             shape=(self._series_depth, 2),
             name="slice_metadata_t1"
         )
 
-        series_metadata_t1 = layers.Input(
+        series_metadata_t1 = tf_keras.layers.Input(
             shape=(3,),
             name="series_metadata_t1",
             dtype='int32'
         )
 
         # Sagittal T2
-        img_sag_t2 = layers.Input(
+        img_sag_t2 = tf_keras.layers.Input(
             shape=(self._series_depth, height, width, channels),
             name="img_sag_t2"
         )
 
-        slice_metadata_t2 = layers.Input(
+        slice_metadata_t2 = tf_keras.layers.Input(
             shape=(self._series_depth, 2),
             name="slice_metadata_t2"
         )
 
-        series_metadata_t2 = layers.Input(
+        series_metadata_t2 = tf_keras.layers.Input(
             shape=(3,),
             name="series_metadata_t2",
             dtype='int32'
         )
 
         # Axial T2
-        img_axial_t2 = layers.Input(
+        img_axial_t2 = tf_keras.layers.Input(
             shape=(self._series_depth, height, width, channels),
             name="img_axial_t2"
         )
 
-        slice_metadata_axial_t2 = layers.Input(
+        slice_metadata_axial_t2 = tf_keras.layers.Input(
             shape=(self._series_depth, 2),
             name="slice_metadata_axial_t2"
         )
 
-        series_metadata_axial_t2 = layers.Input(
+        series_metadata_axial_t2 = tf_keras.layers.Input(
             shape=(3,),
             name="series_metadata_axial_t2",
             dtype='int32'
@@ -214,7 +218,7 @@ class ModelFactory:
 
         # --- 3. Shared Backbone Initialization ---
         # We use a single instance of TimeDistributed to share weights across all three branches
-        shared_td_backbone = layers.TimeDistributed(
+        shared_td_backbone = tf_keras.layers.TimeDistributed(
             self._backbone2d.get_model(),
             name="shared_2d_backbone"
         )
@@ -257,14 +261,14 @@ class ModelFactory:
         # This trick is especially intended to allow the user to keep study_id in the loop,
         # for debugging purpose.
         # By multiplying by 0, we ensure study_id has no impact on training.
-        study_id_link = layers.Lambda(
+        study_id_link = tf_keras.layers.Lambda(
             study_id_zero_link,
             output_shape=(1,),
             name="study_id_link_layer"
         )(study_id_layer)
 
         # Concatenate features from all imaging planes
-        global_features = layers.concatenate(
+        global_features = tf_keras.layers.concatenate(
             [feat_sag_t1, feat_sag_t2, feat_ax_t2, study_id_link],
             name="global_fusion"
         )
@@ -273,11 +277,11 @@ class ModelFactory:
         # the influence of each series in the final outcome
         global_features = self._squeeze_excitation_block(global_features, ratio=16)
 
-        lay_z = layers.Dense(1024, activation='relu')(global_features)
-        lay_z = layers.Dropout(0.3)(lay_z)
+        lay_z = tf_keras.layers.Dense(1024, activation='relu')(global_features)
+        lay_z = tf_keras.layers.Dropout(0.3)(lay_z)
 
-        lay_z = layers.Dense(512, activation='relu')(lay_z)
-        lay_z = layers.Dropout(0.3)(lay_z)
+        lay_z = tf_keras.layers.Dense(512, activation='relu')(lay_z)
+        lay_z = tf_keras.layers.Dropout(0.3)(lay_z)
 
         # --- 6. Outputs and Traceability ---
         # Traceability output: Passthrough of study_id (using T1 branch as reference)
@@ -286,19 +290,25 @@ class ModelFactory:
         # Severity head: (Batch, 25, 3)
         # Note: 3 values per row, because 3 probabilities are calculated,
         # for each potential state (Normal/ Moderate/Severe).
-        sev_branch = layers.Dense(512, activation='relu', name="severity_features_1")(lay_z)
-        sev_branch = layers.BatchNormalization(name="severity_head_bn")(sev_branch)
-        sev_branch = layers.Dropout(0.3, name="severity_dropout_1")(sev_branch)
-        sev_branch = layers.Dense(256, activation='relu', name="severity_features_2")(sev_branch)
-        sev_branch = layers.Dropout(0.3, name="severity_dropout_2")(sev_branch)
-        severity_flat = layers.Dense(self._nb_output_records*3, name="severity_flat")(sev_branch)
+        sev_branch = (
+            tf_keras.layers.Dense(512, activation='relu', name="severity_features_1")(lay_z)
+        )
+        sev_branch = tf_keras.layers.BatchNormalization(name="severity_head_bn")(sev_branch)
+        sev_branch = tf_keras.layers.Dropout(0.3, name="severity_dropout_1")(sev_branch)
+        sev_branch = (
+            tf_keras.layers.Dense(256, activation='relu', name="severity_features_2")(sev_branch)
+        )
+        sev_branch = tf_keras.layers.Dropout(0.3, name="severity_dropout_2")(sev_branch)
+        severity_flat = (
+            tf_keras.layers.Dense(self._nb_output_records*3, name="severity_flat")(sev_branch)
+        )
 
-        out_severity = layers.Reshape(
+        out_severity = tf_keras.layers.Reshape(
             (self._nb_output_records, 3),
             name="all_severities"
         )(severity_flat)
 
-        out_severity = layers.Activation(
+        out_severity = tf_keras.layers.Activation(
             activation='softmax',
             dtype='float32',
             name="severity_output"
@@ -308,19 +318,23 @@ class ModelFactory:
         # Dedicated branch for regression with stronger regularization
         # Location head: (Batch, 25, 2)
         # Coordinates are normalized; Sigmoid activation constrains outputs between 0 and 1.
-        loc_branch = layers.Dense(512, activation='relu', name="location_features_1")(lay_z)
-        loc_branch = layers.BatchNormalization(name="severity_loc_bn")(loc_branch)
-        loc_branch = layers.Dropout(0.5, name="location_dropout_1")(loc_branch)
-        loc_branch = layers.Dense(256, activation='relu', name="location_features_2")(loc_branch)
-        loc_branch = layers.Dropout(0.5, name="location_dropout_2")(loc_branch)
-        loc_flat = layers.Dense(self._nb_output_records * 2, name="loc_flat")(loc_branch)
+        loc_branch = (
+            tf_keras.layers.Dense(512, activation='relu', name="location_features_1")(lay_z)
+        )
+        loc_branch = tf_keras.layers.BatchNormalization(name="severity_loc_bn")(loc_branch)
+        loc_branch = tf_keras.layers.Dropout(0.5, name="location_dropout_1")(loc_branch)
+        loc_branch = (
+            tf_keras.layers.Dense(256, activation='relu', name="location_features_2")(loc_branch)
+        )
+        loc_branch = tf_keras.layers.Dropout(0.5, name="location_dropout_2")(loc_branch)
+        loc_flat = tf_keras.layers.Dense(self._nb_output_records * 2, name="loc_flat")(loc_branch)
 
-        output_location = layers.Reshape(
+        output_location = tf_keras.layers.Reshape(
             (self._nb_output_records, 2),
             name="loc_reshape"
         )(loc_flat)
 
-        output_location = layers.Activation(
+        output_location = tf_keras.layers.Activation(
             'sigmoid',
             dtype='float32',
             name="location_output"
@@ -329,7 +343,7 @@ class ModelFactory:
         pathology_level_location_output_list = {
             'severity_output': out_severity,
             'location_output': output_location,
-            'study_id_output': layers.Identity(name="study_id_output")(study_id_layer)
+            'study_id_output': tf_keras.layers.Identity(name="study_id_output")(study_id_layer)
         }
 
         # Build the final functional model
@@ -346,7 +360,7 @@ class ModelFactory:
             "series_metadata_axial_t2": series_metadata_axial_t2
         }
 
-        model = Model(
+        model = tf_keras.Model(
             inputs=inputs_dict,
             outputs=pathology_level_location_output_list,
             name="RSNA_MultiSeries_Model"
@@ -380,19 +394,19 @@ class ModelFactory:
         if len(init.shape) == 2:
             se = init
         else:
-            se = layers.GlobalAveragePooling2D()(init)
+            se = tf_keras.layers.GlobalAveragePooling2D()(init)
 
-        se = layers.Reshape(se_shape)(se)
+        se = tf_keras.layers.Reshape(se_shape)(se)
 
         # 2. Excitation: Bottleneck MLP
-        se = layers.Dense(
+        se = tf_keras.layers.Dense(
             filters // ratio,
             activation='relu',
             kernel_initializer='he_normal',
             use_bias=False
         )(se)
 
-        se = layers.Dense(
+        se = tf_keras.layers.Dense(
             filters,
             activation='sigmoid',
             kernel_initializer='he_normal',
@@ -400,14 +414,14 @@ class ModelFactory:
         )(se)
 
         # 3. Scale: Multiply input by learned weights
-        return layers.multiply([init, se])
+        return tf_keras.layers.multiply([init, se])
 
     def _process_branch(
         self,
         img_input: tf.Tensor,
         slice_metadata_input: tf.Tensor,
         series_metadata_input: tf.Tensor,
-        backbone: tf.keras.layers.Layer,
+        backbone: tf_keras.layers.Layer,
         suffix: str,
         nb_series_descriptions: int = 3,
         nb_embedding_views: int = 8,
@@ -442,17 +456,17 @@ class ModelFactory:
 
         # Flatten the slice_metadata_input tensor
         name_str = f"flatten_slice_metadata_{suffix}"
-        slice_metadata_flat = layers.Flatten(name=name_str)(slice_metadata_input)
+        slice_metadata_flat = tf_keras.layers.Flatten(name=name_str)(slice_metadata_input)
 
         # Series flags: Slicing + Cast via Activation layer
         # This ensures the cast to float32 is tracked by Keras
-        series_flags = layers.Lambda(
+        series_flags = tf_keras.layers.Lambda(
             lambda m: tf.cast(m[:, :2], tf.float32),
             name=f"get_flags_fixed_{suffix}"
         )(series_metadata_input)
 
         # 4. View Code (Slicing via Lambda)
-        view_code = layers.Lambda(
+        view_code = tf_keras.layers.Lambda(
             lambda m: m[:, 2:3],
             name=f"get_view_code_fixed_{suffix}"
         )(series_metadata_input)
@@ -460,7 +474,7 @@ class ModelFactory:
         # Add an Embedding layer for the view code
         # input_dim = 3 (There are only 3 anatomical views)
         # output_dim = 8 (Dimensions of the learned vector)
-        view_embedding = layers.Embedding(
+        view_embedding = tf_keras.layers.Embedding(
             input_dim=nb_series_descriptions,
             output_dim=nb_embedding_views,
             name=f"view_embed_{suffix}"
@@ -470,10 +484,10 @@ class ModelFactory:
         del view_code
 
         # Flatten from (Batch, 1, 8) to (Batch, 8)
-        view_embedding = layers.Flatten(name=f"flatten_embed_{suffix}")(view_embedding)
+        view_embedding = tf_keras.layers.Flatten(name=f"flatten_embed_{suffix}")(view_embedding)
 
         # Merge visual features with series-specific metadata
-        combined_branch = layers.concatenate(
+        combined_branch = tf_keras.layers.concatenate(
             [
                 x_aggreg3d,
                 slice_metadata_flat,

@@ -2,6 +2,7 @@
 paths:
   dicom_studies: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_images"
   tfrecord: "/kaggle/working/lumbar_spine/tfrecords"
+  tfrecord_metadata_cache: "/kaggle/working/lumbar_spine/output/cache_metadata"
   output: "/kaggle/working/lumbar_spine/output/"
   checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
   log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
@@ -57,6 +58,12 @@ compilation:
   loss_weights:
     severity_output: 1.0
     location_output: 10.0
+    
+  class_weights:
+    Normal/Mild: 1.0
+    Moderate: 2.0
+    Severe: 4.0
+
   run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
@@ -80,7 +87,8 @@ dataset_steering:
   group_studies: 1          
   
   # Number of final training batches to keep in the pipeline buffer
-  prefetch_batches: 1
+  # Positive integer value. Use -1 for tf.data.AUTOTUNE.
+  prefetch_batches: -1
 
   # Use -1 for tf.data.AUTOTUNE
   num_parallel_calls: 1

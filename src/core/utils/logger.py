@@ -10,6 +10,7 @@ from typing import Optional, Callable, Generator, Dict, Any
 import json
 from functools import wraps
 from inspect import signature
+from src.config.config_loader import ConfigLoader
 
 # Global variable to hold the current logger instance
 _CURRENT_LOGGER: Optional[logging.Logger] = None
@@ -18,7 +19,6 @@ _CURRENT_LOGGER: Optional[logging.Logger] = None
 @contextlib.contextmanager
 def setup_logger(
     process_name: str,
-    config: Dict[str, Any],
     log_dir: str = "logs"
 ) -> Generator[logging.Logger, None, None]:
 
@@ -37,7 +37,7 @@ def setup_logger(
 
     global _CURRENT_LOGGER
 
-    logging_cfg = config.get('logging', None)
+    logging_cfg = ConfigLoader().get_value('logging', None)
     logging_level = logging_cfg.get('level', None)
     console_display = logging_cfg.get('console_display', False)
     use_json = logging_cfg.get('use_json', False)

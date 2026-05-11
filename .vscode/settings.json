@@ -13,6 +13,8 @@
         "allclose",
         "AUTOTUNE",
         "autouse",
+        "broadcastable",
+        "Cabe",
         "caplog",
         "capsys",
         "chunksize",
@@ -72,5 +74,10 @@
     ],
     "yaml.schemas": {
     },
-    "yaml.schemaStore.enable": false
+    "yaml.schemaStore.enable": false,
+    "flake8.args": [
+        "--format=default",
+        "--config=${workspaceFolder}/.flake8"
+    ],
+    "flake8.importStrategy": "fromEnvironment"
 }

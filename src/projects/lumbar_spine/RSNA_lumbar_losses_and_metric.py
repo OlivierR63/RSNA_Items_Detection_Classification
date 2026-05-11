@@ -1,72 +1,194 @@
 # coding: utf-8
 
 import tensorflow as tf
+import tf_keras
 import logging
+from typing import Dict, Any
 from src.core.utils.logger import get_current_logger
+from src.config.config_loader import ConfigLoader
+from src.core.utils.dataframe_class_count import DataFrameClassCount
+from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
+
+def get_class_weights():
+    logger = get_current_logger()
+    critical_msg = "Wrong class weight setting in the YAML configuration file: %s"
+    try:
+        class_weights_cfg = ConfigLoader().get_value('compilation').get('class_weights')
+
+        severity_dic = {}
+        for label, value in class_weights_cfg.items():
+            label = label.lower().replace(" ", "")
+            severity_dic[label] = value
 
 
-def compute_rsna_loss_core(y_true, y_pred):
+        # Load severity label mapper
+        raw_mapper = CSVMetadataHandler()._get_raw_mapper()
+        severity_mapper = raw_mapper['severity'].reverse_mapping
+
+        weights_list = []
+        for key in severity_mapper.keys():
+            idx = int(key)
+            weights_list.append(severity_dic[severity_mapper[idx]])
+
+        class_weights = tf.constant(
+            weights_list,
+            dtype=tf.float32
+        )
+        return class_weights
+
+    except Exception as e:
+        logger.critical(
+            critical_msg,
+            e,
+            exc_info = True,
+            extra = {'status': 'failed'}
+        )
+        tf.print(critical_msg, e)
+        raise
+        
+
+def compute_rsna_loss_core(y_true, y_pred, class_weights, balancing_weights):
     """
-    Core logic for RSNA weighted log loss.
-    Assumes y_pred is already a probability distribution (after softmax).
+   Executes the core mathematical logic for the RSNA 2024 weighted log loss.
+
+    This function computes the weighted cross-entropy for a multi-task classification 
+    problem involving 25 distinct spinal conditions. It applies two levels of 
+    weighting: competition-defined class weights (Normal, Moderate, Severe) 
+    and dataset-specific balancing weights.
+
+    Mathematical Operations:
+        1. Format Alignment: Converts integer labels to one-hot encoding if needed.
+        2. Numerical Stability: Clips predictions to prevent log(0) resulting in NaN.
+        3. Weighted Log Loss: Computes -y_true * log(y_pred) * class_weights * balancing_weights.
+        4. Spatial Reduction: Sums the weighted components across the class dimension.
+
+    Args:
+        y_true (tf.Tensor): Ground truth labels. 
+            Can be provided as class indices (Shape: [batch, 25]) 
+            or one-hot encoded probabilities (Shape: [batch, 25, 3]).
+        y_pred (tf.Tensor): Model predictions as probabilities (after softmax).
+            Shape: [batch, 25, 3].
+        balancing_weights (tf.Tensor): Dataset-specific balancing weights.
+            Shape: [25, 3] or broadcastable to [batch, 25, 3].
+        class_weights (tf.Tensor): RSNA-defined weights. Shape: (3,)
+
+    Returns:
+        tf.Tensor: A tensor of weighted losses for each sample and each condition.
+            Shape: [batch, 25].
+
+    Note:
+        The final reduction (e.g., tf.reduce_mean) is intentionally omitted here 
+        to allow this core function to be used by both the Loss (which needs a 
+        scalar) and potentially by custom metrics or debug tools that might 
+        require per-condition loss analysis.
     """
-    class_weights = tf.constant([1.0, 2.0, 4.0], dtype=tf.float32)
 
     # If y_true is not one-hot (e.g., shape is [batch, 25]), convert it:
+    # Also ensure y_true is float32 for mathematical operations
     if len(y_true.shape) != len(y_pred.shape):
-        y_true = tf.one_hot(tf.cast(y_true, tf.int32), depth=3)
+        y_true = tf.one_hot(tf.cast(y_true, tf.int32), depth=3, dtype=tf.float32)
 
-    # Ensure y_true is float32 for mathematical operations
-    y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
 
-    # Standard epsilon for stability
-    epsilon = tf.keras.backend.epsilon()
+    # Standard epsilon for numerical stability
+    epsilon = tf_keras.backend.epsilon()
     y_pred = tf.clip_by_value(y_pred, epsilon, 1.0 - epsilon)
 
     # Compute weighted log loss
+    # Vectorized calculation
     # Shape of y_true * log(y_pred) is (batch, 25, 3)
     individual_losses = -y_true * tf.math.log(y_pred)
 
     # Apply weights across the last dimension (the 3 classes)
-    weighted_losses = tf.reduce_sum(individual_losses * class_weights, axis=-1)
+    # ==> Resulting shape: (batch, 25)
+    weighted_losses = tf.reduce_sum(
+        individual_losses * class_weights * balancing_weights,
+        axis=-1
+    )
 
-    # Return the sum of weights for all 25 conditions
+    # Return the weighted losses per condition
+    # for each sample in the batch
     return weighted_losses
 
 
-# --- 1. The Loss Functions (for Gradients) ---
-def rsna_weighted_log_loss(y_true, y_pred):
-    """
-    Calculates the Weighted Hierarchical Log Loss for RSNA 2024.
+def apply_label_smoothing(y_true, smoothing=0.1):
+    # Number of classes
+    num_classes = tf.cast(tf.shape(y_true)[-1], y_true.dtype)
 
-    This loss function applies specific weights to each class (Normal: 1,
-    Moderate: 2, Severe: 4) and handles the multi-level (25 conditions)
-    output structure of the model.
+    # Formula : y_smoothed = y_true * (1 - alpha) + (alpha / num_classes)
+    return y_true * (1.0 - smoothing) + (smoothing / num_classes)
 
-    Args:
-        y_true (tf.Tensor): Ground truth labels.
-            Expected shape: (batch_size, 25, 1) or (batch_size, 25).
-        y_pred (tf.Tensor): Model predictions (probabilities).
-            Expected shape: (batch_size, 25, 3).
 
-    Returns:
-        tf.Tensor: A scalar tensor representing the mean weighted log loss
-            for the current batch.
-    """
+class RSNALossAndMetricProvider:
+    def __init__(self, logger):
+        try:
+            self._config = ConfigLoader().get()
+            self._logger = logger
+            self._balancing_weights = DataFrameClassCount().get_balancing_weights()
+            self._class_weights = get_class_weights()
+        except Exception:
+            raise
 
-    # Ensure y_true is float32 for mathematical operations
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.cast(y_pred, tf.float32)
+    def get_loss(self):
+        """
+        Dynamically builds and returns the RSNA weighted log loss function.
 
-    # Use the core logic and return mean for the batch
-    weighted_loss = compute_rsna_loss_core(y_true, y_pred)
+        This method acts as a factory that injects dataset-specific balancing 
+        weights into the loss calculation via a closure. This allows the 
+        returned function to maintain the standard Keras loss signature 
+        (y_true, y_pred) while accessing external weighting metadata.
 
-    return tf.reduce_mean(weighted_loss, axis=-1)
+        Returns:
+            function: A callable 'rsna_weighted_log_loss' configured with 
+                the provider's balancing weights.
+        """
+        class_weights = self._class_weights
+        balancing_weights = self._balancing_weights
+
+        def rsna_weighted_log_loss(y_true: tf.float, y_pred: tf.float):
+            """
+            Keras-compatible weighted hierarchical log loss.
+
+            Calculates the mean loss across 25 spinal conditions, applying 
+            both class-level weights (Normal/Moderate/Severe) and 
+            sample-level balancing weights.
+
+            Args:
+                y_true (tf.Tensor): Ground truth labels. 
+                    Shape: (batch_size, 25) or (batch_size, 25, 3).
+                y_pred (tf.Tensor): Model predictions as probabilities.
+                    Shape: (batch_size, 25, 3).
+
+            Returns:
+                tf.Tensor: Scalar float32 tensor representing the mean 
+                    weighted log loss for the batch.
+            """
+
+            # Use the core logic and return mean for the whole batch
+            weighted_loss = compute_rsna_loss_core(
+                y_true,
+                y_pred,
+                class_weights,
+                balancing_weights
+            )
+
+            return tf.reduce_mean(weighted_loss)
+
+        return rsna_weighted_log_loss
+
+    def get_metrics(self):
+        """
+        Return the metric instance using the same weights
+        """
+        return RSNAKaggleMetric(
+            class_weights = self._class_weights,
+            balancing_weights = self._balancing_weights,
+            logger = self._logger
+        )
 
 
 # --- 2. The Metric Class (for Monitoring) ---
-class RSNAKaggleMetric(tf.keras.metrics.Metric):
+class RSNAKaggleMetric(tf_keras.metrics.Metric):
     """
     Keras metric to track the official RSNA 2024 competition score.
 
@@ -80,6 +202,8 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
 
     def __init__(
         self,
+        class_weights: tf.Tensor,
+        balancing_weights: tf.Tensor,
         logger: logging.Logger = None,
         name: str = 'rsna_main_score',
         **kwargs
@@ -88,11 +212,21 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         Initializes the metric's state variables.
         """
         self._logger = logger or get_current_logger()
-
-        self._logger.debug(f"Starting initializing RSNAKaggleMetric ; **kwargs = {kwargs}")
+        critical_msg = "RSNAKaggleMetric initialization failed: %s"
 
         try:
             super(RSNAKaggleMetric, self).__init__(name=name, **kwargs)
+
+            self._config = ConfigLoader().get()
+            self._class_weights = class_weights
+            self._balancing_weights = balancing_weights
+
+            self._debug_mode = False
+            if self._config and self._config.get('logging', {}).get('level') == "DEBUG":
+                self._debug_mode = True
+
+            if self._debug_mode:
+                tf.print(f"Starting initializing RSNAKaggleMetric ; **kwargs = {kwargs}")
 
             # Force explicit tf.float32 type for accumulators
             self.total_loss = self.add_weight(
@@ -106,15 +240,20 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
                 initializer=tf.zeros_initializer(),
                 dtype=tf.float32
             )
-            self._logger.debug("RSNAKaggleMetric initialized")
+            if self._debug_mode:
+                tf.print("RSNAKaggleMetric initialized")
 
         except Exception as e:
-            critical_msg = f"RSNAKaggleMetric initialization failed: {e}"
+            # Normally, the logger object is not compliant with the graph.
+            # The logger is accepted only in the Exception block because
+            # if we are here, it means that the graph is being aborted.
             self._logger.critical(
                 critical_msg,
+                e,
                 exc_info=True,
                 extra={"status": "failed"}
             )
+            tf.print(critical_msg, e)
             raise
 
     def update_state(self, y_true, y_pred, sample_weight=None):
@@ -126,20 +265,28 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
             y_pred (tf.Tensor): Predictions from the model.
             sample_weight (optional): Not used here but required by Keras API.
         """
-        self._logger.debug("Starting method RSNAKaggleMetric.update_state")
+        if self._debug_mode:
+            tf.print("Starting method RSNAKaggleMetric.update_state")
 
         # Ensure y_true is float32 for mathematical operations
         y_true = tf.cast(y_true, tf.float32)
+        y_smoothed = apply_label_smoothing(y_true)
         y_pred = tf.cast(y_pred, tf.float32)
 
-        # Reuse the exact same core logic
-        weighted_loss = compute_rsna_loss_core(y_true, y_pred)
+        # Use the exact same core logic
+        weighted_loss = compute_rsna_loss_core(
+            y_smoothed,
+            y_pred,
+            self._class_weights,
+            self._balancing_weights
+        )
         batch_mean = tf.reduce_mean(weighted_loss)
 
         self.total_loss.assign_add(tf.cast(batch_mean, tf.float32))
         self.count.assign_add(1.0)
 
-        self._logger.debug("Method RSNAKaggleMetric.update_state completed successfully")
+        if self._debug_mode:
+            tf.print("Method RSNAKaggleMetric.update_state completed successfully")
 
     def result(self):
         """
@@ -148,14 +295,16 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         Returns:
             tf.Tensor: The average RSNA score across all processed batches.
         """
-        self._logger.debug("Starting method RSNAKaggleMetric.result")
+        if self._debug_mode:
+            tf.print("Starting method RSNAKaggleMetric.result")
 
         division = tf.math.divide_no_nan(
             tf.cast(self.total_loss, tf.float32),
             tf.cast(self.count, tf.float32)
         )
 
-        self._logger.debug("Method RSNAKaggleMetric.result completed successfully")
+        if self._debug_mode:
+            tf.print("Method RSNAKaggleMetric.result completed successfully")
 
         return division
 
@@ -163,7 +312,50 @@ class RSNAKaggleMetric(tf.keras.metrics.Metric):
         """
         Resets the state variables at the end of each epoch.
         """
-        self._logger.debug("Starting method RSNAKaggleMetric.reset_state")
+        if self._debug_mode:
+            tf.print("Starting method RSNAKaggleMetric.reset_state")
+
         self.total_loss.assign(0.0)
         self.count.assign(0.0)
-        self._logger.debug("Method RSNAKaggleMetric.reset_state completed successfully.")
+
+        if self._debug_mode:
+            tf.print("Method RSNAKaggleMetric.reset_state completed successfully.")
+
+    def get_config(self):
+        """
+        Returns the configuration of the metric for serialization.
+
+        This method allows Keras to save the metric's state to a file.
+        It ensures that only JSON-serializable types are included in the
+        configuration dictionary to prevent errors during the saving process.
+        """
+        # Get the base configuration (name and dtype) from the parent class
+        config = super().get_config()
+
+        # Filter the internal _config dictionary to ensure all values are serializable.
+        # We keep only basic Python types (str, int, float, bool, dict, list).
+        # This specifically excludes non-serializable objects like Loggers or TF Variables.
+        serializable_config = {
+            k: v for k, v in self._config.items()
+            if isinstance(v, (str, int, float, bool, dict, list))
+        }
+
+        # Inject the cleaned dictionary into the Keras configuration
+        config.update({
+            "config": serializable_config,
+        })
+
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        """
+        Instantiates a metric from its configuration dictionary.
+
+        This method is the inverse of get_config. It uses the dictionary
+        extracted from the saved file to call the class constructor (__init__)
+        and recreate the object exactly as it was.
+        """
+        # Use the dictionary unpacking operator (**) to pass the config keys
+        # as keyword arguments to the class constructor.
+        return cls(**config)

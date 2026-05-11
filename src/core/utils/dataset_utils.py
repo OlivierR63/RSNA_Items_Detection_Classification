@@ -8,6 +8,8 @@ import sys
 # Third party library
 import tensorflow as tf
 
+from src.config.config_loader import ConfigLoader
+
 # Global values related to static elements of the graph.
 # Using constants here avoids redundant node allocation during dataset mapping.
 NEUTRAL_RATIO = tf.constant(1.0, dtype=tf.float32)
@@ -17,8 +19,7 @@ NEUTRAL_OFFSET = tf.constant([0.0, 0.0], dtype=tf.float32)
 # Define the dataset mapping helper functions
 def parse_tfrecord_single_element(
     feature_tf: tf.Tensor,
-    current_epoch_tensor: tf.Tensor,  # Injected from the dataset map
-    config: Dict[str, Any]
+    current_epoch_tensor: tf.Tensor  # Injected from the dataset map
 ) -> Tuple[tf.Tensor, Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
 
     """
@@ -47,7 +48,6 @@ def parse_tfrecord_single_element(
     Args:
         - feature_tf: A serialized tf.train.Example proto (as a string Tensor).
         - current_epoch_tensor: index on the current epoch
-        - config: application setting
 
     Returns:
         A Tuple containing:
@@ -57,6 +57,7 @@ def parse_tfrecord_single_element(
         - labels_dict (dict): Dictionary with a 'records' key containing
           a (MAX_RECORDS, 4) float32 tensor of [condition_level, severity, x_norm, y_norm].
     """
+    config = ConfigLoader().get()
 
     logging_cfg = config['logging']
     level_cfg = logging_cfg['level']
@@ -163,10 +164,10 @@ def parse_tfrecord_single_element(
         tf.equal(is_padding_t, 1),
 
         # If padding image, create right now the black final image
-        true_fn=lambda: create_padding_image(config),
+        true_fn=lambda: create_padding_image(),
 
         # Otherly, follow the "normal" process
-        false_fn=lambda: perform_resize(image_tf, height_t, width_t, config)
+        false_fn=lambda: perform_resize(image_tf, height_t, width_t)
     )
 
     # Reshape the padded records tensor to (MAX_RECORDS, 4)
@@ -202,8 +203,7 @@ def parse_tfrecord_single_element(
         normalize_image(
             image_tf=image_tf,
             series_min_t=series_min_t,
-            series_max_t=series_max_t,
-            config=config
+            series_max_t=series_max_t
         ),
         tf.float16
     )
@@ -266,17 +266,12 @@ def python_stop(exp, act):
     return tf.no_op()
 
 
-def create_padding_image(
-    config: Dict[str, Any]
-) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+def create_padding_image() -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
     """
     Generates a blank (black) image and neutral transformation parameters.
 
     This is used when 'is_padding' is 1, ensuring the tensor structure
     remains consistent across the dataset pipeline.
-
-    Args:
-        - config: Application settings
 
     Returns:
         A Tuple containing:
@@ -287,6 +282,7 @@ def create_padding_image(
     """
 
     # Getting the config values
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -312,10 +308,11 @@ def perform_resize(
     raw_image_tf: tf.Tensor,
     height_t: tf.Tensor,
     width_t: tf.Tensor,
-    config: Dict[str, Any]
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
     # Using a Python conditional for static configuration (no graph nodes)
+    config = ConfigLoader().get()
+
     if config['logging']['level'] == "DEBUG":
         tf.print("Starting function perform_resize")
 
@@ -352,8 +349,7 @@ def perform_resize(
 def normalize_image(
     image_tf: tf.Tensor,
     series_min_t: tf.Tensor,
-    series_max_t: tf.Tensor,
-    config: Dict[str, Any]
+    series_max_t: tf.Tensor
 ) -> tf.Tensor:
 
     """
@@ -364,6 +360,7 @@ def normalize_image(
     expected input range of the 2D backbone.
     """
 
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -397,7 +394,6 @@ def process_study_multi_series(
     images: tf.Tensor,
     meta: Dict[str, tf.Tensor],
     labels: Dict[str, tf.Tensor],
-    config: Dict[str, any],
     is_training: bool = True
 ) -> Tuple[
             Tuple[
@@ -427,7 +423,6 @@ def process_study_multi_series(
         - images (tf.Tensor): Flattened batch of all images in the study (N, H, W, C).
         - meta (dict): Dictionary of metadata tensors (each of length N).
         - labels (dict): Dictionary of label tensors (study-wide diagnostics).
-        - config (dict): Dictionary of project settings
         - is_training (bool): flag on the current mode : training (True) or validation (False)
 
     Returns:
@@ -438,6 +433,7 @@ def process_study_multi_series(
                - study_id: The unified identifier for the study (scalar).
                - reduced_labels: Study-level diagnostic labels (compacted).
     """
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -471,7 +467,6 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
-        config,
         is_training
     )
 
@@ -483,7 +478,6 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
-        config,
         is_training
     )
 
@@ -495,7 +489,6 @@ def process_study_multi_series(
         model_2d_height,
         model_2d_width,
         model_2d_nb_channels,
-        config,
         is_training
     )
 
@@ -553,7 +546,6 @@ def process_single_series_description(
     height: int,
     width: int,
     nb_channels: int,
-    config: Dict[str, Any],
     is_training: bool = True,
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -577,7 +569,6 @@ def process_single_series_description(
         - height (int): Target image height.
         - width (int): Target image width.
         - nb_channels (int): Target number of channels.
-        - config (dict): Dictionary of project settings.
         - is_training (bool): Flag for training mode (True) or validation (False).
 
     Returns:
@@ -590,6 +581,7 @@ def process_single_series_description(
               Note: target_desc_tensor is the encoded anatomical view.
     """
 
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -614,10 +606,10 @@ def process_single_series_description(
         mask_has_data,
         true_fn=lambda: process_valid_series(
             all_images, all_meta, desc_mask, target_desc_id,
-            series_depth, height, width, nb_channels, config, is_training
+            series_depth, height, width, nb_channels, is_training
         ),
         false_fn=lambda: process_empty_series(
-            target_desc_id, series_depth, height, width, config
+            target_desc_id, series_depth, height, width
         )
     )
 
@@ -636,7 +628,6 @@ def process_valid_series(
     height: int,
     width: int,
     nb_channels: int,
-    config: Dict[str, Any],
     is_training: bool = True
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -672,6 +663,7 @@ def process_valid_series(
               Values: [sampling_flag, first_slice_index, target_desc_tensor].
     """
 
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -723,7 +715,7 @@ def process_valid_series(
     # 5. Select image sampling mode
     slice_sampling_flag, indices = tf.cond(
         tf.logical_and(is_training, tf.greater(actual_count, series_depth)),
-        lambda: get_indices_on_images(actual_count, series_depth, config),
+        lambda: get_indices_on_images(actual_count, series_depth),
         # Default: Uniform Global sampling (for Val or small series)
         lambda: (
             False,
@@ -794,8 +786,7 @@ def process_valid_series(
 
 def get_indices_on_images(
     actual_count_tf: tf.Tensor,
-    series_depth: int,
-    config: Dict[str, Any]
+    series_depth: int
 ) -> Tuple[bool, int]:
     """
     Determines which slice indices to extract from a series based on a sampling strategy.
@@ -820,6 +811,7 @@ def get_indices_on_images(
               containing the calculated slice indices [int32].
     """
 
+    config = ConfigLoader().get()
     level_cfg = config['logging']['level']
 
     if level_cfg == "DEBUG":
@@ -860,7 +852,6 @@ def process_empty_series(
     series_depth: int,
     img_height: int,
     img_width: int,
-    config: Dict[str, Any],
     nb_channels: int = 3
 ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
 
@@ -877,7 +868,6 @@ def process_empty_series(
         - series_depth (int): Fixed number of slices for the output volume.
         - height (int): Target image height.
         - width (int): Target image width.
-        - config (dict): project settings dictionary
         - nb_channels: Target image channels number
 
     Returns:
@@ -888,6 +878,8 @@ def process_empty_series(
             - series_metadata (tf.Tensor): Sentinel info vector (3,) [int32].
               Values: [sampling_flag=0, first_slice_index=0, target_desc_tensor].
     """
+    
+    config = ConfigLoader().get()    
     level_cfg = config["logging"]["level"]
 
     if level_cfg == "DEBUG":
@@ -950,8 +942,7 @@ def format_for_model(
         Tuple[tf.Tensor, tf.Tensor, tf.Tensor],
     ],
     study_id_tf: tf.Tensor,
-    labels: Dict[str, tf.Tensor],
-    config: Dict[str, Any]
+    labels: Dict[str, tf.Tensor]
 ) -> Tuple[Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
 
     """
@@ -963,12 +954,12 @@ def format_for_model(
                                 each with shape (self._series_depth, H, W, C).
         - study_id_tf (tf.Tensor): The unique identifier for the study.
         - labels (dict): Dictionary containing the 'records' tensor for diagnosis.
-        - config (dict): Application settings
 
     Returns:
         tuple: (inputs_dict, targets_dict) ready for model.fit().
     """
 
+    config = ConfigLoader().get()
     level_cfg = config["logging"]["level"]
 
     if level_cfg == "DEBUG":

@@ -2,11 +2,11 @@
 
 import psutil
 import os
-import tensorflow as tf
+import tf_keras
 import gc
 
 
-class SystemResourceMonitorCallback(tf.keras.callbacks.Callback):
+class SystemResourceMonitorCallback(tf_keras.callbacks.Callback):
     """
     Callback for monitoring system resources and managing memory during training.
 
@@ -74,7 +74,7 @@ class SystemResourceMonitorCallback(tf.keras.callbacks.Callback):
 
         # 1. Clear the Keras global state and free the computational graph
         # This prevents the accumulation of temporary tensors from the previous epoch
-        tf.keras.backend.clear_session()
+        tf_keras.backend.clear_session()
 
         # 2. Trigger the Python Garbage Collector
         # This forces the immediate release of unreferenced objects in RAM

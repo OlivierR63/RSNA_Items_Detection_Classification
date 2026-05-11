@@ -1,7 +1,7 @@
 # coding: utf-8
 
 import tensorflow as tf
-from keras import layers
+from tf_keras import layers
 
 
 class TemporalPaddingLayer(layers.Layer):

@@ -1,7 +1,7 @@
 # coding: utf-8
 
 import pytest
-import tensorflow as tf
+import tf_keras
 from src.core.models.backbone_2d import Backbone2D
 
 
@@ -18,7 +18,7 @@ def test_backbone_build_success(mock_config, mock_logger, model_type, freeze):
     backbone = Backbone2D(mock_config, mock_logger)
     model = backbone.get_model()
 
-    assert isinstance(model, tf.keras.Model)
+    assert isinstance(model, tf_keras.Model)
 
     # Instead of checking model.trainable, we might verify if the model
     # embeds trainable weights.

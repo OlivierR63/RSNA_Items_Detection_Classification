@@ -13,6 +13,8 @@ import ast
 from pathlib import Path
 from multiprocessing import Pool, cpu_count
 from src.core.utils.logger import log_method
+from src.core.utils.singleton_meta import SingletonMeta
+from src.config.config_loader import ConfigLoader
 
 
 def to_tuple(val: str) -> Tuple[int, int]:
@@ -48,7 +50,7 @@ def _extract_dicom_metadata_task(
         return None
 
 
-class CSVMetadataHandler:
+class CSVMetadataHandler(metaclass=SingletonMeta):
     """
     Handles the loading, merging, and preprocessing of metadata from three
     separate CSV files (series descriptions, label coordinates, and training labels).
@@ -59,12 +61,11 @@ class CSVMetadataHandler:
 
     def __init__(
         self,
-        dicom_studies_dir: str,
-        series_description: str,
-        label_coordinates: str,
-        instances_series_format: str,
-        train: str,
-        config: dict,
+        dicom_studies_dir: str = None,
+        series_description: str = None,
+        label_coordinates: str = None,
+        instances_series_format: str = None,
+        train: str = None,
         logger: Optional[logging.Logger] = None
     ) -> None:
         """
@@ -86,8 +87,6 @@ class CSVMetadataHandler:
                 Note: Format values are parsed from strings to tuples via ast.literal_eval.
             train: Path to the main training labels CSV containing the
                 target classes (Normal/Mild/Severe) per study.
-            config: Global configuration dictionary containing processing
-                hyperparameters and environment paths.
             logger: Dedicated logger instance for tracking data loading
                 integrity and potential CSV inconsistencies.
 
@@ -95,19 +94,24 @@ class CSVMetadataHandler:
             FileNotFoundError: If any of the mandatory CSV paths are invalid.
             ValueError: If the configuration dictionary is missing critical keys.
         """
+        # Check if the singleton has already been initialized to avoid redundant setup
+        if hasattr(self, '_config'):
+            return  # Already initialized by a previous call
+        
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
         self._logger.debug("Starting CSVMetadataHandler object initialization")
 
         # Load and ensure all data is treated as string initially to prevent merging errors.
         self._dicom_studies_dir = Path(dicom_studies_dir)
-        self._config = config
+        self._config = ConfigLoader().get()
         self._format_cache = {}
         self._paths_dict: dict[str, Path] = {}
         self._series_desc_df = None
         self._label_coords_df = None
         self._instances_series_format_df = None
         self._train_df = None
+        self._raw_mapper = None
 
         # Setup file paths
         self._setup_paths(series_description, label_coordinates, instances_series_format, train)
@@ -140,19 +144,6 @@ class CSVMetadataHandler:
         }
 
         root_dir_cfg = self._config.get("root_dir", None)
-        if root_dir_cfg is None:
-            critical_msg = (
-                "Fatal error: the parameter 'root_dir' "
-                "is required but was not found. "
-                "Please check your YAML file structure."
-            )
-            self._logger.critical(
-                critical_msg,
-                exc_info=True,
-                extra={"status": "failure"}
-            )
-
-            raise ValueError(critical_msg)
 
         for key, original_path in raw_paths.items():
             # If the path is relative (e.g., "train.csv"), it is joined with root_dir.
@@ -412,7 +403,7 @@ class CSVMetadataHandler:
                 .astype(str)
 
                 # 3. Standardize text format
-                .apply(lambda s: s.str.lower().str.strip())
+                .apply(lambda s: s.str.lower().str.replace(" ", ""))
 
                 # 4. Handle cases with "nan" strings
                 .replace('nan', pd.NA)
@@ -1365,15 +1356,35 @@ class CSVMetadataHandler:
     ) -> Dict[str, Dict]:
 
         """
-            Creates mapping dictionaries for each categorical column.
+        Creates consistent string-to-integer mapping dictionaries for categorical columns.
 
-            Args:
-                metadata_df: The DataFrame containing metadata to be converted.
-                columns_to_encode: Dictionary mapping column names to their mapping variable names.
+        This method ensures that categorical labels are mapped to fixed integer indices.
+        It implements a deterministic sorting strategy to maintain mapping consistency 
+        across different executions and datasets, which is critical for model 
+        reproducibility.
 
-            Returns:
-                Dict[str, Dict]: A dictionary of mapping dictionaries for each column.
+        Sorting Strategies:
+            - 'severity' column: Uses a hardcoded clinical priority 
+              (Normal/Mild=0, Moderate=1, Severe=2).
+            - Other columns: Uses standard alphabetical sorting.
+
+        Args:
+            metadata_df: The DataFrame containing the categorical data to encode.
+            columns_to_encode: A dictionary where keys are the names of the 
+                columns to process.
+            logger: Optional logger instance. Defaults to the class logger.
+
+        Returns:
+            Dict[str, Dict]: A dictionary where each key is a column name and 
+                each value is its corresponding mapping dictionary {string: integer}.
+
+        Raises:
+            ValueError: If a value found in the 'severity' column is not defined 
+                in the internal priority dictionary, enforcing strict data integrity.
+            Exception: Re-raises any unexpected errors during processing for 
+                upstream handling.
         """
+
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
@@ -1382,6 +1393,7 @@ class CSVMetadataHandler:
         logger.debug(f"Starting function {class_name}.{func_name}")
 
         mappings = {}
+        raw_mapper = {}
         try:
             for column in columns_to_encode:
                 if column not in metadata_df.columns:
@@ -1389,16 +1401,38 @@ class CSVMetadataHandler:
                     continue
 
                 # Sort values to ensure mapping [0, 1, 2...] is always the same
-                values = sorted(metadata_df[column].dropna().unique().tolist())
+                # Smart sorting: Priority order concerning the severity, alphabetic order otherwise
+                values = metadata_df[column].dropna().unique().tolist()
+
+                if column == 'severity':
+                    priority = {"normal/mild": 0, "moderate": 1, "severe": 2}
+                    try:
+                        sorted_values = sorted(
+                            values,
+                            key=lambda x: priority[x.lower().replace(" ", "")]
+                        )
+                    except KeyError as e:
+                        unknown_val = str(e)
+                        raise ValueError(
+                            f"UNEXPECTED VALUE: The label {unknown_val} found in column 'severity' "
+                            f"is not defined in the priority dictionary {list(priority.keys())}. "
+                            f"Please check your CSV data or update the priority mapper."
+                        ) from e
+
+                else:
+                    sorted_values = sorted(values)
 
                 # We assume self._create_string_to_int_mapper returns an object
                 # with a .mapping attribute
-                mapper = self._create_string_to_int_mapper(values)
-                mappings[column] = mapper.mapping
+                raw_mapper[column] = self._create_string_to_int_mapper(sorted_values)
+                mappings[column] = raw_mapper[column].mapping
 
                 self._logger.info(
                     f"Created mapping for '{column}': {len(values)} categories found."
                 )
+
+            if self._raw_mapper is None:
+                self._raw_mapper = raw_mapper
 
             msg_debug = f"Function {class_name}.{func_name} completed successfully"
             logger.debug(msg_debug, extra={"status": "success"})
@@ -1527,3 +1561,6 @@ class CSVMetadataHandler:
                 extra={"status": "failure", "error": str(e)}
             )
             raise
+
+    def get_raw_mapper(self):
+        return self._raw_mapper

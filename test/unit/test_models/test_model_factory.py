@@ -2,6 +2,7 @@
 
 import pytest
 import tensorflow as tf
+import tf_keras
 from pathlib import Path
 from unittest.mock import MagicMock
 from src.core.models.model_factory import ModelFactory
@@ -57,7 +58,7 @@ class TestModelFactory:
         # In Keras functional API, a shared layer appears only once in model.layers
         td_layers = [
             lay for lay in model.layers
-            if isinstance(lay, tf.keras.layers.TimeDistributed)
+            if isinstance(lay, tf_keras.layers.TimeDistributed)
         ]
 
         assert_msg = "Backbone should be shared (found multiple TimeDistributed layers)"
@@ -73,7 +74,7 @@ class TestModelFactory:
         mock_agg_instance = MagicMock()
 
         def side_effect_action(x):
-            return tf.keras.layers.Lambda(lambda t: tf.reduce_mean(t, axis=[1, 2, 3])[:, :64])(x)
+            return tf_keras.layers.Lambda(lambda t: tf.reduce_mean(t, axis=[1, 2, 3])[:, :64])(x)
 
         mock_agg_instance.side_effect = side_effect_action
 

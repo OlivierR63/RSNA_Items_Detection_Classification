@@ -1,5 +1,5 @@
 # coding: utf-8
-from typing import Tuple, Optional, List, Union
+from typing import Tuple, Optional, List, Union, Dict
 import logging
 import tensorflow as tf
 import numpy as np
@@ -10,8 +10,10 @@ import inspect
 import ast
 from src.core.utils.logger import log_method
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
+from src.config.config_loader import ConfigLoader
 from pathlib import Path
 from tqdm import tqdm
+import json
 
 
 # ----------------------- Helper functions -------------------------------
@@ -75,7 +77,6 @@ class TFRecordFilesManager:
 
     def __init__(
         self,
-        config: dict,
         logger: logging.Logger
     ) -> None:
 
@@ -83,18 +84,16 @@ class TFRecordFilesManager:
         Initializes the TFRecordFilesManager with configuration and logging.
 
         Args:
-            config (Any): Configuration object containing project paths,
-                processing parameters, and constants like MAX_RECORDS.
             logger (Optional[logging.Logger]): Logger instance for tracking
                 the conversion process. If None, a default logger will be used.
         """
 
-        path_str = config['paths']['tfrecord']
+        self._config = ConfigLoader().get()
 
+        path_str = self._config['paths']['tfrecord']
         self._tfrecord_dir = Path(path_str)
-        self._config = config
+        
         self._logger = logger
-
         self._max_records = self._config['data_specs']['max_records_per_frame']
 
     @log_method()
@@ -140,18 +139,46 @@ class TFRecordFilesManager:
 
             # 2. Load and merge metadata
             metadata_handler = CSVMetadataHandler(
-                config=self._config,
                 logger=logger,
                 dicom_studies_dir=dicom_studies_dir,
                 **paths_cfg["csv"]
             )
 
+            # Build the reference dataframe
             metadata_df = metadata_handler.generate_metadata_dataframe()
             logger.info("Loaded metadata from CSV files",
                         extra={"csv": list(paths_cfg["csv"].keys())})
 
             logger.info("  Creating TFRecord files...")
 
+            # Save in the cache file some information about the pathologies severity
+            # labels and frequencies
+            severity_df = metadata_df.severity
+            values_counts_dict = self._get_series_values_counts(severity_df)
+
+            str_path = self._config["paths"]["tfrecord_metadata_cache"]
+            cache_path = Path(str_path).resolve()/"cache.json"
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                try:
+                    cache_data = json.load(f)
+
+                except json.JSONDecodeError:
+                    # In case the file is empty or corrupted
+                    cache_data = {}
+
+            # Add the new key / value pair:
+            cache_data['values_counts'] = values_counts_dict
+
+            # Rewrite the cache file:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                try:
+                    json.dump(cache_data, f, indent=4)
+
+                except json.JSONDecodeError as e:
+                    logger.critical(f"Unable to update the cache : {e}")
+                    raise
+
+            # Generate TFRecord files
             nb_created_tfrecord_files = self._convert_dicom_to_tfrecords(
                 studies_dir=dicom_studies_dir,
                 metadata_df=metadata_df,
@@ -183,10 +210,23 @@ class TFRecordFilesManager:
             )
             raise
 
+    def _get_series_values_counts(self, df: pd.Series) -> Dict[str, int]:
+        """
+        Uses numpy's ravel for a memory-efficient flattening.
+        """
+        import numpy as np
+        values, counts = np.unique(df.values, return_counts=True)
+        return {str(val): int(nb) for val, nb in zip(values, counts)}
+
     @log_method()
-    def _convert_dicom_to_tfrecords(self, studies_dir: str, metadata_df: pd.DataFrame,
-                                    tfrecord_dir: str, *,
-                                    logger: Optional[logging.Logger] = None) -> int:
+    def _convert_dicom_to_tfrecords(
+        self,
+        studies_dir: str,
+        metadata_df: pd.DataFrame,
+        tfrecord_dir: str,
+        *,
+        logger: Optional[logging.Logger] = None
+    ) -> int:
         """
         Converts DICOM files stored in a hierarchical directory structure into
         TensorFlow TFRecord files, generating one TFRecord file per study.
