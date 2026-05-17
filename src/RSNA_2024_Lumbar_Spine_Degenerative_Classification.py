@@ -5,10 +5,15 @@ import signal
 import sys
 import logging
 from pathlib import Path
+from typing import Tuple
 import gc
 import json
 import os
 import tf_keras
+
+from src.projects.lumbar_spine.model_trainer import ModelTrainer
+from src.core.models.model_factory import ModelFactory
+from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import RSNALossAndMetricProvider
 
 
 # ----------------- TensorFlow and projects imports -----------------------------------------
@@ -66,7 +71,288 @@ def handle_interrupt(signum, frame):
     sys.exit(0)
 
 
-def get_or_build_model(
+def _validate_input_params(depth: int, config: dict, logger: logging.Logger) -> None:
+    """
+    Validates dynamic parameters and ensures correct data types for model building.
+    """
+    # 1. Depth validation (depends on runtime input, not static YAML)
+    if depth is None or depth <= 0:
+        msg = f"Invalid series depth: {depth}. Must be a positive integer."
+        logger.critical(msg, exc_info=True, extra={"status": "failure"})
+        raise ValueError(msg)
+
+    # 2. Type validation (Preventive casting)
+    # Even if keys exist, ensure content is numerically exploitable
+    try:
+        _ = float(config['optimizer']['learning_rate'])
+        _ = int(config['data_specs']['max_records_per_frame'])
+    except (ValueError, TypeError) as e:
+        msg = f"Configuration type validation failed (expected numeric values): {e}"
+        logger.critical(msg)
+        raise ValueError(msg)
+
+
+def _get_target_checkpoint(config: dict[str, str | dict]) -> Tuple[Path | None, str]:
+    """
+    Determines the checkpoint file to load based on the resume mode policy.
+
+    The function checks for the existence of model files in the following order:
+    1. If mode is 'best', it looks for the best performing model file.
+    2. Fallback (or if mode is 'last'): it looks for the most recent checkpoint.
+    3. If no files exist, it returns None for the path.
+
+    Args:
+        config (dict): Global configuration containing path and callback settings.
+
+    Returns:
+        Tuple[Optional[Path], str]: A tuple containing the resolved Path to the
+            checkpoint (or None) and the selected resume mode string.
+    """
+    # Select the checkpoint loading policy: 'best' for the lowest validation loss
+    # or 'last' to continue from the most recent epoch.
+    checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+    resume_mode = config["callbacks"]["resume_mode"]
+
+    # Define filenames based on your ModelTrainer saving logic
+    best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
+    last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
+
+    # Select the target file
+    if resume_mode == "best" and best_path.is_file():
+        checkpoint_path = best_path
+    elif last_path.is_file():
+        checkpoint_path = last_path
+    else:
+        checkpoint_path = None
+
+    return checkpoint_path, resume_mode
+
+
+def _load_existing_model(
+    checkpoint_path: Path | None,
+    mode: str,
+    logger: logging.Logger
+) -> 'tf_keras.Model' | None:
+    """
+    Attempts to load a complete Keras model from a given checkpoint path.
+
+    This method clears the current Keras session to prevent memory leaks and
+    attempts to restore the full model state (architecture, weights, and
+    optimizer). If the file is missing or serialization fails (common with
+    custom Lambda layers), it fails gracefully and returns None.
+
+    Args:
+        checkpoint_path (Path | None): The resolved path to the .keras file.
+        mode (str): The resume mode ('best' or 'last') for logging purposes.
+        logger (logging.Logger): Logger for tracking the restoration process.
+
+    Returns:
+        tf_keras.Model | None: The loaded model if successful, else None.
+    """
+
+    if not checkpoint_path:
+        return None
+
+    try:
+        info_msg = (
+            f"Existing model found ({mode} mode) at {checkpoint_path}. "
+            "Loading ..."
+        )
+        logger.info(info_msg)
+        tf_keras.backend.clear_session()
+        model = tf_keras.models.load_model(
+            checkpoint_path,
+            custom_objects=ModelFactory.CUSTOM_OBJECTS,
+            safe_mode=False,
+        )
+        info_msg = (f"Model successfully restored from {checkpoint_path}.")
+        logger.info(info_msg)
+        return model
+
+    except Exception as e:
+        warning_msg = (
+            f"Full restore failed: {e}. "
+            "Switching to weight salvage logic."
+        )
+        logger.warning(warning_msg, exc_info=True)
+        return None
+
+
+def _build_fresh_or_salvage(
+    depth: int,
+    config: dict,
+    checkpoint_path: Path | None,
+    logger: logging.Logger
+) -> 'tf_keras.Model':
+
+    """
+    Builds a new model architecture and attempts to restore weights if possible.
+
+    This function acts as a fail-safe. It first builds a fresh model from the
+    ModelFactory. If a checkpoint path is provided, it attempts to 'salvage'
+    the weights using skip_mismatch=True, which allows loading weights even
+    if the architecture has slightly changed.
+
+    Args:
+        depth (int): The series depth for 3D input layers.
+        config (dict): Global configuration dictionary.
+        checkpoint_path (Path | None): Path to the existing weights file.
+        logger (logging.Logger): Logger for tracking the build process.
+
+    Returns:
+        tf_keras.Model: A model instance, either fresh or partially restored.
+
+    Raises:
+        RuntimeError: If the model cannot be built from the factory.
+    """
+
+    try:
+        max_records = config['data_specs']['max_records_per_frame']
+        checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+
+        factory_model = ModelFactory(
+            series_depth=depth,
+            config=config,
+            logger=logger,
+            nb_output_records=max_records
+        )
+        model = factory_model.build_multi_series_model()
+
+        # The model is now built, so factory_model can be released now.
+        del factory_model
+        gc.collect()
+
+    except Exception as e:
+        msg_critical = f"Fatal error. Failed to build new model: {e}"
+
+        logger.critical(
+            msg_critical,
+            extra={"status": "failure", "error": str(e)},
+            exc_info=True
+        )
+
+        raise RuntimeError(msg_critical)
+
+    try:
+        if checkpoint_path:
+            model.load_weights(checkpoint_path, skip_mismatch=True)
+            logger.info("Weights successfully salvaged with skip_mismatch=True")
+
+            new_file = checkpoint_dir / "model_restored_fixed.keras"
+            model.save(new_file)
+            logger.info(
+                "Model saved as 'model_restored_fixed.keras'",
+                extra={"status": "recovered"}
+            )
+
+    except Exception as e_weights:
+        msg_warning = (
+            f"Warning:  Unable to restore the weights. Falling back to factory. {e_weights}"
+        )
+        logger.warning(
+            msg_warning,
+            extra={"status": "restart", "warning": str(e_weights)},
+            exc_info=True
+        )
+
+    return model
+
+
+def _finalize_and_compile_model(
+    model: 'tf_keras.Model',
+    config: dict,
+    logger: logging.Logger
+) -> 'tf_keras.Model':
+
+    """
+    Configures multi-task losses, weights, and metrics, then compiles the model.
+
+    This function sets up a specialized compilation strategy:
+    - Categorical Cross-Entropy (via provider) for 'severity_output'.
+    - Mean Squared Error (MSE) for 'location_output' to penalize outliers.
+    - Custom loss weighting to balance classification and coordinate regression.
+
+    Args:
+        model (tf_keras.Model): The built Keras model instance.
+        config (dict): Global configuration dictionary.
+        logger (logging.Logger): Logger for compilation status tracking.
+
+    Returns:
+        tf_keras.Model: The compiled Keras model.
+
+    Raises:
+        Exception: Re-raises any exception encountered during compilation.
+    """
+
+    try:
+        provider = RSNALossAndMetricProvider(logger=logger)
+
+        # --- Define Losses ---
+        # Using MSE for location to penalize large spatial errors more heavily
+
+        losses = {
+            "severity_output": provider.get_loss(),
+            "location_output": "mse"
+        }
+
+        # --- Define Loss Weights ---
+        # We give more weight to location (5.0) because the coordinate regression
+        # is currently struggling to converge compared to classification.
+
+        loss_weights_settings = config["compilation"]['loss_weights']
+
+        loss_weights = {
+            "severity_output": loss_weights_settings["severity_output"],
+            "location_output": loss_weights_settings["location_output"]
+        }
+
+        # --- Define Metrics ---
+        metrics = {
+            # Added accuracy for a quick baseline
+            "severity_output": [provider.get_metric(), "accuracy"],
+            "location_output": [tf_keras.metrics.MeanAbsoluteError(name="mae")],
+            "study_id_output": None
+        }
+
+        # --- Model Compilation ---
+        # Adam optimizer with gradient clipping to prevent exploding gradients
+        # during multi-task learning.
+
+        optim_type = config["optimizer"]['type'].lower()
+        run_eagerly_val = config['compilation']['run_eagerly']
+
+        model.compile(
+            optimizer=optim_type,
+            loss=losses,
+            loss_weights=loss_weights,
+            metrics=metrics,
+            run_eagerly=run_eagerly_val
+        )
+
+        model.summary()
+        logger.info(
+            "New model compiled with weighted losses.",
+            extra={
+                "optimizer": optim_type,
+                "learning_rate": config["optimizer"]["learning_rate"],
+                "clip_norm": config["optimizer"]["clipnorm"]
+            }
+        )
+        return model
+
+    except Exception as e:
+        critical_msg = f"Fatal error : {e}"
+
+        logger.critical(
+            critical_msg,
+            exc_info=True,
+            extra={"status": "failure"}
+        )
+
+        raise e
+
+
+def _get_or_build_model(
     depth: int,
     config: dict,
     logger: logging.Logger
@@ -104,198 +390,15 @@ def get_or_build_model(
         Exception: If a fatal error occurs during model factory building or compilation.
     """
 
-    # import tf_keras
-    from src.projects.lumbar_spine.model_trainer import ModelTrainer
-    from src.core.models.model_factory import ModelFactory
-    from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
-        rsna_weighted_log_loss,
-        RSNALossAndMetricProvider
-    )
+    # Initial validation
+    _validate_input_params(depth, logger)
+    checkpoint_path, mode = _get_target_checkpoint(config)
+    model = _load_existing_model(checkpoint_path, mode)
 
-    if depth is None or depth <= 0:
-        critical_msg = (
-            "Function get_or_build_model failed. Null depth parameter"
-        )
-        logger.critical(
-            critical_msg,
-            exc_info=True,
-            extra={"status": "failure"}
-        )
-        raise ValueError(critical_msg)
+    if model is None:
+        model = _build_fresh_or_salvage(depth, config, checkpoint_path, logger)
 
-    # Extract configs locally within the function to ensure independence
-    try:
-        optimizer_cfg = config['optimizer']
-        compilation_cfg = config['compilation']
-        callbacks_cfg = config['callbacks']
-
-        data_specs_cfg = config['data_specs']
-        max_records = int(data_specs_cfg['max_records_per_frame'])
-
-        learning_rate = float(optimizer_cfg['learning_rate'])
-        clip_norm = float(optimizer_cfg['clipnorm'])
-
-    except (ValueError, TypeError) as e:
-        critical_msg = f"Configuration type error: {e}"
-        logger.critical(
-            critical_msg,
-            exc_info=True,
-            extra={"status": "failure"}
-        )
-        raise ValueError(critical_msg)
-
-    # Select the checkpoint loading policy: 'best' for the lowest validation loss
-    # or 'last' to continue from the most recent epoch.
-    checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
-    resume_mode = callbacks_cfg["resume_mode"]
-
-    # Define filenames based on your ModelTrainer saving logic
-    best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
-    last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
-
-    # Select the target file
-    if resume_mode == "best" and best_path.is_file():
-        checkpoint_full_path = best_path
-    elif last_path.is_file():
-        checkpoint_full_path = last_path
-    else:
-        checkpoint_full_path = None
-
-    if checkpoint_full_path:
-        info_msg = (
-            f"Existing model found ({resume_mode} mode) at {checkpoint_full_path}. "
-            "Loading for resume..."
-        )
-        logger.info(info_msg)
-
-        try:
-            tf_keras.backend.clear_session()
-            model = tf_keras.models.load_model(
-                checkpoint_full_path,
-                custom_objects=ModelFactory.CUSTOM_OBJECTS,
-                safe_mode=False,
-            )
-            info_msg = ("Model loading completed.")
-            logger.info(info_msg)
-            return model
-
-        except Exception as e_1:
-            logger.warning(
-                f"Failed to load full model from {checkpoint_full_path}: {e_1}. "
-                "Attempting weight salvage logic."
-            )
-
-    try:
-        info_msg = "No existing model found. Building a new model from factory."
-        logger.info(info_msg)
-        factory_model = ModelFactory(
-            series_depth=depth,
-            config=config,
-            logger=logger,
-            nb_output_records=max_records
-        )
-        model = factory_model.build_multi_series_model()
-
-        # The model is now built, so factory_model can be released now.
-        del factory_model
-        gc.collect()
-
-    except Exception as e_2:
-        msg_critical = f"Fatal error. Failed to build new model: {e_2}"
-
-        logger.critical(
-            msg_critical,
-            extra={"status": "failure", "error": str({e_2})},
-            exc_info=True
-        )
-
-        raise RuntimeError(msg_critical)
-
-    try:
-        if checkpoint_full_path:
-            model.load_weights(checkpoint_full_path, skip_mismatch=True)
-            logger.info("Weights loaded directly with skip_mismatch=True")
-
-            new_file = checkpoint_dir / "model_restored_fixed.keras"
-            model.save(new_file)
-            logger.info(
-                "Model saved as 'model_restored_fixed.keras'",
-                extra={"status": "recovered"}
-            )
-
-    except Exception as e_3:
-        msg_warning = f"Warning:  Unable to restore the weights. Falling back to factory. {e_3}"
-        logger.warning(
-            msg_warning,
-            extra={"status": "restart", "warning": str(e_3)},
-            exc_info=True
-        )
-
-    try:
-        provider = RSNALossAndMetricProvider(logger=logger)
-    
-        # --- Define Losses ---
-        # Using MSE for location to penalize large spatial errors more heavily
-  
-        losses = {
-            "severity_output": provider.get_loss(),
-            "location_output": "mse"
-        }
-
-        # --- Define Loss Weights ---
-        # We give more weight to location (5.0) because the coordinate regression
-        # is currently struggling to converge compared to classification.
-
-        loss_weights_settings = compilation_cfg['loss_weights']
-
-        loss_weights = {
-            "severity_output": loss_weights_settings["severity_output"],
-            "location_output": loss_weights_settings["location_output"]
-        }
-
-        # --- Define Metrics ---
-        metrics = {
-            "severity_output": [provider.get_metric(), "accuracy"],  # Added accuracy for a quick baseline
-            "location_output": [tf_keras.metrics.MeanAbsoluteError(name="mae")],
-            "study_id_output": None
-        }
-
-        # --- Model Compilation ---
-        # Adam optimizer with gradient clipping to prevent exploding gradients
-        # during multi-task learning.
-
-        optim_type = optimizer_cfg['type'].lower()
-        run_eagerly_val = config['compilation']['run_eagerly']
-
-        model.compile(
-            optimizer=optim_type,
-            loss=losses,
-            loss_weights=loss_weights,
-            metrics=metrics,
-            run_eagerly=run_eagerly_val
-        )
-
-        model.summary()
-        logger.info(
-            "New model compiled with weighted losses.",
-            extra={
-                "optimizer": optim_type,
-                "learning_rate": learning_rate,
-                "clip_norm": clip_norm
-            }
-        )
-        return model
-
-    except Exception as e_4:
-        critical_msg = f"Fatal error : {e_4}"
-
-        logger.critical(
-            critical_msg,
-            exc_info=True,
-            extra={"status": "failure"}
-        )
-
-        raise e_4
+    return _finalize_and_compile_model(model, config, logger)
 
 
 def main():
@@ -387,10 +490,10 @@ def main():
                 percentile_str = data_specs_cfg["series_depth_percentile"]
 
                 if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
-                    series_depth = config_loader.calculate_series_depth(
+                    series_depth = config_loader.get_series_depth(
                         tfrecord_cache_dir=paths_cfg["tfrecord_metadata_cache"],
                         dicom_studies_dir=paths_cfg["dicom_studies"],
-                        percentile=int(percentile_str),
+                        percentile=float(percentile_str),
                         logger=logger
                     )
                     config_loader.set_value("series_depth", series_depth)
@@ -411,7 +514,7 @@ def main():
 
             # Load the compiled model if it already exists. In the other case, generate
             # a new model and compile it.
-            model: tf_keras.Model = get_or_build_model(series_depth, config, logger)
+            model: tf_keras.Model = _get_or_build_model(series_depth, config, logger)
 
             logger.info(
                 "Starting training process.",

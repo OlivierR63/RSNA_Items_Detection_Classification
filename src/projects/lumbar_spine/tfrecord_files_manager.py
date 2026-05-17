@@ -92,7 +92,7 @@ class TFRecordFilesManager:
 
         path_str = self._config['paths']['tfrecord']
         self._tfrecord_dir = Path(path_str)
-        
+
         self._logger = logger
         self._max_records = self._config['data_specs']['max_records_per_frame']
 
@@ -375,11 +375,10 @@ class TFRecordFilesManager:
             - tfrecord_dir (Path): Destination directory for the generated TFRecord file.
             - logger (Optional[logging.Logger]): Logger instance for status reporting.
 
-        Raises:
-            - EmptyDirectoryError: If no items are found in the study directory.
-            - SeriesProcessingError: If one or more series fail to process correctly.
-
-        Return: True if the study has been registered in a TFRecord file. False if not.
+        Returns:
+            bool: True if the TFRecord was successfully created and validated.
+                  False if the study was skipped (invalid labels/empty) or
+                  if an internal exception was caught and handled.
         """
 
         func_name = inspect.currentframe().f_code.co_name
@@ -388,133 +387,268 @@ class TFRecordFilesManager:
         logger = logger or self._logger
         logger.debug(
             f"Starting {class_name}.{func_name}",
-            extra={"action": "process_study", "study_dir": study_path}
+            extra={"action": "_process_study", "study_dir": study_path}
         )
 
         study_id = study_path.name
-
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
 
-        nb_skipped_series = 0
+        # Data Extraction and validation
+        input_features_df, labels_df = self._extract_study_data(study_path, metadata_df, logger)
+
+        if not self._is_study_valid(study_path, labels_df, logger):
+            return False
+
+        try:
+            success = self._write_study_to_tfrecord(
+                study_path, tfrecord_path, input_features_df, labels_df, logger
+            )
+            return success
+
+        except Exception as e:
+            self._handle_study_error(study_path, tfrecord_path, e, logger)
+            return False
+
+    def _extract_study_data(
+        self,
+        study_path: Path,
+        metadata_df: pd.DataFrame,
+        logger: logging.Logger | None
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+
+        """
+        Extracts and deduplicates features and labels from the study metadata.
+
+        Args:
+            - study_path (Path): Path to the study directory.
+            - metadata_df (pd.DataFrame): Metadata already filtered for this study.
+            - logger (Optional[logging.Logger]): Logger instance.
+
+        Returns:
+            Tuple[pd.DataFrame, pd.DataFrame]: (input_features_df, labels_df)
+        """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+        logger.debug(
+            f"Starting {class_name}.{func_name}",
+            extra={"action": "_extract_study_data", "study_id": study_path.name}
+        )
+
         columns = [
             'study_id', 'series_id', 'series_description', 'instance_number', 'target_series_format'
         ]
         input_features_df = metadata_df[columns].drop_duplicates()
         labels_df = metadata_df[['condition_level', 'severity', 'x', 'y']].drop_duplicates()
 
-        try:
-            actual_nb_labels = len(labels_df)
-            expected_nb_labels = self._config['data_specs']['max_records_per_frame']
-            if actual_nb_labels != expected_nb_labels:
-                error_msg = (
-                    f"Issue in function {class_name}.{func_name}. "
-                    f"Study {study_path.name} has an invalid number of labels. "
-                    f"Found {actual_nb_labels} labels, but expected {expected_nb_labels}"
-                    "Skipped study"
-                )
-                logger.error(error_msg)
-                return False
+        return input_features_df, labels_df
 
-            series_list = list(study_path.iterdir())
-            nb_series = len(series_list)
+    def _is_study_valid(
+        self,
+        study_path: Path,
+        labels_df: pd.DataFrame,
+        logger: logging.Logger | None
+    ) -> bool:
 
-            if (nb_series) == 0:
-                error_msg = (
-                    f"Issue in function {class_name}.{func_name}. "
-                    f"Study {study_path.name} is empty."
-                    "Skip to the next one"
-                )
-                logger.error(error_msg)
-                return False
+        """
+        Validates study integrity by checking both metadata labels and physical directory content.
 
-            # Case nb_series > 0
-            options = tf.io.TFRecordOptions(compression_type="GZIP")
-            with tf.io.TFRecordWriter(str(tfrecord_path), options=options) as writer:
-                for series_path in series_list:
-                    # Case series_full_path is not a directory: skip to the next series
-                    if not series_path.is_dir():
-                        error_msg = (
-                            f"Skipping non-directory item {series_path.name} "
-                            f"in study directory {study_path.name}"
-                        )
-                        logger.error(error_msg)
-                        continue
+        Args:
+            - study_path (Path): Path to the directory containing the study's series.
+            - labels_df (pd.DataFrame): Deduplicated labels associated with the study.
+            - logger (logging.Logger | None): Logger instance for reporting validation failures.
 
-                    nb_success, _, _, _ = self._process_single_series_instance(
-                        series_path,
-                        input_features_df,
-                        labels_df,
-                        writer
-                    )
+        Returns:
+            - bool: True if the study has the expected number of labels and is not physically empty.
+                    False if any validation criteria fail.
+        """
 
-                    if nb_success == 0:
-                        nb_skipped_series += 1
-                        continue
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
 
-            # Safety: cleansing if complete failure
-            if nb_skipped_series == nb_series:
-                if tfrecord_path.exists():
-                    # Remove the empty file}
-                    tfrecord_path.unlink()
+        logger = logger or self._logger
+        study_id = study_path.name
 
-                error_msg = (
-                    f"Issue in function {class_name}.{func_name}."
-                    f"All the series of the study {study_id} were skipped"
-                    "Therefore, it is put aside for the model training stage."
-                )
+        is_valid = True
 
-                logger.error(error_msg, extra={"status": "failure"})
-                return False
-
-            if nb_skipped_series > 0:
-                warning_msg = (
-                    f"Issue in function {class_name}.{func_name}."
-                    f"Study {study_id} processed with {nb_skipped_series} skipped series "
-                    "due to missing metadata or aborted TFRecord file generation."
-                )
-                logger.warning(
-                    warning_msg,
-                    extra={
-                        "status": "incomplete",
-                        "nb_series": nb_series,
-                        "skipped_series": nb_skipped_series
-                    }
-                )
-
-            else:  # last case : nb_series > 0 and nb_skipped_series == 0
-                logger.debug(
-                    f"Function {class_name}.{func_name}: "
-                    f"study {study_id} processing completed successfully.",
-                    extra={
-                        "status": "success",
-                        "nb_series": nb_series,
-                        "skipped_series": nb_skipped_series
-                    }
-                )
-
-            return True
-
-        except Exception as e:
-            # Log the specific study failure before re-raising et erase the file TFRecord
-            # if it already exists
+        # Test 1: Labels consistency
+        actual_nb_labels = len(labels_df)
+        expected_nb_labels = self._config['data_specs']['max_records_per_frame']
+        if len(labels_df) != expected_nb_labels:
             error_msg = (
-                f"Error in {class_name}.{func_name}. "
-                f"Failed to process study {study_id}: {str(e)}"
+                f"Issue in function {class_name}.{func_name}. "
+                f"Study {study_id} has an invalid number of labels. "
+                f"Found {actual_nb_labels} labels, but expected {expected_nb_labels} "
+                "Skipped study"
             )
+            logger.error(error_msg)
+            is_valid = False
 
-            logger.error(
-                error_msg,
-                exc_info=True,
-                extra={"study_id": study_id, "status": "failure"}
+        # Test 2: Physical presence (File system logic)
+        # Performance: any() avoids loading the full list of files into memory
+        if is_valid and not any(study_path.iterdir()):
+            error_msg = (
+                f"Issue in function {class_name}.{func_name}. "
+                f"Study {study_id} is empty. Skip to the next one."
             )
+            logger.error(error_msg)
+            is_valid = False
 
-            if tfrecord_path.exists():
-                logger.error(
-                    f"Remove file {study_id}.tfrecord"
+        return is_valid
+
+    def _write_study_to_tfrecord(
+        self,
+        study_path: Path,
+        tfrecord_path: Path,
+        input_features_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
+        logger: logging.Logger | None
+    ) -> bool:
+
+        """
+        Processes and writes study series into a compressed TFRecord file.
+
+        This method iterates through all valid series directories within a study,
+        converts them via _process_single_series_instance, and handles partial
+        or total processing failures by logging and disk cleanup.
+
+        Args:
+            study_path (Path): Path to the study directory.
+            tfrecord_path (Path): Path where the TFRecord file will be saved.
+            input_features_df (pd.DataFrame): Metadata features for the study.
+            labels_df (pd.DataFrame): Ground truth labels for the study.
+            logger (Optional[logging.Logger]): Logger for status and error reporting.
+
+        Returns:
+            bool: True if the study was successfully written (at least one series saved).
+                  False if the study is empty, all series were skipped, or a failure occurred.
+        """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+        study_id = study_path.name
+
+        # Define the list of series and ensure that each retained element is a series directory
+        series_list = [series for series in study_path.iterdir() if series.is_dir()]
+        nb_series = len(series_list)
+        nb_skipped_series = 0
+
+        if (nb_series) == 0:
+            error_msg = (
+                f"Issue in function {class_name}.{func_name}. "
+                f"Study {study_path.name} is empty."
+                "Skip to the next one"
+            )
+            logger.error(error_msg)
+            return False
+
+        # Case nb_series > 0
+        options = tf.io.TFRecordOptions(compression_type="GZIP")
+        with tf.io.TFRecordWriter(str(tfrecord_path), options=options) as writer:
+            for series_path in series_list:
+                nb_success, _, _, _ = self._process_single_series_instance(
+                    series_path,
+                    input_features_df,
+                    labels_df,
+                    writer
                 )
+
+                if nb_success == 0:
+                    nb_skipped_series += 1
+                    continue
+
+        # Safety: cleansing if complete failure
+        if nb_skipped_series == nb_series:
+            if tfrecord_path.exists():
+                # Remove the empty file
                 tfrecord_path.unlink()
 
+            error_msg = (
+                f"Issue in function {class_name}.{func_name}."
+                f"All the series of the study {study_id} were skipped"
+                "Therefore, it is put aside for the model training stage."
+            )
+
+            logger.error(error_msg, extra={"status": "failure"})
             return False
+
+        if nb_skipped_series > 0:
+            warning_msg = (
+                f"Issue in function {class_name}.{func_name}."
+                f"Study {study_id} processed with {nb_skipped_series} skipped series "
+                "due to missing metadata or aborted TFRecord file generation."
+            )
+            logger.warning(
+                warning_msg,
+                extra={
+                    "status": "incomplete",
+                    "nb_series": nb_series,
+                    "skipped_series": nb_skipped_series
+                }
+            )
+
+        else:  # last case : nb_series > 0 and nb_skipped_series == 0
+            logger.debug(
+                f"Function {class_name}.{func_name}: "
+                f"study {study_id} processing completed successfully.",
+                extra={
+                    "status": "success",
+                    "nb_series": nb_series,
+                    "skipped_series": nb_skipped_series
+                }
+            )
+
+        return True
+
+    def _handle_study_error(
+        self,
+        study_path: Path,
+        tfrecord_path: Path,
+        error: Exception,
+        logger: logging.Logger | None
+    ) -> None:
+        """
+        Handles unexpected exceptions during study processing.
+
+        This method logs the full error traceback, associates it with the
+        specific study ID, and ensures that any partially created TFRecord
+        file is deleted from the disk to maintain dataset integrity.
+
+        Args:
+            study_path (Path): Path to the study directory being processed.
+            tfrecord_path (Path): Destination path of the TFRecord file to clean up.
+            error (Exception): The exception instance caught by the orchestrator.
+            logger (logging.Logger | None): Logger instance for error reporting.
+        """
+
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        logger = logger or self._logger
+        study_id = study_path.name
+
+        error_msg = (
+            f"Error in {class_name}.{func_name}. "
+            f"Failed to process study {study_id}: {str(error)}"
+        )
+
+        # Log the full traceback for debugging purposes
+        logger.error(
+            error_msg,
+            exc_info=True,
+            extra={"study_id": study_id, "status": "failure"}
+        )
+
+        # Ensure no corrupted/partial file remains
+        if tfrecord_path.exists():
+            logger.info(
+                f"Cleanup: removing partial file {tfrecord_path.name}"
+            )
+            tfrecord_path.unlink()
 
     @log_method()
     def _process_single_series_instance(
@@ -839,24 +973,22 @@ class TFRecordFilesManager:
         class_name = self.__class__.__name__
 
         logger = logger or self._logger
-
         logger.debug(f"Starting {class_name}.{func_name}")
 
         try:
-            if isinstance(series_path, (str, Path)):
-                dicom_paths = list(Path(series_path).glob("*.dcm"))
+            dicom_paths = list(Path(series_path).glob("*.dcm"))
 
-                if not dicom_paths:
-                    critical_msg = (
-                        f"Error in function {class_name}.{func_name}"
-                        f"No DICOM files found in {series_path}"
-                    )
-                    logger.critical(
-                        critical_msg,
-                        exc_info=True,
-                        extra={"status": "failure"}
-                    )
-                    raise FileNotFoundError(critical_msg)
+            if not dicom_paths:
+                critical_msg = (
+                    f"Error in function {class_name}.{func_name}"
+                    f"No DICOM files found in {series_path}"
+                )
+                logger.critical(
+                    critical_msg,
+                    exc_info=True,
+                    extra={"status": "failure"}
+                )
+                raise FileNotFoundError(critical_msg)
 
             global_min = float('inf')
             global_max = float('-inf')
@@ -864,25 +996,11 @@ class TFRecordFilesManager:
             nb_valid_files = 0
 
             for path in dicom_paths:
-                try:
-                    ds = pydicom.dcmread(path, force=True)
-                    arr = ds.pixel_array
-
-                    current_min = np.min(arr)
-                    current_max = np.max(arr)
-
-                    if current_min < global_min:
-                        global_min = current_min
-
-                    if current_max > global_max:
-                        global_max = current_max
-
+                global_min, global_max, is_valid = self._get_dcmfile_min_max_pixel(
+                    path, global_min, global_max, logger
+                )
+                if is_valid:
                     nb_valid_files += 1
-
-                except pydicom.errors.InvalidDicomError as e:
-                    # Log the error for this file but skip to the next iteration.
-                    logger.warning(f"Skipping invalid DICOM file {path.name}: {e}")
-                    continue
 
             if nb_valid_files == 0:
                 min_val = self._config['models']['backbone_2d']['scaling']['min']
@@ -908,6 +1026,40 @@ class TFRecordFilesManager:
                 extra={"status": "failure"}
             )
             raise
+
+    def _get_dcmfile_min_max_pixel(
+        self,
+        path: Path,
+        global_min: float,
+        global_max: float,
+        logger: logging.Logger | None
+    ) -> Tuple[float, float, bool]:
+        """
+        Reads a single DICOM file and updates the running min/max intensity values.
+
+        Args:
+            path (Path): Path to the DICOM file.
+            global_min (float): Current global minimum.
+            global_max (float): Current global maximum.
+            logger (Optional[logging.Logger]): Logger for warnings.
+
+        Returns:
+            Tuple[float, float, bool]: Updated (min, max) and a success flag.
+        """
+        try:
+            ds = pydicom.dcmread(path, force=True)
+            if hasattr(ds, 'pixel_array'):
+                arr = ds.pixel_array
+
+                new_min = min(global_min, np.min(arr))
+                new_max = max(global_max, np.max(arr))
+
+                return (new_min, new_max, True)
+
+        except pydicom.errors.InvalidDicomError as e:
+            # Log the error for this file but skip to the next iteration.
+            logger.warning(f"Skipping invalid DICOM file {path.name}: {e}")
+            return (global_min, global_max, False)
 
     @log_method()
     def _process_single_dicom_instance(

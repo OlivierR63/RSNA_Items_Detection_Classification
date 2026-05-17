@@ -3,11 +3,11 @@
 import tensorflow as tf
 import tf_keras
 import logging
-from typing import Dict, Any
 from src.core.utils.logger import get_current_logger
 from src.config.config_loader import ConfigLoader
 from src.core.utils.dataframe_class_count import DataFrameClassCount
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
+
 
 def get_class_weights():
     logger = get_current_logger()
@@ -19,7 +19,6 @@ def get_class_weights():
         for label, value in class_weights_cfg.items():
             label = label.lower().replace(" ", "")
             severity_dic[label] = value
-
 
         # Load severity label mapper
         raw_mapper = CSVMetadataHandler()._get_raw_mapper()
@@ -40,20 +39,20 @@ def get_class_weights():
         logger.critical(
             critical_msg,
             e,
-            exc_info = True,
-            extra = {'status': 'failed'}
+            exc_info=True,
+            extra={'status': 'failed'}
         )
         tf.print(critical_msg, e)
         raise
-        
+
 
 def compute_rsna_loss_core(y_true, y_pred, class_weights, balancing_weights):
     """
    Executes the core mathematical logic for the RSNA 2024 weighted log loss.
 
-    This function computes the weighted cross-entropy for a multi-task classification 
-    problem involving 25 distinct spinal conditions. It applies two levels of 
-    weighting: competition-defined class weights (Normal, Moderate, Severe) 
+    This function computes the weighted cross-entropy for a multi-task classification
+    problem involving 25 distinct spinal conditions. It applies two levels of
+    weighting: competition-defined class weights (Normal, Moderate, Severe)
     and dataset-specific balancing weights.
 
     Mathematical Operations:
@@ -63,8 +62,8 @@ def compute_rsna_loss_core(y_true, y_pred, class_weights, balancing_weights):
         4. Spatial Reduction: Sums the weighted components across the class dimension.
 
     Args:
-        y_true (tf.Tensor): Ground truth labels. 
-            Can be provided as class indices (Shape: [batch, 25]) 
+        y_true (tf.Tensor): Ground truth labels.
+            Can be provided as class indices (Shape: [batch, 25])
             or one-hot encoded probabilities (Shape: [batch, 25, 3]).
         y_pred (tf.Tensor): Model predictions as probabilities (after softmax).
             Shape: [batch, 25, 3].
@@ -77,9 +76,9 @@ def compute_rsna_loss_core(y_true, y_pred, class_weights, balancing_weights):
             Shape: [batch, 25].
 
     Note:
-        The final reduction (e.g., tf.reduce_mean) is intentionally omitted here 
-        to allow this core function to be used by both the Loss (which needs a 
-        scalar) and potentially by custom metrics or debug tools that might 
+        The final reduction (e.g., tf.reduce_mean) is intentionally omitted here
+        to allow this core function to be used by both the Loss (which needs a
+        scalar) and potentially by custom metrics or debug tools that might
         require per-condition loss analysis.
     """
 
@@ -133,13 +132,13 @@ class RSNALossAndMetricProvider:
         """
         Dynamically builds and returns the RSNA weighted log loss function.
 
-        This method acts as a factory that injects dataset-specific balancing 
-        weights into the loss calculation via a closure. This allows the 
-        returned function to maintain the standard Keras loss signature 
+        This method acts as a factory that injects dataset-specific balancing
+        weights into the loss calculation via a closure. This allows the
+        returned function to maintain the standard Keras loss signature
         (y_true, y_pred) while accessing external weighting metadata.
 
         Returns:
-            function: A callable 'rsna_weighted_log_loss' configured with 
+            function: A callable 'rsna_weighted_log_loss' configured with
                 the provider's balancing weights.
         """
         class_weights = self._class_weights
@@ -149,18 +148,18 @@ class RSNALossAndMetricProvider:
             """
             Keras-compatible weighted hierarchical log loss.
 
-            Calculates the mean loss across 25 spinal conditions, applying 
-            both class-level weights (Normal/Moderate/Severe) and 
+            Calculates the mean loss across 25 spinal conditions, applying
+            both class-level weights (Normal/Moderate/Severe) and
             sample-level balancing weights.
 
             Args:
-                y_true (tf.Tensor): Ground truth labels. 
+                y_true (tf.Tensor): Ground truth labels.
                     Shape: (batch_size, 25) or (batch_size, 25, 3).
                 y_pred (tf.Tensor): Model predictions as probabilities.
                     Shape: (batch_size, 25, 3).
 
             Returns:
-                tf.Tensor: Scalar float32 tensor representing the mean 
+                tf.Tensor: Scalar float32 tensor representing the mean
                     weighted log loss for the batch.
             """
 
@@ -181,9 +180,9 @@ class RSNALossAndMetricProvider:
         Return the metric instance using the same weights
         """
         return RSNAKaggleMetric(
-            class_weights = self._class_weights,
-            balancing_weights = self._balancing_weights,
-            logger = self._logger
+            class_weights=self._class_weights,
+            balancing_weights=self._balancing_weights,
+            logger=self._logger
         )
 
 

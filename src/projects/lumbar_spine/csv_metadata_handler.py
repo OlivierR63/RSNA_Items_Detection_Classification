@@ -97,7 +97,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         # Check if the singleton has already been initialized to avoid redundant setup
         if hasattr(self, '_config'):
             return  # Already initialized by a previous call
-        
+
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
         self._logger.debug("Starting CSVMetadataHandler object initialization")
@@ -1359,29 +1359,30 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         Creates consistent string-to-integer mapping dictionaries for categorical columns.
 
         This method ensures that categorical labels are mapped to fixed integer indices.
-        It implements a deterministic sorting strategy to maintain mapping consistency 
-        across different executions and datasets, which is critical for model 
+        It implements a deterministic sorting strategy to maintain mapping consistency
+        across different executions and datasets, which is critical for model
         reproducibility.
 
+
         Sorting Strategies:
-            - 'severity' column: Uses a hardcoded clinical priority 
+            - 'severity' column: Uses a hardcoded clinical priority
               (Normal/Mild=0, Moderate=1, Severe=2).
             - Other columns: Uses standard alphabetical sorting.
 
         Args:
             metadata_df: The DataFrame containing the categorical data to encode.
-            columns_to_encode: A dictionary where keys are the names of the 
+            columns_to_encode: A dictionary where keys are the names of the
                 columns to process.
             logger: Optional logger instance. Defaults to the class logger.
 
         Returns:
-            Dict[str, Dict]: A dictionary where each key is a column name and 
+            Dict[str, Dict]: A dictionary where each key is a column name and
                 each value is its corresponding mapping dictionary {string: integer}.
 
         Raises:
-            ValueError: If a value found in the 'severity' column is not defined 
+            ValueError: If a value found in the 'severity' column is not defined
                 in the internal priority dictionary, enforcing strict data integrity.
-            Exception: Re-raises any unexpected errors during processing for 
+            Exception: Re-raises any unexpected errors during processing for
                 upstream handling.
         """
 
