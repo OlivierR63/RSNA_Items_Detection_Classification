@@ -70,9 +70,97 @@ def _get_labeled_files(csv_path: str) -> set:
     return set(df.astype(int).itertuples(index=False, name=None))
 
 
-def _analyze_dicom_series(
+def _analyze_single_series(
+    study_path: Path,
+    series: Path,
+    reader: sitk.ImageFileReader,
+    labeled_set: Set[Tuple[int, int, int]],
+    results: Dict[str, Any],
+    logger: logging.Logger
+) -> None:
+
+    """
+    Analyzes all DICOM files within a specific series and updates the study results.
+
+    This function performs the second level of nesting in the analysis pipeline.
+    It counts the slices (depth), invokes the file-level processor for metadata
+    extraction, and calculates the consistency of image formats (dimensions)
+    within this specific series.
+
+    Args:
+        study_path: Path to the parent study directory.
+        series: Path to the specific series directory to analyze.
+        reader: SimpleITK ImageFileReader instance for metadata extraction.
+        labeled_set: Set of (study, series, instance) tuples for label validation.
+        results: Local or global results dictionary to update with findings.
+        logger: Logger instance for reporting inconsistencies (can be None).
+
+    Note:
+        This function updates the 'results' dictionary in-place, specifically
+        modifying 'depths' and 'consistency' keys.
+    """
+
+    # Identify all DICOM files in the series
+    dcm_files = list(series.glob('*.dcm'))
+    results["depths"].append(len(dcm_files))
+
+    unique_fmts, unique_spcs = set(), set()
+
+    # Delegates individual file processing
+    _process_files(
+        dcm_files,
+        reader,
+        unique_fmts,
+        unique_spcs,
+        study_path,
+        series,
+        labeled_set,
+        results,
+        logger
+    )
+
+    # Calculate and record how many different formats exist in the series.
+    # A perfectly consistent series should hve exactly 1 unique format.
+    nb_f = len(unique_fmts)
+    results["consistency"][nb_f] = results["consistency"].get(nb_f, 0) + 1
+
+
+def _analyze_single_study(
+    study_path: Path,
+    labeled_set: Set[Tuple[int, int, int]],
+    logger: logging.Logger
+) -> Dict[str, Any]:
+
+    """
+    Analyzes one study and returns a standalone results dictionary.
+    Isolated for future parallel execution.
+    """
+    # Local results for this worker
+    results = {
+        "depths": [],
+        "formats": {},
+        "spacings": {},
+        "consistency": {},
+        "min": float('inf'),
+        "max": float('-inf')
+    }
+    reader = sitk.ImageFileReader()
+
+    try:
+        for series in [s for s in study_path.iterdir() if s.is_dir()]:
+            _analyze_single_series(study_path, series, reader, labeled_set, results, logger)
+
+    except Exception as e:
+        error_msg = f"Error processing study {study_path.name}: {e}"
+        logger.error(error_msg, exc_info=True)
+        raise
+
+    return results
+
+
+def _analyze_dataset_dicom_files(
     studies_list: List[Path],
-    labeled_set: Set[tuple],
+    labeled_set: Set[Tuple[int, int, int]],
     logger: logging.Logger
 ) -> Dict[str, Any]:
     """
@@ -96,7 +184,7 @@ def _analyze_dicom_series(
             - "consistency" (dict): Count of unique formats found per series.
             - "min"/"max" (float): Global pixel intensity boundaries.
     """
-    results = {
+    global_results = {
         "depths": [],
         "formats": {},
         "spacings": {},
@@ -104,30 +192,22 @@ def _analyze_dicom_series(
         "min": float('inf'),
         "max": float('-inf')
     }
-    reader = sitk.ImageFileReader()
 
-    for study in tqdm(studies_list, desc="Processing", unit="study"):
-        for series in [s for s in study.iterdir() if s.is_dir()]:
-            dcm_files = list(series.glob('*.dcm'))
-            results["depths"].append(len(dcm_files))
+    for study_path in tqdm(studies_list, desc="Processing", unit="study"):
+        # Get results for ONE study
+        study_res = _analyze_single_study(study_path, labeled_set, logger)
 
-            unique_fmts, unique_spcs = set(), set()
-            _process_files(
-                dcm_files,
-                reader,
-                unique_fmts,
-                unique_spcs,
-                study,
-                series,
-                labeled_set,
-                results,
-                logger
-            )
+        # AGGREGATION LOGIC (The "Reduce" step)
+        global_results["depths"].extend(study_res["depths"])
+        global_results["min"] = min(global_results["min"], study_res["min"])
+        global_results["max"] = max(global_results["max"], study_res["max"])
 
-            nb_f = len(unique_fmts)
-            results["consistency"][nb_f] = results["consistency"].get(nb_f, 0) + 1
+        # Merge frequency dictionaries
+        for key in ["formats", "spacings", "consistency"]:
+            for k, v in study_res[key].items():
+                global_results[key][k] = global_results[key].get(k, 0) + v
 
-    return results
+    return global_results
 
 
 def _log_inconsistency(
@@ -418,7 +498,7 @@ def main():
         _print_and_log("STARTING ANALYSIS", logger, level=logging.INFO)
 
         # 2. Execution
-        data = _analyze_dicom_series(studies, labeled_set, logger)
+        data = _analyze_dataset_dicom_files(studies, labeled_set, logger)
 
         # 3. Reporting
         _report_statistics(data, logger)
