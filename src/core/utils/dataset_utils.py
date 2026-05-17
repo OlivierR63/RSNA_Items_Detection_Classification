@@ -1,7 +1,7 @@
 # coding: utf-8
 
 # Standard library
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple
 import os
 import sys
 
@@ -878,8 +878,8 @@ def process_empty_series(
             - series_metadata (tf.Tensor): Sentinel info vector (3,) [int32].
               Values: [sampling_flag=0, first_slice_index=0, target_desc_tensor].
     """
-    
-    config = ConfigLoader().get()    
+
+    config = ConfigLoader().get()
     level_cfg = config["logging"]["level"]
 
     if level_cfg == "DEBUG":

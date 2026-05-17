@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import logging
 import SimpleITK as sitk
+from typing import List, Set, Dict, Any, Tuple
 from pathlib import Path
 from tqdm import tqdm
 from src.config.config_loader import ConfigLoader
@@ -29,280 +30,401 @@ CSV_LABEL_COORDINATES = config['paths']['csv']['label_coordinates']
 
 # Function for printing the information messages in the console and
 # saving them in parallel in the log file.
-def print_and_log_info(
+def print_and_log(
     msg: str,
-    logger: logging.Logger
+    logger: logging.Logger,
+    level: int = logging.INFO
 ) -> None:
+    """
+    Outputs a message to the standard console and records it via the logger.
+
+    This utility unifies console feedback and persistent logging into a single
+    call, supporting dynamic severity levels (e.g., INFO, WARNING, CRITICAL).
+
+    Args:
+        msg: The string message to be displayed and logged.
+        logger: The logging.Logger instance to handle the record.
+        level: The logging severity level. Defaults to logging.INFO.
+    """
     print(msg)
-    logger.info(msg)
+    logger.log(level, msg)
 
 
-def print_and_log_critical(
-    msg: str,
+def get_labeled_files(csv_path: str) -> set:
+    """
+    Parses a CSV file to extract ground truth coordinates for quick validation.
+
+    This function reads the specified CSV and isolates the unique identifiers
+    for studies, series, and instances. By converting these into a set of
+    integer tuples, it enables O(1) time complexity for membership checks
+    during DICOM analysis.
+
+    Args:
+        csv_path: System path to the CSV file containing labels.
+            Expected columns: 'study_id', 'series_id', 'instance_number'.
+
+    Returns:
+        A set of tuples, where each tuple is (study_id, series_id, instance_number).
+    """
+    df = pd.read_csv(csv_path)[['study_id', 'series_id', 'instance_number']]
+    return set(df.astype(int).itertuples(index=False, name=None))
+
+
+def analyze_dicom_series(
+    studies_list: List[Path],
+    labeled_set: Set[tuple],
     logger: logging.Logger
-) -> None:
-    print(msg)
-    logger.critical(msg)
-
-
-# Build and display statistics on series depth.
-def main():
+) -> Dict[str, Any]:
     """
-    Calculates the maximum number of slices per series.
-    Verifies the format consistency.
-    Verifies if the pixel spacing remains constant on every files or not.
+    Executes a comprehensive scan of DICOM studies to evaluate dataset integrity.
+
+    This function iterates through study and series directories to collect metadata
+    and pixel statistics. It identifies format inconsistencies within series and
+    cross-references them with ground truth labels to flag critical data issues.
+
+    Args:
+        studies_list: A list of Path objects pointing to individual study directories.
+        labeled_set: A set of (study_id, series_id, instance_number) tuples used
+            for O(1) lookup of ground truth references.
+        logger: A logging.Logger instance for status updates and error reporting.
+
+    Returns:
+        A dictionary containing:
+            - "depths" (list): Number of slices per series.
+            - "formats" (dict): Distribution of image dimensions (PixelSize).
+            - "spacings" (dict): Distribution of pixel spacings.
+            - "consistency" (dict): Count of unique formats found per series.
+            - "min"/"max" (float): Global pixel intensity boundaries.
     """
+    results = {
+        "depths": [],
+        "formats": {},
+        "spacings": {},
+        "consistency": {},
+        "min": float('inf'),
+        "max": float('-inf')
+    }
+    reader = sitk.ImageFileReader()
 
-    dicom_studies_dir = Path(DICOM_STUDIES_DIR).resolve()
-    nb_dicom_files = len(list(dicom_studies_dir.rglob('*.dcm')))
-    studies_dirs_list = [study for study in dicom_studies_dir.iterdir() if study.is_dir()]
+    for study in tqdm(studies_list, desc="Processing", unit="study"):
+        for series in [s for s in study.iterdir() if s.is_dir()]:
+            dcm_files = list(series.glob('*.dcm'))
+            results["depths"].append(len(dcm_files))
 
-    depth_list = []
-
-    # Use "logs" as default if "inspection" not in config.
-    log_dir = Path(config["paths"].get("inspection", "logs")) / "logs"
-
-    # This file stores the coordinates of the observed pathologies (condition)
-    csv_label_coordinates_df = pd.read_csv(CSV_LABEL_COORDINATES)
-    csv_coordinates_files_df = csv_label_coordinates_df[
-        ['study_id', 'series_id', 'instance_number']
-    ]
-
-    # Convert labels to a set of tuples for O(1) lookup
-    # Format: {(study_id, series_id, instance_number), ...}
-    labeled_files_set = set(
-        csv_coordinates_files_df.astype(int).itertuples(index=False, name=None)
-    )
-
-    global_min = float('inf')
-    global_max = float('-inf')
-
-    with setup_logger("train", log_dir=log_dir, config=config) as logger:
-
-        print_and_log_info("\n" + "="*40, logger)
-        print_and_log_info("STARTING ANALYSIS OF STUDIES FOLDER", logger)
-        print_and_log_info("="*40, logger)
-
-        # Dictionary to store: {nb_of_unique_formats: count_of_series}
-        format_consistency_stats = {}
-
-        reader = sitk.ImageFileReader()
-
-        overall_format_dict = {}
-        overall_spacing_dict = {}
-
-        for study in tqdm(studies_dirs_list, desc="Processing Studies", unit="study"):
-            # 1. Calculate depth for each series in study
-            study_series = [s for s in study.iterdir() if s.is_dir()]
-
-            for series in study_series:
-                dcm_files = list(series.glob('*.dcm'))
-                depth_list.append(len(dcm_files))
-
-                # 2. Check format consistency within the series
-                unique_formats = set()
-                unique_spacings = set()
-                for dcm_file in dcm_files:
-                    try:
-                        reader.SetFileName(str(dcm_file))
-                        reader.ReadImageInformation()
-                        size_before = len(unique_formats)
-
-                        # Retrieve the Pixel Spacing (in mm/pixel)
-                        # Return (spacing_x, spacing_y, spacing_z)
-                        spacing = reader.GetSpacing()
-                        unique_spacings.add(spacing)
-                        overall_spacing_dict[spacing] = overall_spacing_dict.get(spacing, 0) + 1
-
-                        # Retrieve the dimensions (in pixels)
-                        pixel_size = reader.GetSize()
-                        unique_formats.add(pixel_size)
-                        size_after = len(unique_formats)
-                        overall_format_dict[pixel_size] = overall_format_dict.get(pixel_size, 0) + 1
-
-                        # Calculate the actual field of view (FoV, in mm)
-                        fov_x = pixel_size[0] * spacing[0]
-                        fov_y = pixel_size[1] * spacing[1]
-
-                        if (size_before > 0) and (size_before < size_after):
-                            study_id_val = int(study.stem)
-                            series_id_val = int(series.stem)
-                            instance_val = int(dcm_file.stem)
-
-                            print_and_log_info("--- Inconsistency Detected ---", logger)
-                            print_and_log_info(
-                                (
-                                    f"Study: {study_id_val} | "
-                                    f"Series: {series_id_val} | "
-                                    f"File: {instance_val}"
-                                ),
-                                logger
-                            )
-
-                            # Instant check if this specific inconsistent file
-                            # is a ground truth label
-                            if (study_id_val, series_id_val, instance_val) in labeled_files_set:
-                                print_and_log_critical(
-                                    "This inconsistent file is a LABEL reference!",
-                                    logger
-                                )
-
-                            print_and_log_info(
-                                f"Dimensions: {pixel_size} pixels",
-                                logger
-                            )
-                            print_and_log_info(
-                                f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm",
-                                logger
-                            )
-                            print_and_log_info(
-                                f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm",
-                                logger
-                            )
-                            print_and_log_info(
-                                f"Pixel Spacing before and after (if different): {unique_spacings}",
-                                logger
-                            )
-                            print_and_log_info(
-                                f"Format before and after :{unique_formats}\n\n",
-                                logger
-                            )
-
-                        # Retrieve min and max pixel values in the file:
-                        image = reader.Execute()  # Read the whole image
-                        pixels = sitk.GetArrayFromImage(image)
-                        current_min = np.min(pixels)
-                        current_max = np.max(pixels)
-
-                        if current_min < global_min:
-                            global_min = current_min
-
-                        if current_max > global_max:
-                            global_max = current_max
-
-                    except Exception:
-                        continue  # Skip corrupted headers
-
-                # Count how many unique formats this specific series has
-                nb_formats = len(unique_formats)
-                format_consistency_stats[nb_formats] = (
-                    format_consistency_stats.get(nb_formats, 0) + 1
-                )
-
-        # Synthesis of the analysis
-        print_and_log_info("\n--- Statistics for file format Distribution ---\n", logger)
-        img_count = 0
-        for img_format, nb_files in overall_format_dict.items():
-            files = "file" if nb_files <= 1 else "files"
-            print_and_log_info(f"\tFormat {img_format}: {nb_files} {files}", logger)
-            img_count += nb_files
-
-        print_and_log_info(f"\n\tThe total count of dicom files is {img_count}", logger)
-
-        print_and_log_info("\n\n--- Statistics for Pixel Spacing Distribution ---\n", logger)
-        img_count = 0
-        for spacing, nb_files in overall_spacing_dict.items():
-            files = "file" if nb_files <= 1 else "files"
-            print_and_log_info(f"\tPixel Spacing {spacing}: {nb_files} {files}", logger)
-            img_count += nb_files
-
-        print_and_log_info(f"\n\tThe total count of dicom files is {img_count}", logger)
-
-        # --- Display Summary Table ---
-        print_and_log_info("\n\n" + "="*40, logger)
-        print_and_log_info("SERIES CONSISTENCY SUMMARY", logger)
-        print_and_log_info("="*40, logger)
-
-        print_and_log_info(f"Global Minimum Pixel Value: {global_min}", logger)
-        print_and_log_info(f"Global Maximum Pixel Value: {global_max}", logger)
-
-        # Evaluation of pixel dynamic range for storage
-        if global_min >= 0 and global_max <= 255:
-            suggestion = "uint8"
-        elif global_min >= -128 and global_max <= 127:
-            suggestion = "int8"
-        elif global_min >= 0 and global_max <= 65535:
-            suggestion = "uint16"
-        else:
-            suggestion = "int16"
-
-        print_and_log_info(f"Recommended TFRecord pixel storage format: {suggestion}", logger)
-
-        # Create a DataFrame for clean display
-        df_stats = pd.DataFrame(list(format_consistency_stats.items()),
-                                columns=['Unique Formats per Series', 'Number of Series'])
-        df_stats = df_stats.sort_values(by='Unique Formats per Series')
-
-        print_and_log_info(df_stats.to_string(index=False), logger)
-        print_and_log_info("="*40, logger)
-
-        # Plotting section:
-        fig, ax1 = plt.subplots(figsize=(10, 6))
-
-        # 1. Plot the Histogram (Primary Axis)
-        counts, bins_edges, _ = ax1.hist(
-            depth_list,
-            bins=20,
-            range=(0, 200),
-            color='skyblue',
-            edgecolor='black',
-            alpha=0.7,
-            label='Frequency'
-        )
-        ax1.set_xlabel("Depth (Number of Slices)")
-        ax1.set_ylabel("Frequency (Individual)", color='blue')
-        ax1.tick_params(axis='y', labelcolor='blue')
-
-        # Display the values in the console
-        print_and_log_info("\n\n--- Statistics for Series Depth Distribution ---\n", logger)
-        for idx in range(len(counts)):
-            print_and_log_info(
-                f"\tBin {idx+1} [{bins_edges[idx]:.0f} - {bins_edges[idx+1]:.0f}]: "
-                f"{int(counts[idx])} series",
+            unique_fmts, unique_spcs = set(), set()
+            _process_files(
+                dcm_files,
+                reader,
+                unique_fmts,
+                unique_spcs,
+                study,
+                series,
+                labeled_set,
+                results,
                 logger
             )
 
-        print_and_log_info(f"\n\tThe total count of dicom files is {nb_dicom_files}", logger)
+            nb_f = len(unique_fmts)
+            results["consistency"][nb_f] = results["consistency"].get(nb_f, 0) + 1
 
-        # 2. Calculate Cumulative Frequency
-        # np.cumsum adds elements progressively: [c1, c1+c2, c1+c2+c3, ...]
-        cumulative_counts = np.cumsum(counts)
+    return results
 
-        # We use the center of each bin for the scatter points
-        bin_centers = (bins_edges[:-1] + bins_edges[1:]) / 2
 
-        # 3. Create a secondary Y-axis for the cumulative plot
-        ax2 = ax1.twinx()
+def _log_inconsistency(
+    study: Path,
+    series: Path,
+    dcm_file: Path,
+    pixel_size: Tuple[int, ...],
+    spacing: Tuple[float, ...],
+    unique_spacings: Set[Tuple[float, ...]],
+    unique_formats: Set[Tuple[int, ...]],
+    labeled_files_set: Set[Tuple[int, int, int]],
+    logger: logging.Logger
+) -> None:
+    """
+    Reports detailed metadata discrepancies within a DICOM series.
 
-        # Plotting the scatter points connected by solid lines
-        ax2.plot(bin_centers, cumulative_counts, color='red', marker='o',
-                 linestyle='-', linewidth=2, label='Cumulative Count')
+    This function calculates the Field of View (FoV) for the problematic file
+    and logs its attributes. It also checks if the file is a critical reference
+    by cross-referencing its identifiers with the labeled dataset.
 
-        ax2.set_ylabel("Total Sample Size (Cumulative)", color='red')
-        ax2.tick_params(axis='y', labelcolor='red')
+    Args:
+        study: Path to the parent study directory.
+        series: Path to the series directory being analyzed.
+        dcm_file: Path to the specific DICOM file where the mismatch was found.
+        pixel_size: Image dimensions of the current file (Width, Height).
+        spacing: Pixel spacing of the current file (x_spacing, y_spacing).
+        unique_spacings: Set of all unique spacings encountered so far in this series.
+        unique_formats: Set of all unique dimensions encountered so far in this series.
+        labeled_files_set: Set of (study, series, instance) identifiers for labels.
+        logger: Logger instance to record the inconsistency and critical alerts.
+    """
+    study_id_val = int(study.stem)
+    series_id_val = int(series.stem)
+    instance_val = int(dcm_file.stem)
+    fov_x = pixel_size[0] * spacing[0]
+    fov_y = pixel_size[1] * spacing[1]
 
-        # Add a grid for better readability under Visual Studio
-        plt.grid(axis='y', linestyle='--', alpha=0.6)
+    print_and_log("--- Inconsistency Detected ---", logger, level=logging.INFO)
+    print_and_log(
+        f"Study: {study_id_val} | Series: {series_id_val} | File: {instance_val}",
+        logger,
+        level=logging.INFO
+    )
 
-        # 4. Final adjustments
-        plt.title(f"Distribution of Series Depth (n={len(depth_list)})")
+    # Instant check if this specific inconsistent file is a ground truth label
+    if (study_id_val, series_id_val, instance_val) in labeled_files_set:
+        print_and_log(
+            "This inconsistent file is a LABEL reference!",
+            logger,
+            level=logging.CRITICAL
+        )
 
-        # Merging legends from both axes
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
+    print_and_log(
+        f"Dimensions: {pixel_size} pixels",
+        logger,
+        level=logging.INFO
+    )
 
-        ax1.legend(
-            lines1 + lines2,
-            labels1 + labels2,
-            loc='center left',
-            bbox_to_anchor=(1.15, 0.5)
-         )
+    print_and_log(
+        f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm",
+        logger,
+        level=logging.INFO
+    )
 
-        # Adjust the layout to prevent the legend from being cut off
-        plt.tight_layout()
+    print_and_log(
+        f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm",
+        logger,
+        level=logging.INFO
+    )
 
-        plt.grid(axis='y', linestyle='--', alpha=0.3)
-        plt.show()
+    print_and_log(
+        f"History - Spacings: {unique_spacings} | Formats: {unique_formats}\n",
+        logger,
+        level=logging.INFO
+    )
+
+
+def _process_files(
+    files: List[Path],
+    reader: sitk.ImageFileReader,
+    unique_fmts: Set[Tuple[int, ...]],
+    unique_spcs: Set[Tuple[float, ...]],
+    study: Path,
+    series: Path,
+    labeled_set: Set[Tuple[int, int, int]],
+    results: Dict[str, Any],
+    logger: logging.Logger
+) -> None:
+    """
+    Analyzes individual DICOM files within a series to update dataset statistics.
+
+    This internal routine extracts geometric metadata (spacing, size) and pixel
+    intensity ranges for each file. It triggers inconsistency logging if a file's
+    dimensions deviate from the previously encountered formats in the same series.
+
+    Args:
+        files: List of DICOM file paths in the current series.
+        reader: Reusable SimpleITK ImageFileReader instance.
+        unique_fmts: Tracking set for image dimensions (width, height) in the series.
+        unique_spcs: Tracking set for pixel spacings in the series.
+        study: Path to the parent study directory.
+        series: Path to the current series directory.
+        labeled_set: Set of (study, series, instance) IDs for label cross-referencing.
+        results: Global results dictionary to be updated with formats and pixel ranges.
+        logger: Logger instance for reporting discrepancies.
+    """
+    for dcm in files:
+        try:
+            reader.SetFileName(str(dcm))
+            reader.ReadImageInformation()
+
+            spacing, size = reader.GetSpacing(), reader.GetSize()
+
+            # Detect Inconsistency
+            if len(unique_fmts) > 0 and size not in unique_fmts:
+                _log_inconsistency(
+                    study,
+                    series,
+                    dcm,
+                    size,
+                    spacing,
+                    unique_spcs,
+                    unique_fmts,
+                    labeled_set,
+                    logger
+                )
+
+            unique_fmts.add(size)
+            unique_spcs.add(spacing)
+            results["formats"][size] = results["formats"].get(size, 0) + 1
+            results["spacings"][spacing] = results["spacings"].get(spacing, 0) + 1
+
+            # Pixel range
+            pixels = sitk.GetArrayFromImage(reader.Execute())
+            results["min"] = min(results["min"], np.min(pixels))
+            results["max"] = max(results["max"], np.max(pixels))
+
+        except Exception:
+            # Silently skip corrupted or unreadable DICOM files
+            continue
+
+
+def report_statistics(
+        data: Dict[str, Any],
+        logger: logging.Logger
+) -> None:
+    """
+    Summarizes dataset analysis and provides storage recommendations.
+
+    This function processes the aggregated results to display distribution
+    statistics for file formats and pixel intensities. It includes a logic
+    to suggest the most efficient NumPy/TensorFlow data type based on the
+    global dynamic range of the pixel values.
+
+    Args:
+        data: Dictionary containing aggregated stats ('formats', 'min', 'max', 'consistency').
+        logger: Logger instance for standardized console and file output.
+    """
+
+    # 1. Display file format distribution
+    print_and_log(
+        "\n--- Statistics for File Format Distribution ---\n",
+        logger,
+        level=logging.INFO
+    )
+
+    for fmt, count in data["formats"].items():
+        print_and_log(
+            f"\tFormat {fmt}: {count} {'file' if count <= 1 else 'files'}",
+            logger,
+            level=logging.INFO
+        )
+
+    # 2. Display pixel intensity range and storage advice
+    print_and_log(
+        "\n--- Series Consistency Summary ---",
+        logger,
+        level=logging.INFO
+    )
+
+    print_and_log(
+        f"Global Min: {data['min']} | Global Max: {data['max']}",
+        logger,
+        level=logging.INFO
+    )
+
+    # Recommended storage format
+    suggestion = "int16"
+    if data["min"] >= 0:
+        suggestion = "uint8" if data["max"] <= 255 else "uint16"
+    elif -128 <= data["min"] and data["max"] <= 127:
+        suggestion = "int8"
+
+    print_and_log(
+        f"Recommended Storage Format: {suggestion}",
+        logger,
+        level=logging.INFO
+    )
+
+    # 3. Display series consistency table using Pandas for formatting
+    df_stats = pd.DataFrame(
+        list(data["consistency"].items()),
+        columns=['Unique Formats per Series', 'Number of Series']
+    )
+
+    formatted_table = df_stats.sort_values('Unique Formats per Series').to_string(index=False)
+    print_and_log(
+        formatted_table,
+        logger,
+        level=logging.INFO
+    )
+
+
+def plot_distribution(
+    depth_list: list,
+    logger: logging.Logger
+) -> None:
+    """
+    Visualizes the dataset depth distribution with a dual-axis chart.
+
+    This function generates a 20-bin histogram showing the frequency of series
+    depths alongside a cumulative step-line plot. This dual representation
+    helps identify both common slice counts and the overall sample size
+    coverage across the dataset.
+
+    Args:
+        depth_list: A list of integers representing the number of slices per series.
+        logger: Logger instance (used for consistency in the pipeline architecture).
+    """
+    # Initialize the figure with a dual-axis layout
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # 1. Plot Histogram (Main axis)
+    counts, bins_edges, _ = ax1.hist(
+        depth_list,
+        bins=20,
+        range=(0, 200),
+        color='skyblue',
+        edgecolor='black',
+        alpha=0.7,
+        label='Frequency'
+    )
+    ax1.set_xlabel("Depth (Number of Slices)")
+    ax1.set_ylabel("Frequency", color='blue')
+
+    # 2. Plot Cumulative frequency (Secondary Y-axis)
+    ax2 = ax1.twinx()
+    cumulative_counts = np.cumsum(counts)
+    bin_centers = (bins_edges[:-1] + bins_edges[1:]) / 2
+    ax2.plot(bin_centers, cumulative_counts, color='red', marker='o', label='Cumulative Count')
+    ax2.set_ylabel("Total Sample Size (Cumulative)", color='red')
+
+    # Final styling and display
+    plt.title(f"Distribution of Series Depth (n={len(depth_list)})")
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+
+    # Merge legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
+    """
+    Orchestrates the DICOM dataset inspection pipeline.
+
+    The workflow consists of four main stages:
+    1. Setup: Resolves directory paths, filters study folders, and loads
+       the ground truth labels for inconsistency cross-referencing.
+    2. Execution: Performs a deep scan of the DICOM studies to collect
+       metadata (dimensions, spacing) and pixel value ranges.
+    3. Reporting: Logs a statistical synthesis of the dataset, including
+       consistency checks and storage format recommendations.
+    4. Visualization: Generates a combined histogram and cumulative
+       distribution plot of series depths.
+    """
+
+    # 1. Setup
+    dicom_dir = Path(DICOM_STUDIES_DIR).resolve()
+    log_dir = Path(config["paths"].get("inspection", "logs")) / "logs"
+    studies = [s for s in dicom_dir.iterdir() if s.is_dir()]
+    labeled_set = get_labeled_files(CSV_LABEL_COORDINATES)
+
+    with setup_logger("train", log_dir=log_dir, config=config) as logger:
+        print_and_log("STARTING ANALYSIS", logger, level=logging.INFO)
+
+        # 2. Execution
+        data = analyze_dicom_series(studies, labeled_set, logger)
+
+        # 3. Reporting
+        report_statistics(data, logger)
+
+        # 4. Visualization
+        plot_distribution(data["depths"], logger)
 
 
 # Entry point

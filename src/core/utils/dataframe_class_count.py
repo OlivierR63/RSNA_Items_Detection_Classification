@@ -9,13 +9,14 @@ import tensorflow as tf
 from src.config.config_loader import ConfigLoader
 from src.core.utils.singleton_meta import SingletonMeta
 
+
 class DataFrameClassCount(metaclass=SingletonMeta):
     def __init__(self):
         # Use the actual attribute name for initialization check
         if hasattr(self, '_cache'):
             return
 
-        # Access the existing ConfigLoader singleton instance        
+        # Access the existing ConfigLoader singleton instance
         cache_path = ConfigLoader().get_value('paths').get('tfrecord_metadata_cache')
 
         # Resolve the full path to the cache file
@@ -29,14 +30,14 @@ class DataFrameClassCount(metaclass=SingletonMeta):
 
     def _get(self) -> Dict[str, int]:
         """
-        Reads the cache file and returns the number of items linked with each 
+        Reads the cache file and returns the number of items linked with each
         severity label.
         """
         if not self._cache.exists():
             return {}
 
         try:
-            with self._cache.open('r', encoding = 'utf_8') as f:
+            with self._cache.open('r', encoding='utf_8') as f:
                 # Load the full cache dictionary
                 cache_data: Dict[str, int] = json.load(f) or {}
 
@@ -47,7 +48,6 @@ class DataFrameClassCount(metaclass=SingletonMeta):
             # return an empty dict if the file is corrupted or unreadable
             return {}
 
-    
     def _calculate_balancing_weights(self) -> tf.Tensor:
         """
         Calculates class weights to compensate for dataset imbalance.
@@ -78,7 +78,7 @@ class DataFrameClassCount(metaclass=SingletonMeta):
             weights.append(weight)
 
         return tf.constant(weights, dtype=tf.float32)
-    
+
     def get_balancing_weights(self):
         """
         Returns the cached severity class weights.
