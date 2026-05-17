@@ -30,7 +30,7 @@ CSV_LABEL_COORDINATES = config['paths']['csv']['label_coordinates']
 
 # Function for printing the information messages in the console and
 # saving them in parallel in the log file.
-def print_and_log(
+def _print_and_log(
     msg: str,
     logger: logging.Logger,
     level: int = logging.INFO
@@ -50,7 +50,7 @@ def print_and_log(
     logger.log(level, msg)
 
 
-def get_labeled_files(csv_path: str) -> set:
+def _get_labeled_files(csv_path: str) -> set:
     """
     Parses a CSV file to extract ground truth coordinates for quick validation.
 
@@ -70,7 +70,7 @@ def get_labeled_files(csv_path: str) -> set:
     return set(df.astype(int).itertuples(index=False, name=None))
 
 
-def analyze_dicom_series(
+def _analyze_dicom_series(
     studies_list: List[Path],
     labeled_set: Set[tuple],
     logger: logging.Logger
@@ -165,8 +165,8 @@ def _log_inconsistency(
     fov_x = pixel_size[0] * spacing[0]
     fov_y = pixel_size[1] * spacing[1]
 
-    print_and_log("--- Inconsistency Detected ---", logger, level=logging.INFO)
-    print_and_log(
+    _print_and_log("--- Inconsistency Detected ---", logger, level=logging.INFO)
+    _print_and_log(
         f"Study: {study_id_val} | Series: {series_id_val} | File: {instance_val}",
         logger,
         level=logging.INFO
@@ -174,31 +174,31 @@ def _log_inconsistency(
 
     # Instant check if this specific inconsistent file is a ground truth label
     if (study_id_val, series_id_val, instance_val) in labeled_files_set:
-        print_and_log(
+        _print_and_log(
             "This inconsistent file is a LABEL reference!",
             logger,
             level=logging.CRITICAL
         )
 
-    print_and_log(
+    _print_and_log(
         f"Dimensions: {pixel_size} pixels",
         logger,
         level=logging.INFO
     )
 
-    print_and_log(
-        f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm",
+    _print_and_log(
+        f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm²",
         logger,
         level=logging.INFO
     )
 
-    print_and_log(
-        f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm",
+    _print_and_log(
+        f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm²",
         logger,
         level=logging.INFO
     )
 
-    print_and_log(
+    _print_and_log(
         f"History - Spacings: {unique_spacings} | Formats: {unique_formats}\n",
         logger,
         level=logging.INFO
@@ -270,7 +270,7 @@ def _process_files(
             continue
 
 
-def report_statistics(
+def _report_statistics(
         data: Dict[str, Any],
         logger: logging.Logger
 ) -> None:
@@ -288,27 +288,27 @@ def report_statistics(
     """
 
     # 1. Display file format distribution
-    print_and_log(
+    _print_and_log(
         "\n--- Statistics for File Format Distribution ---\n",
         logger,
         level=logging.INFO
     )
 
     for fmt, count in data["formats"].items():
-        print_and_log(
+        _print_and_log(
             f"\tFormat {fmt}: {count} {'file' if count <= 1 else 'files'}",
             logger,
             level=logging.INFO
         )
 
     # 2. Display pixel intensity range and storage advice
-    print_and_log(
+    _print_and_log(
         "\n--- Series Consistency Summary ---",
         logger,
         level=logging.INFO
     )
 
-    print_and_log(
+    _print_and_log(
         f"Global Min: {data['min']} | Global Max: {data['max']}",
         logger,
         level=logging.INFO
@@ -321,7 +321,7 @@ def report_statistics(
     elif -128 <= data["min"] and data["max"] <= 127:
         suggestion = "int8"
 
-    print_and_log(
+    _print_and_log(
         f"Recommended Storage Format: {suggestion}",
         logger,
         level=logging.INFO
@@ -334,14 +334,14 @@ def report_statistics(
     )
 
     formatted_table = df_stats.sort_values('Unique Formats per Series').to_string(index=False)
-    print_and_log(
+    _print_and_log(
         formatted_table,
         logger,
         level=logging.INFO
     )
 
 
-def plot_distribution(
+def _plot_distribution(
     depth_list: list,
     logger: logging.Logger
 ) -> None:
@@ -412,19 +412,19 @@ def main():
     dicom_dir = Path(DICOM_STUDIES_DIR).resolve()
     log_dir = Path(config["paths"].get("inspection", "logs")) / "logs"
     studies = [s for s in dicom_dir.iterdir() if s.is_dir()]
-    labeled_set = get_labeled_files(CSV_LABEL_COORDINATES)
+    labeled_set = _get_labeled_files(CSV_LABEL_COORDINATES)
 
-    with setup_logger("train", log_dir=log_dir, config=config) as logger:
-        print_and_log("STARTING ANALYSIS", logger, level=logging.INFO)
+    with setup_logger(process_name="train", log_dir=log_dir) as logger:
+        _print_and_log("STARTING ANALYSIS", logger, level=logging.INFO)
 
         # 2. Execution
-        data = analyze_dicom_series(studies, labeled_set, logger)
+        data = _analyze_dicom_series(studies, labeled_set, logger)
 
         # 3. Reporting
-        report_statistics(data, logger)
+        _report_statistics(data, logger)
 
         # 4. Visualization
-        plot_distribution(data["depths"], logger)
+        _plot_distribution(data["depths"], logger)
 
 
 # Entry point

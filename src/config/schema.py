@@ -29,11 +29,11 @@ REQUIRED_SCHEMA = {
         "csv": {
             "series_description": str,
             "label_coordinates": str,
-            "instance_series_format": str,
+            "instances_series_format": str,
             "train": str
         }
     },
-    "data_spec": {
+    "data_specs": {
         "series_depth_percentile": OneOf(int, float),
         "max_records_per_frame": int,
         "dataset_buffer_size_mb": int

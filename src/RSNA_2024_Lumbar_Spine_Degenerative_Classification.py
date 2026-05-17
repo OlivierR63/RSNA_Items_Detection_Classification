@@ -476,8 +476,7 @@ def main():
 
     with setup_logger(
         process_name="train",
-        log_dir=log_dir,
-        config=config
+        log_dir=log_dir
     ) as logger:
 
         # The logger is now set up available globally via get_current_logger().

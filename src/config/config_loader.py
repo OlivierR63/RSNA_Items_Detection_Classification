@@ -461,10 +461,19 @@ class ConfigLoader(metaclass=SingletonMeta):
                 case _:
                     # 6. Strict Single Type check
                     if not isinstance(value, expected):
-                        raise TypeError(
-                            f"Type mismatch at '{current_path}': "
-                            f"expected {expected.__name__}, got {type(value).__name__}"
-                        )
+                        try:
+                            # Attempt to force the type defined in the 'expected' variable
+                            data[key] = expected(value)
+
+                        except (ValueError, TypeError) as e:
+                            # Create a clear, explicit error message before crashing
+                            error_msg = (
+                                f"CONFIGURATION ERROR: Critical type mismatch.\n"
+                                f"Value '{value}' could not be converted to {expected}.\n"
+                                f"Please verify your YAML configuration file."
+                            )
+                            # Raising a new exception from 'e' preserves the original stack trace
+                            raise TypeError(error_msg) from e
 
     def _validate_business_rules(self) -> None:
         """
