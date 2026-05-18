@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import logging
+import concurrent.futures
+import multiprocessing
 import SimpleITK as sitk
 from typing import List, Set, Dict, Any, Tuple
 from pathlib import Path
@@ -75,8 +77,7 @@ def _analyze_single_series(
     series: Path,
     reader: sitk.ImageFileReader,
     labeled_set: Set[Tuple[int, int, int]],
-    results: Dict[str, Any],
-    logger: logging.Logger
+    results: Dict[str, Any]
 ) -> None:
 
     """
@@ -115,8 +116,7 @@ def _analyze_single_series(
         study_path,
         series,
         labeled_set,
-        results,
-        logger
+        results
     )
 
     # Calculate and record how many different formats exist in the series.
@@ -124,11 +124,16 @@ def _analyze_single_series(
     nb_f = len(unique_fmts)
     results["consistency"][nb_f] = results["consistency"].get(nb_f, 0) + 1
 
+    if nb_f > 1:
+        results["logs"].append((
+            "warning",
+            f"Inconsistency detected in {series}: {nb_f} different formats found."
+        ))
+
 
 def _analyze_single_study(
     study_path: Path,
-    labeled_set: Set[Tuple[int, int, int]],
-    logger: logging.Logger
+    labeled_set: Set[Tuple[int, int, int]]
 ) -> Dict[str, Any]:
 
     """
@@ -142,18 +147,24 @@ def _analyze_single_study(
         "spacings": {},
         "consistency": {},
         "min": float('inf'),
-        "max": float('-inf')
+        "max": float('-inf'),
+        "logs": []
     }
     reader = sitk.ImageFileReader()
 
     try:
         for series in [s for s in study_path.iterdir() if s.is_dir()]:
-            _analyze_single_series(study_path, series, reader, labeled_set, results, logger)
+            # Ensure _analyze_single_series handles logs by adding to results["logs"]
+            _analyze_single_series(study_path, series, reader, labeled_set, results)
+
+        # Success log
+        info_msg = f"Successfully processed study: {study_path.name}"
+        results["logs"].append(("info", info_msg))
 
     except Exception as e:
+        # Catch and store error without crashing the worker process
         error_msg = f"Error processing study {study_path.name}: {e}"
-        logger.error(error_msg, exc_info=True)
-        raise
+        results["logs"].append(("error", f"{error_msg}"))
 
     return results
 
@@ -177,7 +188,7 @@ def _analyze_dataset_dicom_files(
         logger: A logging.Logger instance for status updates and error reporting.
 
     Returns:
-        A dictionary containing:
+        A dictionary containing global statistics:
             - "depths" (list): Number of slices per series.
             - "formats" (dict): Distribution of image dimensions (PixelSize).
             - "spacings" (dict): Distribution of pixel spacings.
@@ -193,24 +204,63 @@ def _analyze_dataset_dicom_files(
         "max": float('-inf')
     }
 
-    for study_path in tqdm(studies_list, desc="Processing", unit="study"):
-        # Get results for ONE study
-        study_res = _analyze_single_study(study_path, labeled_set, logger)
+    # Define the number of workers (leaving one core free for system stability)
+    max_workers = multiprocessing.cpu_count() - 1
 
-        # AGGREGATION LOGIC (The "Reduce" step)
-        global_results["depths"].extend(study_res["depths"])
-        global_results["min"] = min(global_results["min"], study_res["min"])
-        global_results["max"] = max(global_results["max"], study_res["max"])
+    # Using ProcessPoolExecutor to bypass the "Global Interpreter Lock" (GIL)
+    # and utilize multiple CPU cores
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 
-        # Merge frequency dictionaries
-        for key in ["formats", "spacings", "consistency"]:
-            for k, v in study_res[key].items():
-                global_results[key][k] = global_results[key].get(k, 0) + v
+        # Dispatching tasks (Map)
+        # We submit each study analysis as an independent process
+        future_to_study = {
+            executor.submit(_analyze_single_study, study_path, labeled_set): study_path
+            for study_path in studies_list
+        }
+
+        for future in tqdm(
+            concurrent.futures.as_completed(future_to_study),
+            total=len(studies_list),
+            desc="Parallel Processing",
+            unit="study"
+        ):
+
+            study_path = future_to_study[future]
+            try:
+                # Retrieve the result dictionary from the worker process
+                study_res = future.result()
+
+                # Dump the logs gathered by the worker
+                for level, message in study_res.get("logs", []):
+                    if level == "critical":
+                        logger.critical(message, exc_info=True)
+                    elif level == "error":
+                        logger.error(message, exc_info=True)
+                    elif level == "warning":
+                        logger.warning(message)
+                    else:
+                        logger.info(message)
+
+                # AGGREGATION LOGIC (The "Reduce" step)
+                global_results["depths"].extend(study_res["depths"])
+                global_results["min"] = min(global_results["min"], study_res["min"])
+                global_results["max"] = max(global_results["max"], study_res["max"])
+
+                # Merge frequency distribution dictionaries
+                for key in ["formats", "spacings", "consistency"]:
+                    for k, v in study_res[key].items():
+                        global_results[key][k] = global_results[key].get(k, 0) + v
+
+            except Exception as e:
+                # Handle potential crashes within a specific worker process
+                logger.error(f"Study {study_path.name} generated an exception: {e}")
+                # Optional: Depending on Fail-Fast preference, you could 'raise' here
+                # or continue to process remaining studies.
 
     return global_results
 
 
-def _log_inconsistency(
+def _format_inconsistency_report(
     study: Path,
     series: Path,
     dcm_file: Path,
@@ -218,26 +268,13 @@ def _log_inconsistency(
     spacing: Tuple[float, ...],
     unique_spacings: Set[Tuple[float, ...]],
     unique_formats: Set[Tuple[int, ...]],
-    labeled_files_set: Set[Tuple[int, int, int]],
-    logger: logging.Logger
-) -> None:
+    labeled_files_set: Set[Tuple[int, int, int]]
+) -> str:
     """
-    Reports detailed metadata discrepancies within a DICOM series.
+    Constructs a detailed string report of metadata discrepancies.
 
-    This function calculates the Field of View (FoV) for the problematic file
-    and logs its attributes. It also checks if the file is a critical reference
-    by cross-referencing its identifiers with the labeled dataset.
-
-    Args:
-        study: Path to the parent study directory.
-        series: Path to the series directory being analyzed.
-        dcm_file: Path to the specific DICOM file where the mismatch was found.
-        pixel_size: Image dimensions of the current file (Width, Height).
-        spacing: Pixel spacing of the current file (x_spacing, y_spacing).
-        unique_spacings: Set of all unique spacings encountered so far in this series.
-        unique_formats: Set of all unique dimensions encountered so far in this series.
-        labeled_files_set: Set of (study, series, instance) identifiers for labels.
-        logger: Logger instance to record the inconsistency and critical alerts.
+    Returns:
+        A multi-line string containing the formatted report.
     """
     study_id_val = int(study.stem)
     series_id_val = int(series.stem)
@@ -245,44 +282,20 @@ def _log_inconsistency(
     fov_x = pixel_size[0] * spacing[0]
     fov_y = pixel_size[1] * spacing[1]
 
-    _print_and_log("--- Inconsistency Detected ---", logger, level=logging.INFO)
-    _print_and_log(
-        f"Study: {study_id_val} | Series: {series_id_val} | File: {instance_val}",
-        logger,
-        level=logging.INFO
-    )
+    lines = [
+        "--- Inconsistency Detected ---",
+        f"Study: {study_id_val} | Series: {series_id_val} | File: {instance_val}"
+    ]
 
-    # Instant check if this specific inconsistent file is a ground truth label
     if (study_id_val, series_id_val, instance_val) in labeled_files_set:
-        _print_and_log(
-            "This inconsistent file is a LABEL reference!",
-            logger,
-            level=logging.CRITICAL
-        )
+        lines.append("!!! CRITICAL: This inconsistent file is a LABEL reference !!!")
 
-    _print_and_log(
-        f"Dimensions: {pixel_size} pixels",
-        logger,
-        level=logging.INFO
-    )
+    lines.append(f"Dimensions: {pixel_size} pixels")
+    lines.append(f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm²")
+    lines.append(f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm²")
+    lines.append(f"History - Spacings: {unique_spacings} | Formats: {unique_formats}\n")
 
-    _print_and_log(
-        f"Pixel Spacing: {spacing[0]:.1f} x {spacing[1]:.1f} mm²",
-        logger,
-        level=logging.INFO
-    )
-
-    _print_and_log(
-        f"Real FOV: {fov_x:.1f} x {fov_y:.1f} mm²",
-        logger,
-        level=logging.INFO
-    )
-
-    _print_and_log(
-        f"History - Spacings: {unique_spacings} | Formats: {unique_formats}\n",
-        logger,
-        level=logging.INFO
-    )
+    return "\n".join(lines)
 
 
 def _process_files(
@@ -293,8 +306,7 @@ def _process_files(
     study: Path,
     series: Path,
     labeled_set: Set[Tuple[int, int, int]],
-    results: Dict[str, Any],
-    logger: logging.Logger
+    results: Dict[str, Any]
 ) -> None:
     """
     Analyzes individual DICOM files within a series to update dataset statistics.
@@ -311,8 +323,7 @@ def _process_files(
         study: Path to the parent study directory.
         series: Path to the current series directory.
         labeled_set: Set of (study, series, instance) IDs for label cross-referencing.
-        results: Global results dictionary to be updated with formats and pixel ranges.
-        logger: Logger instance for reporting discrepancies.
+        results: Local results dictionary to be updated with formats and pixel ranges.
     """
     for dcm in files:
         try:
@@ -323,7 +334,8 @@ def _process_files(
 
             # Detect Inconsistency
             if len(unique_fmts) > 0 and size not in unique_fmts:
-                _log_inconsistency(
+                # Generate a detailed report string instead of direct logging
+                report = _format_inconsistency_report(
                     study,
                     series,
                     dcm,
@@ -331,9 +343,9 @@ def _process_files(
                     spacing,
                     unique_spcs,
                     unique_fmts,
-                    labeled_set,
-                    logger
+                    labeled_set
                 )
+                results["logs"].append(("warning", report))
 
             unique_fmts.add(size)
             unique_spcs.add(spacing)
@@ -351,8 +363,8 @@ def _process_files(
 
 
 def _report_statistics(
-        data: Dict[str, Any],
-        logger: logging.Logger
+    data: Dict[str, Any],
+    logger: logging.Logger
 ) -> None:
     """
     Summarizes dataset analysis and provides storage recommendations.
@@ -467,7 +479,7 @@ def _plot_distribution(
     # Merge legends from both axes
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='lower right')
 
     plt.tight_layout()
     plt.show()
