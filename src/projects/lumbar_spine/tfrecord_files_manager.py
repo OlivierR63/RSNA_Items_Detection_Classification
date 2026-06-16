@@ -449,7 +449,7 @@ class TFRecordFilesManager:
         # Actual processing
         try:
             success = self._process_study(
-                study_full_path, study_metadata_df, tfrecord_path
+                study_full_path, study_metadata_df, tfrecord_path, result["logs"]
             )
 
             result["saved"] = int(success)
@@ -470,7 +470,7 @@ class TFRecordFilesManager:
         study_path: Path,
         metadata_df: pd.DataFrame,
         tfrecord_dir: Path,
-        logger: Optional[logging.Logger] = None
+        log_storage: list
     ) -> bool:
         """
         Orchestrates the processing of all series within a study
@@ -480,7 +480,8 @@ class TFRecordFilesManager:
             - study_path (Path): Path to the study directory.
             - metadata_df (pd.DataFrame): DataFrame containing metadata for the study.
             - tfrecord_dir (Path): Destination directory for the generated TFRecord file.
-            - logger (Optional[logging.Logger]): Logger instance for status reporting.
+            - log_storage (list): List to accumulate log messages. Receives the worker's list
+                                  of logs to be processed by the main orchestrator.
 
         Returns:
             bool: True if the TFRecord was successfully created and validated.
@@ -491,8 +492,7 @@ class TFRecordFilesManager:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        logger = logger or self._logger
-        logger.debug(
+        self._logger.debug(
             f"Starting {class_name}.{func_name}",
             extra={"action": "_process_study", "study_dir": study_path}
         )
@@ -501,19 +501,23 @@ class TFRecordFilesManager:
         tfrecord_path = tfrecord_dir / f"{study_id}.tfrecord"
 
         # Data Extraction and validation
-        input_features_df, labels_df = self._extract_study_data(study_path, metadata_df, logger)
+        input_features_df, labels_df = self._extract_study_data(
+            study_path,
+            metadata_df,
+            self._logger
+        )
 
-        if not self._is_study_valid(study_path, labels_df, logger):
+        if not self._is_study_valid(study_path, labels_df, log_storage):
             return False
 
         try:
             success = self._write_study_to_tfrecord(
-                study_path, tfrecord_path, input_features_df, labels_df, logger
+                study_path, tfrecord_path, input_features_df, labels_df, self._logger
             )
             return success
 
         except Exception as e:
-            self._handle_study_error(study_path, tfrecord_path, e, logger)
+            self._handle_study_error(study_path, tfrecord_path, e, self._logger)
             return False
 
     def _extract_study_data(
@@ -556,7 +560,7 @@ class TFRecordFilesManager:
         self,
         study_path: Path,
         labels_df: pd.DataFrame,
-        logger: logging.Logger | None
+        log_storage: list
     ) -> bool:
 
         """
@@ -565,7 +569,7 @@ class TFRecordFilesManager:
         Args:
             - study_path (Path): Path to the directory containing the study's series.
             - labels_df (pd.DataFrame): Deduplicated labels associated with the study.
-            - logger (logging.Logger | None): Logger instance for reporting validation failures.
+            - log_storage (list): List to accumulate log messages.
 
         Returns:
             - bool: True if the study has the expected number of labels and is not physically empty.
@@ -574,8 +578,6 @@ class TFRecordFilesManager:
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
-
-        logger = logger or self._logger
         study_id = study_path.name
 
         is_valid = True
@@ -590,7 +592,9 @@ class TFRecordFilesManager:
                 f"Found {actual_nb_labels} labels, but expected {expected_nb_labels} "
                 "Skipped study"
             )
-            logger.error(error_msg)
+
+            # Accumulate the log instead of displaying it directly
+            log_storage.append(("error", error_msg))
             is_valid = False
 
         # Test 2: Physical presence (File system logic)
@@ -600,7 +604,7 @@ class TFRecordFilesManager:
                 f"Issue in function {class_name}.{func_name}. "
                 f"Study {study_id} is empty. Skip to the next one."
             )
-            logger.error(error_msg)
+            log_storage.append(("error", error_msg))
             is_valid = False
 
         return is_valid

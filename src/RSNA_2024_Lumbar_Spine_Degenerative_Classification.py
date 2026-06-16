@@ -405,164 +405,178 @@ def _get_or_build_model(
     return _finalize_and_compile_model(model, config, logger)
 
 
-def main():
+def _initialize_system_environment(config: dict) -> int:
     """
-        Main function to load configuration, set up the TensorFlow dataset pipeline,
-        load and compile the 3D model, and start the training process.
+    Configures environment variables, CPU threading parameters for TensorFlow,
+    MKL, and OpenMP, and registers the global OS signal interrupt handler.
+
+    Args:
+        config (dict): The global configuration dictionary.
+
+    Returns:
+        int: The number of CPU threads allocated for execution.
     """
-
-    # Define the policy: float16 for computations, float32 for critical variables.
-
-    # Select the proper Yaml config file, depending on the current platform : WINDOWS or Kaggle
-    setup_config_symlink("src/config")
-
-    # 1. System initialization
-    from src.config.config_loader import ConfigLoader
-    config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
-    config: dict = config_loader.get()
-
-    # Threads settings
     system_cfg = config["system"]
     nb_cores_config = system_cfg['nb_cores']
     is_kaggle = os.environ.get('KAGGLE_KERNEL_RUN_TYPE') is not None
     cpu_threads = nb_cores_config if is_kaggle else 7
 
+    # Set environment variables for legacy Keras and execution threads
     os.environ["TF_USE_LEGACY_KERAS"] = '1'
     os.environ["OMP_NUM_THREADS"] = str(cpu_threads)
     os.environ["MKL_NUM_THREADS"] = str(cpu_threads)
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
-    # 2. Allow to parallelize operations on the requested number of cores
+    # Setup signal handler for graceful interruption
+    signal.signal(signal.SIGINT, handle_interrupt)
+
+    return cpu_threads
+
+
+def _configure_tensorflow_threading(cpu_threads: int):
+    """
+    Applies intra and inter-op parallelism threads configuration to TensorFlow.
+    Gently catches runtime errors if the context was already initialized.
+    """
     import tensorflow as tf
     try:
         tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)
         tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
     except RuntimeError:
-        # Unable to change if TF already initialized, but carry on the process
         print("TF Context already initialized, impossible to update threading.")
 
-    # Project imports
+
+def _resolve_series_depth(config: dict, config_loader) -> int:
+    """
+    Resolves the maximum DICOM files depth per series, either by fetching it from
+    the static configuration or by computing it dynamically via percentile analysis.
+    """
+    from src.core.utils.logger import get_current_logger
+    logger = get_current_logger()
+
+    if config["series_depth"] is not None:
+        return config_loader.get_value("series_depth")
+
+    paths_cfg = config['paths']
+    data_specs_cfg = config["data_specs"]
+    percentile_str = data_specs_cfg["series_depth_percentile"]
+
+    if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
+        series_depth = config_loader.get_series_depth(
+            tfrecord_cache_dir=paths_cfg["tfrecord_metadata_cache"],
+            dicom_studies_dir=paths_cfg["dicom_studies"],
+            percentile=float(percentile_str),
+            logger=logger
+        )
+        config_loader.set_value("series_depth", series_depth)
+        return series_depth
+
+    return 0
+
+
+def _update_tfrecord_cache_file(cache_dir_path: str, actual_nb_files: int):
+    """
+    Safely reads, updates, and rewrites the shared JSON cache file
+    with the total number of successfully generated TFRecord files.
+    """
+    cache_path = Path(cache_dir_path) / "cache.json"
+    cache_data = {}
+
+    if cache_path.exists():
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            try:
+                cache_data = json.load(f)
+            except json.JSONDecodeError:
+                # Fallback to an empty dictionary if corrupted or empty
+                cache_data = {}
+
+    cache_data['actual_nb_tfrecord_files'] = actual_nb_files
+
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(cache_data, f, indent=4)
+
+
+def main():
+    """
+    Main orchestrator function to initialize the system environment, load configurations,
+    execute the TFRecord extraction pipeline, and trigger the 3D model training framework.
+    """
+    # Select the proper Yaml config file depending on the platform (WINDOWS or Kaggle)
+    setup_config_symlink("src/config")
+
+    # Load configuration
+    from src.config.config_loader import ConfigLoader
+    config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
+    config: dict = config_loader.get()
+
+    # 1. System and Environmental initialization
+    cpu_threads = _initialize_system_environment(config)
+    _configure_tensorflow_threading(cpu_threads)
+
+    # Project Framework Imports
+    import tensorflow as tf
     from src.core.utils.logger import setup_logger
     from src.core.utils.clean_logs import clean_old_logs
     from src.projects.lumbar_spine.model_trainer import ModelTrainer
     from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
 
-    # Apply global TF settings from the config
-    run_eagerly_val = config['compilation']['run_eagerly']
-
-    tf.config.run_functions_eagerly(run_eagerly_val)
-    tf.data.experimental.enable_debug_mode()  # Optional but helpful for tf.data
-
-    # Mute Python-level TensorFlow/Keras warnings
-    # This handles warnings such as deprecated 'tf.placeholder' calls within internal Keras modules
+    # Apply global TensorFlow execution settings
+    tf.config.run_functions_eagerly(config['compilation']['run_eagerly'])
+    tf.data.experimental.enable_debug_mode()
     tf.get_logger().setLevel(logging.ERROR)
 
-    # Setup signal handler for graceful interruption
-    signal.signal(signal.SIGINT, handle_interrupt)
-
-    # ---------------- Environmental configuration (before any TF import) -----------------------
-    # Suppress TensorFlow C++ environmental logs
-    #   '0' = all logs (default),
-    #   '1' = filter INFO,
-    #   '2' = filter INFO & WARNING,
-    #   '3' = filter all including ERROR
-
-    # Disable oneDNN custom operations messages
-    # This prevents warnings regarding slight numerical differences due to floating-point round-off
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
     paths_cfg = config['paths']
-
-    # 2. Initialize logger with process-specific context
     log_dir = Path(paths_cfg["output"]) / "logs"
 
-    # Redirect terminal stdout and stderr to a log file
+    # Redirect terminal stdout and stderr streams to a single log file
     from src.core.utils.system_stream_tee import SystemStreamTee
-    terminal_log_path = str(log_dir / "terminal_output.log")
+    SystemStreamTee(str(log_dir / "terminal_output.log"))
 
-    SystemStreamTee(terminal_log_path)
-
-    with setup_logger(
-        process_name="train",
-        log_dir=log_dir
-    ) as logger:
-
-        # The logger is now set up available globally via get_current_logger().
-        # It will automatically close at the end of this block.
+    # 2. Contextual Execution Block
+    with setup_logger(process_name="train", log_dir=log_dir) as logger:
         logger.info(f"Configuration loaded successfully. Loaded_values: {config}")
 
         try:
-            if config["series_depth"] is None:
-                data_specs_cfg = config["data_specs"]
-                percentile_str = data_specs_cfg["series_depth_percentile"]
-
-                if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
-                    series_depth = config_loader.get_series_depth(
-                        tfrecord_cache_dir=paths_cfg["tfrecord_metadata_cache"],
-                        dicom_studies_dir=paths_cfg["dicom_studies"],
-                        percentile=float(percentile_str),
-                        logger=logger
-                    )
-                    config_loader.set_value("series_depth", series_depth)
-
-            else:
-                series_depth = config_loader.get_value("series_depth")
-
-            info_msg = (
-                "Max TFRecord files depth (number of DICOM files per series): "
-                f"{series_depth}"
+            # Resolve maximum DICOM frame depth
+            series_depth = _resolve_series_depth(config, config_loader)
+            logger.info(
+                f"Max TFRecord files depth (number of DICOM files per series): {series_depth}"
             )
 
-            logger.info(info_msg)
-
-            # Clear any background memory from the model building phase
-            # to free up RAM before the data pipeline starts prefetching.
+            # Clear background memory before prefetching data pipeline
             tf_keras.backend.clear_session()
 
-            # Instantiate the singleton CSVMetadataHandler for further use:
+            # Instantiate singleton metadata parser
             _ = CSVMetadataHandler(
                 logger=logger,
                 dicom_studies_dir=paths_cfg["dicom_studies"],
                 **paths_cfg["csv"]
             )
 
-            # Load the compiled model if it already exists. In the other case, generate
-            # a new model and compile it.
+            # Retrieve compiled model or build a new one from scratch
             model: tf_keras.Model = _get_or_build_model(series_depth, config, logger)
 
             logger.info(
-                "Starting training process.",
-                extra={"status": "started", "log_dir": log_dir}
+                "Starting training process.", extra={"status": "started", "log_dir": log_dir}
             )
 
-            # Extract DICOM images and metadata from source directories
-            # and serialize them into dedicated TFRecord files (one per patient)
+            # Process DICOM data and serialize into TFRecord format
             tfrecord_files_manager = TFRecordFilesManager(logger)
             actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
 
-            # Store the number of tfrecord_files in the cache file
-            tfrecord_cache_dir = Path(paths_cfg["tfrecord_metadata_cache"])
-            cache_path = tfrecord_cache_dir / "cache.json"
+            # Update cache file tracking generated TFRecords
+            _update_tfrecord_cache_file(
+                paths_cfg["tfrecord_metadata_cache"],
+                actual_nb_tfrecord_files
+            )
 
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                try:
-                    cache_data = json.load(f)
+            logger.info(
+                f"Cache successfully updated in {paths_cfg['tfrecord_metadata_cache']}/cache.json"
+            )
 
-                except json.JSONDecodeError:
-                    # In case the file is empty or corrupted
-                    cache_data = {}
-
-            # Add the new key / value pair:
-            cache_data['actual_nb_tfrecord_files'] = actual_nb_tfrecord_files
-
-            # Rewrite the cache file:
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, indent=4)
-
-            logger.info(f"Cache successfully updated in {cache_path}")
-
+            # Initialize framework and run training sequence
             trainer = ModelTrainer(
-                config=config,
                 logger=logger,
                 model=model,
                 model_depth=series_depth
@@ -571,27 +585,26 @@ def main():
             trainer.prepare_training_and_validation_datasets()
             trainer.train_model()
 
-            # Force Keras to close properly before the end of the script
+            # Final garbage collection routines
             tf_keras.backend.clear_session()
             gc.collect()
 
         except Exception as e:
-            critical_msg = f"Critical error during training: {str(e)}"
             logger.critical(
-                critical_msg,
+                f"Critical error during training: {str(e)}",
                 exc_info=True,
                 extra={"status": "failure", "error": str(e)}
             )
             raise e
 
         finally:
-            logger.info("Training process completed. Log file will be closed automatically.",
-                        extra={"status": "completed"})
+            logger.info(
+                "Training process completed. Log file will be closed automatically.",
+                extra={"status": "completed"}
+            )
 
-        # Remove log files older than 30 days
-        log_retention_days = system_cfg['log_retention_days']
-
-        clean_old_logs(days=int(log_retention_days))
+        # Remove historical logging footprints older than threshold configuration
+        clean_old_logs(days=int(config["system"]['log_retention_days']))
 
 
 if __name__ == "__main__":
