@@ -6,133 +6,110 @@ The architecture uses a hybrid model: extracting 2D features from series slice i
 
 ---
 
-## 📂 Project Directory Structure
+## Project Directory Structure
 
-Below is the directory structure for the project, showcasing the separation between data management, models, callbacks, utility functions, scripts, and tests.
+Below is a vertically-optimized directory layout designed to display cleanly on standard vertical (A4) orientations.
 
 ```mermaid
 graph TD
-    Root[RSNA_Items_Detection_Classification] --> Src[src]
-    Root --> Scripts[scripts]
-    Root --> Test[test]
-    Root --> Data[data]
-    Root --> Logs[logs]
+    Root["RSNA_Items_Detection_Classification (Root)"]
     
-    Src --> SrcMain["RSNA_2024_Lumbar_Spine_Degenerative_Classification.py (Entry point)"]
-    Src --> SrcSurvey["RSNA_input_data_survey.py (DICOM inspection)"]
-    Src --> Config[config]
-    Src --> Core[core]
-    Src --> Projects[projects]
+    subgraph Config & Entry
+        Main["RSNA_2024_..._Classification.py (Entry)"]
+        Survey["RSNA_input_data_survey.py (Data Survey)"]
+        cfg_folder["src/config/"]
+        cfg_folder --> cfg_files["config_loader.py<br/>schema.py<br/>lumbar_spine_config_*.yaml"]
+    end
     
-    Config --> ConfigLoader[config_loader.py]
-    Config --> Schema[schema.py]
-    Config --> ConfigYAMLs[lumbar_spine_config_windows/kaggle.yaml]
+    subgraph Core Library
+        core_folder["src/core/"]
+        core_folder --> core_models["models/<br/>- backbone_2d.py<br/>- conv3d_aggregator.py<br/>- temporal_padding_layer.py<br/>- model_factory.py"]
+        core_folder --> core_callbacks["callbacks/<br/>- system_resource_monitor_callback.py<br/>- dynamic_loss_balancer_callback.py<br/>- log_training_callback.py"]
+        core_folder --> core_utils["utils/<br/>- dataset_utils.py<br/>- logger.py<br/>- system_stream_tee.py"]
+    end
     
-    Core --> Models[models]
-    Core --> Callbacks[callbacks]
-    Core --> Utils[utils]
+    subgraph Projects & Logic
+        proj_folder["src/projects/lumbar_spine/"]
+        proj_folder --> proj_files["model_trainer.py<br/>tfrecord_files_manager.py<br/>csv_metadata_handler.py<br/>lumbar_dicom_tfrecord_dataset.py<br/>RSNA_lumbar_losses_and_metric.py"]
+    end
     
-    Models --> ModelFactory[model_factory.py]
-    Models --> Backbone2D[backbone_2d.py]
-    Models --> Conv3DAgg[conv3d_aggregator.py]
-    Models --> TempPadding[temporal_padding_layer.py]
-    
-    Callbacks --> ResourceMon[system_resource_monitor_callback.py]
-    Callbacks --> LossBal[dynamic_loss_balancer_callback.py]
-    Callbacks --> LogTrain[log_training_callback.py]
-    
-    Utils --> DatasetUtils[dataset_utils.py]
-    Utils --> LoggerUtils[logger.py]
-    Utils --> StreamTee[system_stream_tee.py]
-    
-    Projects --> Lumbar[lumbar_spine]
-    Lumbar --> Trainer[model_trainer.py]
-    Lumbar --> TFRecordMgr[tfrecord_files_manager.py]
-    Lumbar --> CSVHandler[csv_metadata_handler.py]
-    Lumbar --> DatasetPipe[lumbar_dicom_tfrecord_dataset.py]
-    Lumbar --> Losses[RSNA_lumbar_losses_and_metric.py]
+    subgraph Support Directories
+        scripts_folder["scripts/<br/>- create_hardlink.ps1<br/>- run_pipeline.ps1"]
+        tests_folder["test/<br/>- unit/<br/>- integration/<br/>- conftest.py"]
+        data_folder["data/ (DICOM studies & labels)"]
+        logs_folder["logs/ (Session run records)"]
+    end
+
+    Root --> Config & Entry
+    Root --> Core Library
+    Root --> Projects & Logic
+    Root --> Support Directories
 ```
 
 ---
 
-## 🏗️ Software Architecture & Design Patterns
+## Software Architecture & Design Patterns
 
-The pipeline is organized around modular objects with single responsibilities. The main training entry point orchestrates these modules.
+The pipeline uses decoupled modules following single-responsibility principles. The diagram below represents the system architecture and runtime workflow oriented vertically.
 
 ```mermaid
-classDiagram
-    class MainOrchestrator {
-        +setup_config_symlink()
-        +main()
-    }
+graph TD
+    subgraph Execution Entry
+        Main["RSNA_2024_Lumbar_Spine_Degenerative_Classification.py<br/>(Main Orchestrator)"]
+    end
     
-    class ConfigLoader {
-        +get_series_depth()
-        +get_value()
-        +set_value()
-    }
+    subgraph Data & Configuration Setup
+        Config["ConfigLoader<br/>(Loads YAML configs)"]
+        CSV["CSVMetadataHandler<br/>(Orchestrates labels & clinical CSVs)"]
+        TFRecord["TFRecordFilesManager<br/>(Converts DICOMs to TFRecords)"]
+    end
     
-    class CSVMetadataHandler {
-        +load_csv()
-        +get_labels()
-    }
+    subgraph Model & Training Architecture
+        Factory["ModelFactory<br/>(Builds hybrid 2D/3D model)"]
+        Losses["RSNALossAndMetricProvider<br/>(Provides custom loss & metrics)"]
+        Trainer["ModelTrainer<br/>(Runs the fitting loop & logs)"]
+    end
     
-    class TFRecordFilesManager {
-        +generate_tfrecord_files()
-    }
-    
-    class ModelFactory {
-        +build_multi_series_model()
-        +CUSTOM_OBJECTS
-    }
-    
-    class ModelTrainer {
-        +prepare_training_and_validation_datasets()
-        +train_model()
-    }
-    
-    class RSNALossAndMetricProvider {
-        +get_loss()
-        +get_metrics()
-    }
-    
-    class LumbarDicomTFRecordDataset {
-        +build_dataset()
-    }
+    subgraph Sub-Components
+        Backbone["Backbone2D<br/>(MobileNetV2 / ResNet50)"]
+        Aggregator["Conv3DAggregator<br/>(3D CNN Temporal Aggregation)"]
+        Padding["TemporalPaddingLayer<br/>(Static shape padding)"]
+        Dataset["LumbarDicomTFRecordDataset<br/>(tf.data pipeline builder)"]
+        Callbacks["Training Callbacks<br/>(Loss Balancer, Resource Monitor)"]
+    end
 
-    MainOrchestrator --> ConfigLoader : Loads Configuration
-    MainOrchestrator --> CSVMetadataHandler : Instantiates Label Orchestrator
-    MainOrchestrator --> TFRecordFilesManager : Generates TFRecords from DICOM
-    MainOrchestrator --> ModelFactory : Builds Hybrid 2D/3D Model
-    MainOrchestrator --> ModelTrainer : Triggers Training Loop
-    MainOrchestrator --> RSNALossAndMetricProvider : Configures Loss & Metrics
-    
-    ModelTrainer --> LumbarDicomTFRecordDataset : Configures Input Pipeline
-    ModelTrainer --> DynamicLossBalancerCallback : Uses Callback
-    ModelTrainer --> SystemResourceMonitorCallback : Uses Callback
-    ModelTrainer --> LogTrainingCallback : Uses Callback
-    
-    ModelFactory --> Backbone2D : Extracts 2D Slice Features
-    ModelFactory --> Conv3DAggregator : Aggregates Temporal/Volume Data
-    ModelFactory --> TemporalPaddingLayer : Handles Variable Slice Counts
+    %% Flow/Dependencies
+    Main --> Config
+    Main --> CSV
+    Main --> TFRecord
+    Main --> Factory
+    Main --> Losses
+    Main --> Trainer
+
+    Trainer --> Dataset
+    Trainer --> Callbacks
+
+    Factory --> Backbone
+    Factory --> Aggregator
+    Factory --> Padding
 ```
 
 ---
 
-## 🛠️ Key Engine Features
+## Key Engine Features
 
-### ⚖️ Dynamic Loss Balancing
+### Dynamic Loss Balancing
 Because classification (weighted log loss) and coordinate regression (MSE) have different magnitudes, the model uses a custom `DynamicLossBalancerCallback`. This callback dynamically adjusts the `location_output` loss weight variable based on the relative convergence rates of both tasks across epochs.
 
-### 🛡️ OOM Prevention Circuit
+### OOM Prevention Circuit
 Processing large volumetric 3D datasets in batches can cause Out-Of-Memory (OOM) errors. The `SystemResourceMonitorCallback` actively monitors RAM/CPU usage at the end of each batch/epoch and triggers a graceful emergency training stop if memory exceeds the threshold configured in the YAML (e.g. `90%`). This ensures that checkpoints are saved before an OOM occurs.
 
-### 🔄 Fail-Safe Resume Logic
+### Fail-Safe Resume Logic
 If a training run is interrupted, the entry point attempts to load the complete saved Keras model. In case loading fails (e.g. serialization issues with custom Keras Layers), a weight salvage fallback builds a fresh architecture from the `ModelFactory` and maps the saved weights by name before continuing.
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Environment and Symlinks
 The pipeline utilizes symlinks to select configurations depending on the environment (Kaggle kernel vs local Windows machine). 
@@ -161,7 +138,7 @@ python src/RSNA_2024_Lumbar_Spine_Degenerative_Classification.py
 
 ---
 
-## 🧪 Tests
+## Tests
 The repository is fully testable using `pytest`. The `test/` directory contains unit tests for utils, models, dataset loaders, as well as full integration tests verifying data flows.
 
 Run the test suite:
