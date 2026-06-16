@@ -14,36 +14,36 @@ Below is a vertically-optimized directory layout designed to display cleanly on 
 graph TD
     Root["RSNA_Items_Detection_Classification (Root)"]
     
-    subgraph Config & Entry
+    subgraph ConfigAndEntry["Config & Entry"]
         Main["RSNA_2024_..._Classification.py (Entry)"]
         Survey["RSNA_input_data_survey.py (Data Survey)"]
         cfg_folder["src/config/"]
         cfg_folder --> cfg_files["config_loader.py<br/>schema.py<br/>lumbar_spine_config_*.yaml"]
     end
     
-    subgraph Core Library
+    subgraph CoreLibrary["Core Library"]
         core_folder["src/core/"]
         core_folder --> core_models["models/<br/>- backbone_2d.py<br/>- conv3d_aggregator.py<br/>- temporal_padding_layer.py<br/>- model_factory.py"]
         core_folder --> core_callbacks["callbacks/<br/>- system_resource_monitor_callback.py<br/>- dynamic_loss_balancer_callback.py<br/>- log_training_callback.py"]
         core_folder --> core_utils["utils/<br/>- dataset_utils.py<br/>- logger.py<br/>- system_stream_tee.py"]
     end
     
-    subgraph Projects & Logic
+    subgraph ProjectsAndLogic["Projects & Logic"]
         proj_folder["src/projects/lumbar_spine/"]
         proj_folder --> proj_files["model_trainer.py<br/>tfrecord_files_manager.py<br/>csv_metadata_handler.py<br/>lumbar_dicom_tfrecord_dataset.py<br/>RSNA_lumbar_losses_and_metric.py"]
     end
     
-    subgraph Support Directories
+    subgraph SupportDirectories["Support Directories"]
         scripts_folder["scripts/<br/>- create_hardlink.ps1<br/>- run_pipeline.ps1"]
         tests_folder["test/<br/>- unit/<br/>- integration/<br/>- conftest.py"]
         data_folder["data/ (DICOM studies & labels)"]
         logs_folder["logs/ (Session run records)"]
     end
 
-    Root --> Config & Entry
-    Root --> Core Library
-    Root --> Projects & Logic
-    Root --> Support Directories
+    Root --> ConfigAndEntry
+    Root --> CoreLibrary
+    Root --> ProjectsAndLogic
+    Root --> SupportDirectories
 ```
 
 ---
