@@ -21,7 +21,7 @@ def get_class_weights():
             severity_dic[label] = value
 
         # Load severity label mapper
-        raw_mapper = CSVMetadataHandler()._get_raw_mapper()
+        raw_mapper = CSVMetadataHandler().get_raw_mapper()
         severity_mapper = raw_mapper['severity'].reverse_mapping
 
         weights_list = []
@@ -144,7 +144,7 @@ class RSNALossAndMetricProvider:
         class_weights = self._class_weights
         balancing_weights = self._balancing_weights
 
-        def rsna_weighted_log_loss(y_true: tf.float, y_pred: tf.float):
+        def rsna_weighted_log_loss(y_true: tf.Tensor, y_pred: tf.Tensor):
             """
             Keras-compatible weighted hierarchical log loss.
 

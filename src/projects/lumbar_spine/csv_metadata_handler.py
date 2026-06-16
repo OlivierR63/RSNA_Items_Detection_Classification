@@ -96,6 +96,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         """
         # Check if the singleton has already been initialized to avoid redundant setup
         if hasattr(self, '_config'):
+            print()
             return  # Already initialized by a previous call
 
         self._logger = logger or logging.getLogger(self.__class__.__name__)
@@ -112,6 +113,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self._instances_series_format_df = None
         self._train_df = None
         self._raw_mapper = None
+        self._csv_merged_clean_df = None
 
         # Setup file paths
         self._setup_paths(series_description, label_coordinates, instances_series_format, train)
@@ -264,6 +266,10 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
             )
             raise  # Re-raise to stop the pipeline if data integrity is compromised
 
+        # Generate CSV metadata handler
+        if self._csv_merged_clean_df is None:
+            self._csv_merged_clean_df = self._generate_metadata_dataframe()
+
         self._logger.debug(
             f"Function {class_name}.{func_name} completed successfully",
             extra={"status": "success"}
@@ -279,10 +285,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         return self._train_df
 
     @log_method()
-    def generate_metadata_dataframe(
-        self,
-        logger: Optional[logging.Logger] = None
-    ) -> pd.DataFrame:
+    def _generate_metadata_dataframe(self) -> pd.DataFrame:
 
         """
         Orchestrates the complete metadata pipeline: cleaning, scaling, merging, and encoding.
@@ -306,7 +309,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
             the presence of all possible classes and levels during processing.
         """
 
-        logger = logger or self._logger
+        logger = self._logger
 
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
@@ -402,8 +405,9 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
                 # 2. Convert remaining data to strings
                 .astype(str)
 
-                # 3. Standardize text format
-                .apply(lambda s: s.str.lower().str.replace(" ", ""))
+                # 3. Standardize text format.
+                # We use .map to target individual string
+                .map(lambda val: val.lower().strip().replace(" ", "_"))
 
                 # 4. Handle cases with "nan" strings
                 .replace('nan', pd.NA)
@@ -1352,7 +1356,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self,
         metadata_df: pd.DataFrame,
         columns_to_encode: Dict[str, str],
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None
     ) -> Dict[str, Dict]:
 
         """
@@ -1412,6 +1416,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
                             values,
                             key=lambda x: priority[x.lower().replace(" ", "")]
                         )
+
                     except KeyError as e:
                         unknown_val = str(e)
                         raise ValueError(
@@ -1565,3 +1570,6 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
 
     def get_raw_mapper(self):
         return self._raw_mapper
+
+    def get_merged_metadata(self):
+        return self._csv_merged_clean_df

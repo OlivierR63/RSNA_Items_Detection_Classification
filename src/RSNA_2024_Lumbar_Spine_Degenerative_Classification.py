@@ -5,12 +5,13 @@ import signal
 import sys
 import logging
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Dict, Any
 import gc
 import json
 import os
 import tf_keras
 
+from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
 from src.core.models.model_factory import ModelFactory
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import RSNALossAndMetricProvider
@@ -59,7 +60,7 @@ def handle_interrupt(signum, frame):
     """
     Handles interrupt signals (Ctrl+C) to ensure proper log closure.
     """
-    from . import get_current_logger
+    from src.core.utils.logger import get_current_logger
 
     try:
         logger = get_current_logger()
@@ -71,7 +72,11 @@ def handle_interrupt(signum, frame):
     sys.exit(0)
 
 
-def _validate_input_params(depth: int, config: dict, logger: logging.Logger) -> None:
+def _validate_input_params(
+    depth: int,
+    config: Dict[str, Any],
+    logger: logging.Logger
+) -> None:
     """
     Validates dynamic parameters and ensures correct data types for model building.
     """
@@ -132,7 +137,7 @@ def _load_existing_model(
     checkpoint_path: Path | None,
     mode: str,
     logger: logging.Logger
-) -> 'tf_keras.Model' | None:
+) -> tf_keras.Model | None:
     """
     Attempts to load a complete Keras model from a given checkpoint path.
 
@@ -212,7 +217,6 @@ def _build_fresh_or_salvage(
 
         factory_model = ModelFactory(
             series_depth=depth,
-            config=config,
             logger=logger,
             nb_output_records=max_records
         )
@@ -309,7 +313,7 @@ def _finalize_and_compile_model(
         # --- Define Metrics ---
         metrics = {
             # Added accuracy for a quick baseline
-            "severity_output": [provider.get_metric(), "accuracy"],
+            "severity_output": [provider.get_metrics(), "accuracy"],
             "location_output": [tf_keras.metrics.MeanAbsoluteError(name="mae")],
             "study_id_output": None
         }
@@ -391,9 +395,9 @@ def _get_or_build_model(
     """
 
     # Initial validation
-    _validate_input_params(depth, logger)
+    _validate_input_params(depth, config, logger)
     checkpoint_path, mode = _get_target_checkpoint(config)
-    model = _load_existing_model(checkpoint_path, mode)
+    model = _load_existing_model(checkpoint_path, mode, logger)
 
     if model is None:
         model = _build_fresh_or_salvage(depth, config, checkpoint_path, logger)
@@ -472,8 +476,6 @@ def main():
     # 2. Initialize logger with process-specific context
     log_dir = Path(paths_cfg["output"]) / "logs"
 
-    config = config_loader.get()
-
     with setup_logger(
         process_name="train",
         log_dir=log_dir
@@ -511,6 +513,13 @@ def main():
             # to free up RAM before the data pipeline starts prefetching.
             tf_keras.backend.clear_session()
 
+            # Instantiate the singleton CSMMetadataHandler for further use:
+            _ = CSVMetadataHandler(
+                logger=logger,
+                dicom_studies_dir=paths_cfg["dicom_studies"],
+                **paths_cfg["csv"]
+            )
+
             # Load the compiled model if it already exists. In the other case, generate
             # a new model and compile it.
             model: tf_keras.Model = _get_or_build_model(series_depth, config, logger)
@@ -522,7 +531,7 @@ def main():
 
             # Extract DICOM images and metadata from source directories
             # and serialize them into dedicated TFRecord files (one per patient)
-            tfrecord_files_manager = TFRecordFilesManager(config, logger)
+            tfrecord_files_manager = TFRecordFilesManager(logger)
             actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
 
             # Store the number of tfrecord_files in the cache file

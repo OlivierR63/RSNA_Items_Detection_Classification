@@ -40,7 +40,7 @@ class ModelTrainer:
     def __init__(
         self,
         model: tf_keras.Model,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None,
         model_depth: int = 1
     ) -> None:
 
@@ -239,7 +239,7 @@ class ModelTrainer:
         except tf.errors.OpError as e:
             # Catch any error occurring during TensorFlow graph execution (OOM, File IO, etc.)
             critical_msg = f"Tensorflow Runtime error: {str(e)}"
-            self.logger.critical(
+            self._logger.critical(
                 critical_msg,
                 exc_info=True,
                 extra={"status": "failed", "error": str(e)}

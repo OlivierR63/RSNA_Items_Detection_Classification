@@ -232,14 +232,8 @@ def _analyze_dataset_dicom_files(
 
                 # Dump the logs gathered by the worker
                 for level, message in study_res.get("logs", []):
-                    if level == "critical":
-                        logger.critical(message, exc_info=True)
-                    elif level == "error":
-                        logger.error(message, exc_info=True)
-                    elif level == "warning":
-                        logger.warning(message)
-                    else:
-                        logger.info(message)
+                    log_func = getattr(logger, level, logger.info)
+                    log_func(message)
 
                 # AGGREGATION LOGIC (The "Reduce" step)
                 global_results["depths"].extend(study_res["depths"])

@@ -8,7 +8,7 @@ from typing import Type
 from pathlib import Path
 import tf_keras
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
-    rsna_weighted_log_loss,
+    RSNALossAndMetricProvider,
     RSNAKaggleMetric
 )
 from src.core.models.temporal_padding_layer import TemporalPaddingLayer
@@ -46,7 +46,7 @@ class ModelFactory:
     CUSTOM_OBJECTS = {
         "TemporalPaddingLayer": TemporalPaddingLayer,
         "Conv3DAggregator": Conv3DAggregator,
-        "rsna_weighted_log_loss": rsna_weighted_log_loss,
+        "rsna_weighted_log_loss": RSNALossAndMetricProvider.get_loss,
         "RSNAKaggleMetric": RSNAKaggleMetric,
         "study_id_link": study_id_zero_link,
         "LogTrainingCallback": LogTrainingCallback,

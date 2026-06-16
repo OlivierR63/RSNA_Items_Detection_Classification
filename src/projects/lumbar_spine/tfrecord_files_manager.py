@@ -1,5 +1,7 @@
 # coding: utf-8
-from typing import Tuple, Optional, List, Union, Dict
+import concurrent.futures
+import multiprocessing
+from typing import Tuple, Optional, List, Union, Dict, Any
 import logging
 import tensorflow as tf
 import numpy as np
@@ -138,14 +140,8 @@ class TFRecordFilesManager:
             self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
 
             # 2. Load and merge metadata
-            metadata_handler = CSVMetadataHandler(
-                logger=logger,
-                dicom_studies_dir=dicom_studies_dir,
-                **paths_cfg["csv"]
-            )
-
             # Build the reference dataframe
-            metadata_df = metadata_handler.generate_metadata_dataframe()
+            metadata_df = CSVMetadataHandler().get_merged_metadata()
             logger.info("Loaded metadata from CSV files",
                         extra={"csv": list(paths_cfg["csv"].keys())})
 
@@ -225,7 +221,7 @@ class TFRecordFilesManager:
         metadata_df: pd.DataFrame,
         tfrecord_dir: str,
         *,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None
     ) -> int:
         """
         Converts DICOM files stored in a hierarchical directory structure into
@@ -250,9 +246,12 @@ class TFRecordFilesManager:
             extra={"action": "convert_dicom", "dicom_studies_dir": studies_dir}
         )
 
+        studies_path = Path(studies_dir)
+        study_list = [study for study in studies_path.iterdir() if study.is_dir()]
+
         # Case empty root directory
-        if not any(Path(studies_dir).iterdir()):
-            critical_msg = f"No studies found in {studies_dir}. Process stops immediately."
+        if not study_list:
+            critical_msg = f"No studies found in {studies_dir}."
             logger.critical(
                 critical_msg,
                 exc_info=True,
@@ -263,73 +262,42 @@ class TFRecordFilesManager:
         try:
             # Ensure the destination directory for TFRecord files exists and return its Path.
             tfrecord_path = self._setup_tfrecord_directory(tfrecord_dir)
-
-            # Iterate over all items (expected study directories) in the root studies_dir.
             nb_saved_tfrecord_files = 0
 
-            for study_full_path in tqdm(list(Path(studies_dir).iterdir())):
+            # Determine number of workers (leave one core for the system)
+            max_workers = max(1, multiprocessing.cpu_count() - 1)
 
-                # Case study_full_path is not a directory
-                if not study_full_path.is_dir():
-                    msg_warning = (
-                        f"Skipping non-directory item {study_full_path} "
-                        f"in root directory {studies_dir}"
+            logger.info(f"Starting parallel conversion with {max_workers} workers")
+
+            # Parallel execution
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Dispatch tasks
+                future_to_study = {
+                    executor.submit(
+                        self._convert_single_study,
+                        tfrecord_path,
+                        study_path,
+                        metadata_df
+                    ): study_path for study_path in study_list
+                }
+                for future in tqdm(
+                    concurrent.futures.as_completed(future_to_study),
+                    total=len(study_list),
+                    desc="Converting DICOM to TFRecord"
+                ):
+                    study_path = future_to_study[future]
+
+                    nb_saved_tfrecord_files += self._handle_worker_result(
+                        future,
+                        study_path,
+                        logger
                     )
-                    logger.warning(msg_warning, extra={"status": "incomplete"})
-                    continue
 
-                # Case directory study_full_path is empty
-                if not any(study_full_path.iterdir()):
-                    msg_warning = (
-                        f"Function {class_name}.{func_name}:\n"
-                        f"Skipping empty directory {study_full_path} "
-                        f"in root directory {studies_dir}"
-                    )
-                    logger.warning(msg_warning, extra={"status": "incomplete"})
-                    continue
-
-                study_metadata_df = (
-                    metadata_df[metadata_df['study_id'] == int(study_full_path.name)]
-                )
-
-                # Case missing metadata
-                if study_metadata_df.empty:
-                    msg_warning = (
-                        f"Function {class_name}.{func_name}:\n"
-                        f"Skipping study {study_full_path.name} due to missing metadata. "
-                        "This study will not be considered during training or evaluation "
-                        "and the relevant TFRecord file will not be generated."
-                        "Possible cause: missing or inconsistent records in the CSV files. "
-                        "Required action: Please check the CSV files "
-                        "and ensure they contain the right records."
-                    )
-                    logger.warning(msg_warning, extra={"status": "incomplete"})
-                    continue
-
-                study_id = study_full_path.name
-                tfrecord_file = tfrecord_path / f"{study_id}.tfrecord"
-
-                if tfrecord_file.exists():
-                    logger.info(
-                        f"Processing study {study_id}: file {tfrecord_file} "
-                        "already exists. Skip to the next one."
-                    )
-                    continue
-
-                new_tfrecord_file = self._process_study(
-                    study_full_path, study_metadata_df, tfrecord_path
-                )
-
-                nb_saved_tfrecord_files += int(new_tfrecord_file)
-
-            outcome = "completed successfully" if nb_saved_tfrecord_files is True else "failed"
-            status = "success" if nb_saved_tfrecord_files is True else "failure"
-
-            debug_msg = f"DICOM to TFRecord conversion {outcome}"
-            logger.debug(
-                debug_msg,
-                extra={"status": f"{status}"}
+            info_msg = (
+                "Conversion process finished. "
+                f"Total TFRecords saved: {nb_saved_tfrecord_files}"
             )
+            logger.info(info_msg, extra={"status": "success"})
 
             return nb_saved_tfrecord_files
 
@@ -346,6 +314,32 @@ class TFRecordFilesManager:
             )
             raise
 
+    def _handle_worker_result(
+        self,
+        future: concurrent.futures.Future,
+        study_path: Path,
+        logger: logging.Logger
+    ) -> int:
+
+        """
+        Unpacks a worker's result, dispatches logs to the main logger,
+        and returns the number of saved files.
+        """
+        try:
+            result = future.result()
+
+            # Centralized logging dispatch
+            for level, msg in result.get("logs", []):
+                log_func = getattr(logger, level, logger.info)
+                log_func(msg)
+
+            return result.get("saved", 0)
+
+        except Exception as e:
+            error_msg = f"Worker failed for study {study_path.name}: {e}"
+            logger.error(error_msg)
+            return 0
+
     def _setup_tfrecord_directory(
         self,
         tfrecord_dir: str
@@ -356,6 +350,119 @@ class TFRecordFilesManager:
         tfrecord_path = Path(tfrecord_dir)
         tfrecord_path.mkdir(parents=True, exist_ok=True)
         return tfrecord_path
+
+    def _convert_single_study(
+        self,
+        tfrecord_path: Path,
+        study_full_path: Path,
+        metadata_df: pd.DataFrame
+    ) -> Dict[str, Any]:
+
+        """
+        Executes the conversion of a single study's DICOM files into a TFRecord file.
+
+        This worker function performs the end-to-end processing for one study:
+        1. Validates the existence and content of the study directory.
+        2. Cross-references the study ID with the provided metadata.
+        3. Checks if a corresponding TFRecord file already exists to avoid redundant work.
+        4. Triggers the pixel processing and file serialization.
+
+        All events (errors, warnings, and info) are captured in a structured log list
+        to ensure compatibility with parallel execution and centralized logging.
+
+        Args:
+            - tfrecord_path (Path): Destination directory where the TFRecord file will be saved.
+            - study_full_path (Path): System path to the study directory containing DICOM series.
+            - metadata_df (pd.DataFrame): Global DataFrame containing target labels and metadata
+                for all studies. Must include a 'study_id' column.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the processing outcome:
+                - "saved" (int): 1 if a new TFRecord was successfully created, 0 otherwise.
+                - "logs" (List[Tuple[str, str]]): A list of log entries in the format
+                  (level, message) to be processed by the main orchestrator.
+        """
+        func_name = inspect.currentframe().f_code.co_name
+        class_name = self.__class__.__name__
+
+        studies_dir = study_full_path.parent
+        study_id_str = study_full_path.name
+
+        result = {
+            "saved": 0,
+            "logs": []
+        }
+
+        # Folder validation
+        if not study_full_path.is_dir():
+            msg_warning = (
+                f"Skipping non-directory item {study_id_str} "
+                f"in root directory {studies_dir}"
+            )
+            result["logs"].append(("warning", msg_warning))
+            return result
+
+        # Case directory study_full_path is empty
+        if not any(study_full_path.iterdir()):
+            msg_warning = (
+                f"Function {class_name}.{func_name}:\n"
+                f"Skipping empty directory {study_id_str} "
+                f"in root directory {studies_dir}"
+            )
+            result["logs"].append(("warning", msg_warning))
+            return result
+
+        # Metadata validation
+        if not study_id_str.isdigit():
+            warning_msg = f"Item {study_id_str} is not a valid Study ID (numeric). Skipping."
+            result["logs"].append(("warning", warning_msg))
+            return result
+
+        study_metadata_df = (
+            metadata_df[metadata_df['study_id'] == int(study_id_str)]
+        )
+
+        if study_metadata_df.empty:
+            msg_warning = (
+                f"Function {class_name}.{func_name}:\n"
+                f"Skipping study {study_id_str} due to missing metadata. "
+                "This study will not be considered during training or evaluation "
+                "and the relevant TFRecord file will not be generated."
+                "Possible cause: missing or inconsistent records in the CSV files. "
+                "Required action: Please check the CSV files "
+                "and ensure they contain the right records."
+            )
+            result["logs"].append(("warning", msg_warning))
+            return result
+
+        # Check the existence of the target file
+        tfrecord_file = tfrecord_path / f"{study_id_str}.tfrecord"
+
+        if tfrecord_file.exists():
+            info_msg = (
+                f"Processing study {study_id_str}: file {tfrecord_file} "
+                "already exists. Skip to the next one."
+            )
+            result["logs"].append(("info", info_msg))
+            return result
+
+        # Actual processing
+        try:
+            success = self._process_study(
+                study_full_path, study_metadata_df, tfrecord_path
+            )
+
+            result["saved"] = int(success)
+
+            if success:
+                info_msg = f"Successfully converted study {study_id_str}"
+                result["logs"].append(("info", info_msg))
+
+        except Exception as e:
+            error_msg = f"Failed to process study {study_id_str}: {str(e)}"
+            result["logs"].append(("error", error_msg))
+
+        return result
 
     @log_method()
     def _process_study(
@@ -1419,7 +1526,7 @@ class TFRecordFilesManager:
         self,
         dicom_path: Path,
         input_features_df: pd.DataFrame,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None
     ) -> Tuple[int, int, int]:
         """
         Retrieves the target dimensions and series description from the metadata DataFrame.
