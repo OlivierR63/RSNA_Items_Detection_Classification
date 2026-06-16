@@ -6,84 +6,68 @@ from datetime import datetime
 from pathlib import Path
 
 
-class SystemStreamTee(object):
-    """Duplicates stdout or stderr to a file while keeping the original output in the terminal.
+class _StreamProxy(object):
+    """
+    Internal proxy helper to route a specific system stream to the log file.
+    """
 
-    Attributes:
-        _terminal: A reference to the original standard output stream (sys.stdout).
-        _log_file: The file object where the output is being mirrored.
+    def __init__(self, original_stream, log_file):
+        self._original_stream = original_stream
+        self._log_file = log_file
+
+    def write(self, message):
+        # Write to the original terminal stream (stdout or stderr)
+        self._original_stream.write(message)
+        # Write to the shared log file
+        self._log_file.write(message)
+        self._log_file.flush()
+
+    def flush(self):
+        self._original_stream.flush()
+        self._log_file.flush()
+
+
+class SystemStreamTee(object):
+    """
+    Intercepts and duplicates both stdout and stderr into a single log file.
     """
 
     def __init__(self, file_string):
         """
-        Initializes the Tee stream and opens the log file.
-
-        Args:
-            file_string (str): The path to the log file to be created or appended.
+        Initializes the dual logger and replaces global system streams.
         """
-        self._terminal = sys.stdout
-
-        # Ensure the directory exists before attempting to open the file
         file_path = Path(file_string)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Mode 'a' to append to the file (creates it if it does not exist)
+        # Open the single shared log file in append mode
         self._log_file = open(file_path.resolve(), "a", encoding="utf-8")
 
-        # Add a session header to the log
+        # Print a single clean header for the session
         self._print_header()
+
+        # Replace standard streams with dedicated proxies
+        sys.stdout = _StreamProxy(sys.stdout, self._log_file)
+        sys.stderr = _StreamProxy(sys.stderr, self._log_file)
 
     def _print_header(self):
         """
-        Prints technical context and hardware detection at the start of the log file.
+        Prints technical context and hardware detection once per session.
         """
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # Detect available hardware using TensorFlow config
         cpus = tf.config.list_physical_devices('CPU')
         gpus = tf.config.list_physical_devices('GPU')
 
         header = [
             "\n\n" + "="*80,
-            f"    NEW SESSION STARTED: {now}",
+            f"    NEW GLOBAL SESSION STARTED: {now}",
             f"        Hardware detected: CPUS: {len(cpus)} | GPUS: {len(gpus)}",
-            f"        Mirroring to: {self._log_file.name}",
+            f"        Combined Mirroring: STDOUT & STDERR -> {self._log_file.name}",
             "="*80 + "\n"
         ]
 
         for line in header:
-            self.write(line + "\n")
+            # Safely write the header directly to the file and original stdout
+            sys.stdout.write(line + "\n")
+            self._log_file.write(line + "\n")
 
-    def write(self, message):
-        """
-        Writes a message to both the terminal and the log file.
-
-        Args:
-            message (str): The string content to be outputted.
-        """
-
-        # Write to the terminal
-        self._terminal.write(message)
-
-        # Write to the file
-        self._log_file.write(message)
-
-        # Force writing to disk to avoid losing data during a crash or high-load thrashing
         self._log_file.flush()
-
-    def flush(self):
-        """
-        Flushes both the terminal and the log file buffers.
-        Necessary for compatibility with environments like Jupyter, IDLE, or specific
-        logging handlers that require manual buffer clearing.
-        """
-
-        self._terminal.flush()
-        self._log_file.flush()
-
-    def close(self):
-        """
-        Properly closes the log file to release system resources.
-        """
-        if self._log_file:
-            self._log_file.close()

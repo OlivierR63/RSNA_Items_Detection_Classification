@@ -221,9 +221,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self._train_df = self._filter_null_dataframe_values(self._train_df)
         self._series_desc_df = self._filter_null_dataframe_values(self._series_desc_df)
         self._label_coords_df = self._filter_null_dataframe_values(self._label_coords_df)
-        self._instances_series_format_df = (
-            self._filter_null_dataframe_values(self._instances_series_format_df)
-        )
+        self._instances_series_format_df = self._instances_series_format_df.dropna()
 
         # DEBUG: Visualize all the columns of self._series_desc_df and self._label_coords_df
         # after _filter_null_dataframe_values

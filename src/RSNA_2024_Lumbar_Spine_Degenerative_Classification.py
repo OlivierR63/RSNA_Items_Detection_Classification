@@ -476,6 +476,12 @@ def main():
     # 2. Initialize logger with process-specific context
     log_dir = Path(paths_cfg["output"]) / "logs"
 
+    # Redirect terminal stdout and stderr to a log file
+    from src.core.utils.system_stream_tee import SystemStreamTee
+    terminal_log_path = str(log_dir / "terminal_output.log")
+
+    SystemStreamTee(terminal_log_path)
+
     with setup_logger(
         process_name="train",
         log_dir=log_dir
@@ -513,7 +519,7 @@ def main():
             # to free up RAM before the data pipeline starts prefetching.
             tf_keras.backend.clear_session()
 
-            # Instantiate the singleton CSMMetadataHandler for further use:
+            # Instantiate the singleton CSVMetadataHandler for further use:
             _ = CSVMetadataHandler(
                 logger=logger,
                 dicom_studies_dir=paths_cfg["dicom_studies"],

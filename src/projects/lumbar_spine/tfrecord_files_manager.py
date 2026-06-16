@@ -1240,6 +1240,23 @@ class TFRecordFilesManager:
 
             return True
 
+        except KeyboardInterrupt as e:
+            context_info = f"Instance: {instance_num}"
+            error_msg = (
+                f"Function {class_name}.{func_name} failed: "
+                f"Error in _process_single_dicom_instance. {context_info}. - {e}"
+            )
+            logger.error(
+                error_msg,
+                exc_info=True,
+                extra={
+                    "status": "failed",
+                    "error_type": "DicomProcessingError",
+                    "instance": instance_num
+                }
+            )
+            raise
+
         except Exception as e:
             # Use instance_num in the log since current_file_path might be None
             context_info = f"Instance: {instance_num} (Padding: {is_padding})"
