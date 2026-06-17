@@ -64,7 +64,7 @@ graph TD
     
     subgraph Model & Training Architecture
         Factory["ModelFactory<br/>(Builds hybrid 2D/3D model)"]
-        Losses["RSNA_lumbar_losses_and_metric.py<br/>(Loss & Metrics Provider)"]
+        Losses["RSNA_lumbar_losses_and_metric.py<br/>(RSNALossAndMetricProvider)"]
         Trainer["ModelTrainer<br/>(Runs the fitting loop & logs)"]
     end
     
@@ -101,7 +101,7 @@ sequenceDiagram
     participant Cfg as ConfigLoader<br/>(Singleton)
     participant DFCount as DataFrameClassCount<br/>(Singleton)
     participant Handler as CSVMetadataHandler
-    participant Model as ModelFactory
+    participant Provider as RSNALossAndMetricProvider
     participant Metric as RSNAKaggleMetric
     User->>Main: Executing main pipeline
     activate Main
@@ -120,17 +120,24 @@ sequenceDiagram
     activate Handler
     Handler-->>Main: CSVMetadataHandler Instance
     deactivate Handler
-    note over Main,Model: Phase 3: Model Compilation & Custom Metrics
-    Main->>Model: ModelFactory() (Instantiation)
-    activate Model
-    Model-->>Main: ModelFactory Instance
-    deactivate Model
-    Main->>Metric: RSNAKaggleMetric() (Keras Metric Instantiation)
+    note over Main,Provider: Phase 3: Losses & Metrics Providing Setup
+    Main->>Provider: RSNALossAndMetricProvider(logger)
+    activate Provider
+    Provider->>Cfg: get()
+    Provider->>DFCount: get_balancing_weights()
+    Provider->>Handler: get_raw_mapper() (via get_class_weights)
+    Provider-->>Main: Provider Instance (with cached weights)
+    note over Main,Metric: Phase 4: Loss Extraction & Metric Instantiation
+    Main->>Provider: get_loss()
+    Provider-->>Main: rsna_weighted_log_loss (Closure function)
+    Main->>Provider: get_metrics()
+    Provider->>Metric: RSNAKaggleMetric(class_weights, balancing_weights, logger)
     activate Metric
-    note over Metric: Hooks class weights<br/>from config mapping
-    Metric-->>Main: RSNAKaggleMetric Instance
+    Metric-->>Provider: Metric Instance
     deactivate Metric
-    Main->>Main: model.compile(metrics=[RSNAKaggleMetric])
+    Provider-->>Main: Metric Instance
+    deactivate Provider
+    Main->>Main: model.compile(loss=rsna_weighted_log_loss, metrics=[rsna_main_score])
     Main->>Main: model.fit() (Launch Training Loop)
     deactivate Main
 ```
@@ -158,28 +165,30 @@ classDiagram
     class tf_keras_metrics_Metric {
         <<external>>
     }
+    class RSNALossAndMetricProvider {
+        -Dict _config
+        -Logger _logger
+        -Tensor _balancing_weights
+        -Tensor _class_weights
+        +__init__(logger: Logger)
+        +get_loss() Function
+        +get_metrics() RSNAKaggleMetric
+    }
     class RSNAKaggleMetric {
         -Dict _config
-        -List _all_y_true
-        -List _all_y_pred
         -Tensor _class_weights
-        +__init__(name: str, dtype: Any, **kwargs)
-        +update_state(y_true: Tensor, y_pred: Tensor, sample_weight: Any) None
+        -Tensor _balancing_weights
+        -Variable total_loss
+        -Variable count
+        +__init__(class_weights, balancing_weights, logger, name, **kwargs)
+        +update_state(y_true, y_pred, sample_weight) None
         +result() Tensor
         +reset_state() None
-        +get_config() Dict
-        +from_config(config: Dict) RSNAKaggleMetric
     }
     SingletonMeta <|-- DataFrameClassCount : instance-of
     tf_keras_metrics_Metric <|-- RSNAKaggleMetric : inherits
-    class Functional_Losses_and_Utils {
-        <<utility>>
-        +get_class_weights() Tensor
-        +compute_rsna_loss_core(y_true: Tensor, y_pred: Tensor, class_weights: Tensor) Tensor
-        +rsna_weighted_log_loss(y_true: Tensor, y_pred: Tensor) Tensor
-    }
-    Functional_Losses_and_Utils ..> DataFrameClassCount : uses
-    Functional_Losses_and_Utils ..> RSNAKaggleMetric : configures
+    RSNALossAndMetricProvider ..> RSNAKaggleMetric : instantiates
+    RSNALossAndMetricProvider ..> DataFrameClassCount : requests weights
 ```
 
 ---
