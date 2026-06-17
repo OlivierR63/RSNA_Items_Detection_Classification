@@ -8,7 +8,7 @@ The architecture uses a hybrid model: extracting 2D features from series slice i
 
 ## Project Directory Structure
 
-Below is a vertically-optimized directory layout designed to display cleanly on standard vertical (A4) orientations.
+The repository is structured into decoupled, single-responsibility modules to isolate configuration management, shared core components, and project-specific execution logic.
 
 ```mermaid
 graph TD
@@ -39,7 +39,6 @@ graph TD
         data_folder["data/ (DICOM studies & labels)"]
         logs_folder["logs/ (Session run records)"]
     end
-
     Root --> ConfigAndEntry
     Root --> CoreLibrary
     Root --> ProjectsAndLogic
@@ -49,8 +48,7 @@ graph TD
 ---
 
 ## Software Architecture & Design Patterns
-
-The pipeline uses decoupled modules following single-responsibility principles. The diagram below represents the system architecture and runtime workflow oriented vertically.
+The pipeline uses decoupled modules following single-responsibility principles. The diagram below represents the system architecture and runtime workflow.
 
 ```mermaid
 graph TD
@@ -66,7 +64,7 @@ graph TD
     
     subgraph Model & Training Architecture
         Factory["ModelFactory<br/>(Builds hybrid 2D/3D model)"]
-        Losses["RSNALossAndMetricProvider<br/>(Provides custom loss & metrics)"]
+        Losses["RSNA_lumbar_losses_and_metric.py<br/>(Loss & Metrics Provider)"]
         Trainer["ModelTrainer<br/>(Runs the fitting loop & logs)"]
     end
     
@@ -77,18 +75,14 @@ graph TD
         Dataset["LumbarDicomTFRecordDataset<br/>(tf.data pipeline builder)"]
         Callbacks["Training Callbacks<br/>(Loss Balancer, Resource Monitor)"]
     end
-
-    %% Flow/Dependencies
     Main --> Config
     Main --> CSV
     Main --> TFRecord
     Main --> Factory
     Main --> Losses
     Main --> Trainer
-
     Trainer --> Dataset
     Trainer --> Callbacks
-
     Factory --> Backbone
     Factory --> Aggregator
     Factory --> Padding
@@ -96,52 +90,145 @@ graph TD
 
 ---
 
+## System Initialization & Instantiation Sequence
+The following sequence diagram maps the chronological order in which singletons, utility modules, handlers, and custom evaluation metrics are instantiated and invoked by the Main Orchestrator during the session setup phase.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Run Script
+    participant Main as Main Orchestrator<br/>(RSNA_2024_..._Classification.py)
+    participant Cfg as ConfigLoader<br/>(Singleton)
+    participant DFCount as DataFrameClassCount<br/>(Singleton)
+    participant Handler as CSVMetadataHandler
+    participant Model as ModelFactory
+    participant Metric as RSNAKaggleMetric
+    User->>Main: Executing main pipeline
+    activate Main
+    note over Main,Cfg: Phase 1: Environment & Config Setup
+    Main->>Cfg: ConfigLoader() (First Instantiation)
+    activate Cfg
+    Cfg-->>Main: ConfigLoader Instance
+    deactivate Cfg
+    Main->>DFCount: DataFrameClassCount() (First Instantiation)
+    activate DFCount
+    note over DFCount: Reads cache.json & calculates<br/>balancing weights
+    DFCount-->>Main: DataFrameClassCount Instance
+    deactivate DFCount
+    note over Main,Handler: Phase 2: Metadata Handlers & Mapping
+    Main->>Handler: CSVMetadataHandler() (Instantiation)
+    activate Handler
+    Handler-->>Main: CSVMetadataHandler Instance
+    deactivate Handler
+    note over Main,Model: Phase 3: Model Compilation & Custom Metrics
+    Main->>Model: ModelFactory() (Instantiation)
+    activate Model
+    Model-->>Main: ModelFactory Instance
+    deactivate Model
+    Main->>Metric: RSNAKaggleMetric() (Keras Metric Instantiation)
+    activate Metric
+    note over Metric: Hooks class weights<br/>from config mapping
+    Metric-->>Main: RSNAKaggleMetric Instance
+    deactivate Metric
+    Main->>Main: model.compile(metrics=[RSNAKaggleMetric])
+    Main->>Main: model.fit() (Launch Training Loop)
+    deactivate Main
+```
+
+---
+
+## Losses & Evaluation Metrics Architecture (UML Class Diagram)
+The following UML class diagram illustrates the object-oriented design and relationships of the components managing class counts, dataset balancing, custom losses, and the official Kaggle competition evaluation metric framework.
+
+```mermaid
+classDiagram
+    direction TD
+    class SingletonMeta {
+        <<metaclass>>
+    }
+    class DataFrameClassCount {
+        -Path _cache
+        -Dict _severity_labels_counts
+        -Tensor _balancing_weights
+        +__init__()
+        -_get() Dict
+        -_calculate_balancing_weights() Tensor
+        +get_balancing_weights() Tensor
+    }
+    class tf_keras_metrics_Metric {
+        <<external>>
+    }
+    class RSNAKaggleMetric {
+        -Dict _config
+        -List _all_y_true
+        -List _all_y_pred
+        -Tensor _class_weights
+        +__init__(name: str, dtype: Any, **kwargs)
+        +update_state(y_true: Tensor, y_pred: Tensor, sample_weight: Any) None
+        +result() Tensor
+        +reset_state() None
+        +get_config() Dict
+        +from_config(config: Dict) RSNAKaggleMetric
+    }
+    SingletonMeta <|-- DataFrameClassCount : instance-of
+    tf_keras_metrics_Metric <|-- RSNAKaggleMetric : inherits
+    class Functional_Losses_and_Utils {
+        <<utility>>
+        +get_class_weights() Tensor
+        +compute_rsna_loss_core(y_true: Tensor, y_pred: Tensor, class_weights: Tensor) Tensor
+        +rsna_weighted_log_loss(y_true: Tensor, y_pred: Tensor) Tensor
+    }
+    Functional_Losses_and_Utils ..> DataFrameClassCount : uses
+    Functional_Losses_and_Utils ..> RSNAKaggleMetric : configures
+```
+
+---
+
 ## Key Engine Features
 
 ### Dynamic Loss Balancing
-Because classification (weighted log loss) and coordinate regression (MSE) have different magnitudes, the model uses a custom `DynamicLossBalancerCallback`. This callback dynamically adjusts the `location_output` loss weight variable based on the relative convergence rates of both tasks across epochs.
+Because classification (weighted log loss) and coordinate regression (MSE) have different magnitudes, the model uses a custom DynamicLossBalancerCallback. This callback dynamically adjusts the location_output loss weight variable based on the relative convergence rates of both tasks across epochs.
 
 ### OOM Prevention Circuit
-Processing large volumetric 3D datasets in batches can cause Out-Of-Memory (OOM) errors. The `SystemResourceMonitorCallback` actively monitors RAM/CPU usage at the end of each batch/epoch and triggers a graceful emergency training stop if memory exceeds the threshold configured in the YAML (e.g. `90%`). This ensures that checkpoints are saved before an OOM occurs.
+Processing large volumetric 3D datasets in batches can cause Out-Of-Memory (OOM) errors. The SystemResourceMonitorCallback actively monitors RAM/CPU usage at the end of each batch/epoch and triggers a graceful emergency training stop if memory exceeds the threshold configured in the YAML (e.g. 90%). This ensures that checkpoints are saved before an OOM occurs.
 
 ### Fail-Safe Resume Logic
-If a training run is interrupted, the entry point attempts to load the complete saved Keras model. In case loading fails (e.g. serialization issues with custom Keras Layers), a weight salvage fallback builds a fresh architecture from the `ModelFactory` and maps the saved weights by name before continuing.
+If a training run is interrupted, the entry point attempts to load the complete saved Keras model. In case loading fails (e.g. serialization issues with custom Keras Layers), a weight salvage fallback builds a fresh architecture from the ModelFactory and maps the saved weights by name before continuing.
 
 ---
 
 ## Getting Started
 
-### 1. Environment and Symlinks
-The pipeline utilizes symlinks to select configurations depending on the environment (Kaggle kernel vs local Windows machine). 
+1. **Environment and Symlinks**
+The pipeline utilizes symlinks to select configurations depending on the environment (Kaggle kernel vs local Windows machine).
 
 Create a hardlink/symlink to point to the correct configuration:
+
 ```powershell
-# PowerShell script to create links
 .\scripts\create_hardlink.ps1
 ```
 
-### 2. Surveying Dataset
+2. **Surveying Dataset**
 Inspect your input raw DICOM files to check spacing, image formats, and depths before starting preprocessing:
+
 ```bash
 python src/RSNA_input_data_survey.py
 ```
 
-### 3. Running Training
+3. **Running Training**
 Start the end-to-end pipeline (Preprocessing -> TFRecord generation -> Training -> Evaluation):
-```powershell
-# Directly using PowerShell script:
-.\scripts\run_pipeline.ps1
 
-# Or running the python script manually:
-python src/RSNA_2024_Lumbar_Spine_Degenerative_Classification.py
+```powershell
+.\scripts\run_pipeline.ps1
 ```
 
 ---
 
 ## Tests
-The repository is fully testable using `pytest`. The `test/` directory contains unit tests for utils, models, dataset loaders, as well as full integration tests verifying data flows.
+The repository is fully testable using pytest. The test/ directory contains unit tests for utils, models, dataset loaders, as well as full integration tests verifying data flows.
 
 Run the test suite:
+
 ```bash
 pytest
 ```

@@ -320,17 +320,36 @@ class TFRecordFilesManager:
         study_path: Path,
         logger: logging.Logger
     ) -> int:
-
         """
-        Unpacks a worker's result, dispatches logs to the main logger,
-        and returns the number of saved files.
+        Unpacks a worker's result, dispatches logs to the main logger
+        respecting its effective execution level, and returns the number of saved files.
         """
         try:
             result = future.result()
 
-            # Centralized logging dispatch
+            # Mapping string levels to standard logging numerical weights
+            level_mapping = {
+                "debug": logging.DEBUG,
+                "info": logging.INFO,
+                "warning": logging.WARNING,
+                "error": logging.ERROR,
+                "critical": logging.CRITICAL
+            }
+
+            # Get the threshold currently configured on the main process logger
+            current_threshold = logger.getEffectiveLevel()
+
+            # Centralized logging dispatch with severity filtering
             for level, msg in result.get("logs", []):
-                log_func = getattr(logger, level, logger.info)
+                # Resolve numeric weight, default to INFO if unknown
+                msg_level_weight = level_mapping.get(level.lower(), logging.INFO)
+
+                # Filter out logs that do not meet the minimum severity threshold
+                if msg_level_weight < current_threshold:
+                    continue
+
+                # Dispatch log to the corresponding logger method
+                log_func = getattr(logger, level.lower(), logger.info)
                 log_func(msg)
 
             return result.get("saved", 0)
@@ -512,7 +531,7 @@ class TFRecordFilesManager:
 
         try:
             success = self._write_study_to_tfrecord(
-                study_path, tfrecord_path, input_features_df, labels_df, self._logger
+                study_path, tfrecord_path, input_features_df, labels_df, log_storage
             )
             return success
 
@@ -615,7 +634,7 @@ class TFRecordFilesManager:
         tfrecord_path: Path,
         input_features_df: pd.DataFrame,
         labels_df: pd.DataFrame,
-        logger: logging.Logger | None
+        log_storage: list
     ) -> bool:
 
         """
@@ -630,7 +649,7 @@ class TFRecordFilesManager:
             tfrecord_path (Path): Path where the TFRecord file will be saved.
             input_features_df (pd.DataFrame): Metadata features for the study.
             labels_df (pd.DataFrame): Ground truth labels for the study.
-            logger (Optional[logging.Logger]): Logger for status and error reporting.
+            log_storage (list): List to accumulate log messages.
 
         Returns:
             bool: True if the study was successfully written (at least one series saved).
@@ -640,7 +659,6 @@ class TFRecordFilesManager:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        logger = logger or self._logger
         study_id = study_path.name
 
         # Define the list of series and ensure that each retained element is a series directory
@@ -654,7 +672,7 @@ class TFRecordFilesManager:
                 f"Study {study_path.name} is empty."
                 "Skip to the next one"
             )
-            logger.error(error_msg)
+            log_storage.append(("error", error_msg))
             return False
 
         # Case nb_series > 0
@@ -665,7 +683,8 @@ class TFRecordFilesManager:
                     series_path,
                     input_features_df,
                     labels_df,
-                    writer
+                    writer,
+                    log_storage
                 )
 
                 if nb_success == 0:
@@ -684,7 +703,7 @@ class TFRecordFilesManager:
                 "Therefore, it is put aside for the model training stage."
             )
 
-            logger.error(error_msg, extra={"status": "failure"})
+            log_storage.append(("error", error_msg))
             return False
 
         if nb_skipped_series > 0:
@@ -693,25 +712,14 @@ class TFRecordFilesManager:
                 f"Study {study_id} processed with {nb_skipped_series} skipped series "
                 "due to missing metadata or aborted TFRecord file generation."
             )
-            logger.warning(
-                warning_msg,
-                extra={
-                    "status": "incomplete",
-                    "nb_series": nb_series,
-                    "skipped_series": nb_skipped_series
-                }
-            )
+            log_storage.append(("warning", warning_msg))
 
         else:  # last case : nb_series > 0 and nb_skipped_series == 0
-            logger.debug(
+            debug_msg = (
                 f"Function {class_name}.{func_name}: "
-                f"study {study_id} processing completed successfully.",
-                extra={
-                    "status": "success",
-                    "nb_series": nb_series,
-                    "skipped_series": nb_skipped_series
-                }
+                f"study {study_id} processing completed successfully."
             )
+            log_storage.append(("debug", debug_msg))
 
         return True
 
@@ -768,9 +776,8 @@ class TFRecordFilesManager:
         input_features_df: pd.DataFrame,
         labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
-        logger: Optional[logging.Logger] = None
+        log_storage: list
     ) -> Tuple[int, int, int, int]:
-
         """
         Coordinates the processing of a single series by validating its directory
         structure and metadata availability.
@@ -787,10 +794,11 @@ class TFRecordFilesManager:
             labels_df (pd.DataFrame): DataFrame containing ground truth labels
                 (coordinates and severity).
             writer (tf.io.TFRecordWriter): The active TFRecord writer for the study.
-            logger (Optional[logging.Logger]): Logger for tracking warnings and errors.
+            log_storage (list): List to accumulate log messages. Receives the worker's list
+                                 of logs to be processed by the main orchestrator.
 
         Returns:
-            Tuple[int, int, int]: A tuple containing:
+            Tuple[int, int, int, int]: A tuple containing:
                 - nb_success: Number of successfully processed DICOM instances.
                 - nb_failures: Number of instances that failed during processing.
                 - nb_files: Total number of DICOM files found in the series.
@@ -805,19 +813,20 @@ class TFRecordFilesManager:
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
-        logger = logger or self._logger
-        logger.debug(f"Starting {class_name}.{func_name}")
+        # Technical debug traces can safely remain on the local worker's stream
+        self._logger.debug(f"Starting {class_name}.{func_name}")
 
         study_path = series_path.parent
         study_id = study_path.name
 
         if not series_path.is_dir():
             msg_warning = (
-                f"Issue in function {func_name}.{class_name}: "
+                f"Issue in function {class_name}.{func_name}: "
                 f"\nSkipping non-directory item: {series_path} "
                 f"in study: {study_path}"
             )
-            logger.warning(msg_warning, extra={"status": "incomplete"})
+            # Accumulate the log instead of displaying it directly
+            log_storage.append(("warning", msg_warning))
             return 0, 0, 0, 0
 
         series_id = int(series_path.name)
@@ -825,7 +834,7 @@ class TFRecordFilesManager:
 
         if series_metadata_df.empty:
             warning_msg = (
-                f"Issue in function {func_name}.{class_name}: "
+                f"Issue in function {class_name}.{func_name}: "
                 f"Series {series_path.name} skipped in study {study_id}: "
                 "No matching metadata related with that series found.\n"
                 "-> Root Cause: This may be due to missing "
@@ -834,23 +843,17 @@ class TFRecordFilesManager:
                 "and ensure they contain the right records."
             )
 
-            logger.warning(
-                warning_msg,
-                extra={
-                    "status": "incomplete",
-                    "series_dir": series_path.name,
-                    "study_id": study_id
-                }
-            )
-
+            # Accumulate the log instead of displaying it directly
+            log_storage.append(("warning", warning_msg))
             return 0, 0, 0, 0
 
         try:
+            # Pass self._logger to inner heavy lifter as it relies on standard stream fallback
             nb_success, nb_failures, nb_dcm_files, nb_padding_instances = (
                 self._process_series(series_path, input_features_df, labels_df, writer)
             )
 
-            logger.debug(
+            self._logger.debug(
                 f"Function {class_name}.{func_name}: "
                 f"study {study_id} processing completed successfully.",
                 extra={
@@ -862,7 +865,7 @@ class TFRecordFilesManager:
 
         except Exception as e:
             # Log the failure of the specific series instance before re-raising
-            logger.critical(
+            self._logger.critical(
                 f"Failed to process series instance {series_id} in study {study_id}: {str(e)}",
                 exc_info=True,
                 extra={"study_id": study_id, "series_id": series_id, "status": "failure"}
