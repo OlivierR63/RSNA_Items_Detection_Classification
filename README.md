@@ -96,7 +96,7 @@ The following sequence diagram maps the chronological order in which singletons,
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Orchestrateur / Main
+    actor User as Orchestrator / Main
     participant Config as ConfigLoader (Singleton)
     participant MetadataHandler as CSVMetadataHandler
     participant TFRecordMgr as TFRecordFilesManager
@@ -111,77 +111,77 @@ sequenceDiagram
     participant Trainer as ModelTrainer
     participant Evaluator as InferenceEngine / Predictor
 
-    Note over User, TFRecordMgr: ÉTAPE 1 : Initialisation & Sérialisation des Données (Pipeline ETL)
-    User->>Config: get() / get_value() (Chargement YAML)
-    User->>MetadataHandler: Initialisation (Parsing des CSV & Mapping des labels)
+    Note over User, TFRecordMgr: STEP 1: Initialization & Data Serialization (ETL Pipeline)
+    User->>Config: get() / get_value() (YAML Configuration Loading)
+    User->>MetadataHandler: Initialization (CSV Parsing & Label Mapping)
     
     User->>TFRecordMgr: generate_tfrecord_files()
     activate TFRecordMgr
-    Note over TFRecordMgr: Lecture DICOM, Normalisation des Volumes & Écriture TFRecords
-    TFRecordMgr-->>User: actual_nb_tfrecord_files (Écrit/met à jour cache.json)
+    Note over TFRecordMgr: DICOM Reading, Volume Normalization & TFRecord Writing
+    TFRecordMgr-->>User: actual_nb_tfrecord_files (Writes/updates cache.json)
     deactivate TFRecordMgr
 
-    Note over User, ClassCount: ÉTAPE 2 : Calcul Dynamique des Poids d'Équilibrage
+    Note over User, ClassCount: STEP 2: Dynamic Balancing Weights Calculation
     User->>ClassCount: set_balancing_weights()
     activate ClassCount
-    ClassCount->>ClassCount: _get() (Recharge le cache.json frais depuis le disque)
-    ClassCount->>ClassCount: _calculate_balancing_weights() (Inverse frequency)
+    ClassCount->>ClassCount: _get() (Reloads fresh cache.json from disk)
+    ClassCount->>ClassCount: _calculate_balancing_weights() (Inverse frequency strategy)
     deactivate ClassCount
 
-    Note over User, Metric: ÉTAPE 3 : Construction, Assemblage & Compilation du Modèle
-    User->>Provider: Initialisation ( get_class_weights() )
-    User->>Factory: Invoque la construction du modèle (_get_or_build_model)
+    Note over User, Metric: STEP 3: Model Construction, Assembly & Compilation
+    User->>Provider: Initialization ( Involque get_class_weights() )
+    User->>Factory: Involkes model building (_get_or_build_model)
     activate Factory
     
     Factory->>Backbone: build_backbone() (EfficientNet / ResNet3D)
-    Backbone-->>Factory: Feature Extractor
-    Factory->>Backbone: build_spine_classifier_head() (25 Task Heads)
-    Backbone-->>Factory: Multi-task Functional Model
+    Backbone-->>Factory: Feature Extractor Layers
+    Factory->>Backbone: build_spine_classifier_head() (25 Distinct Task Heads)
+    Backbone-->>Factory: Multi-task Functional Model Instance
     
     Factory->>Provider: get_loss()
     activate Provider
     Provider->>ClassCount: get_balancing_weights()
-    Provider-->>Factory: Retourne la fermeture rsna_weighted_log_loss
+    Provider-->>Factory: Returns rsna_weighted_log_loss closure
     deactivate Provider
 
     Factory->>Provider: get_metrics()
     activate Provider
     Provider->>ClassCount: get_balancing_weights()
-    Provider->>Metric: Instanciation RSNAKaggleMetric(weights)
+    Provider->>Metric: Instantiation of RSNAKaggleMetric(weights)
     activate Metric
-    Note over Metric: Validation stricte des poids injectés
-    Metric-->>Provider: Instance de métrique prête
+    Note over Metric: Strict validation of injected balancing weights
+    Metric-->>Provider: Ready metric instance
     deactivate Metric
-    Provider-->>Factory: Retourne la liste des métriques (Loss Core + Accuracy)
+    Provider-->>Factory: Returns metrics list (Loss Core + Accuracy)
     deactivate Provider
 
-    Note over Factory: Compilation Keras (model.compile avec run_eagerly=False)
-    Factory-->>User: Instance tf_keras.Model compilée et prête
+    Note over Factory: Keras Compilation (model.compile with run_eagerly=False)
+    Factory-->>User: Fully compiled tf_keras.Model instance
     deactivate Factory
 
-    Note over User, Trainer: ÉTAPE 4 : Génération des Datasets & Orchestration de l'Entraînement
+    Note over User, Trainer: STEP 4: Dataset Generation & Training Orchestration
     User->>DatasetBuilder: build_train_and_val_datasets(tfrecord_files)
     activate DatasetBuilder
-    DatasetBuilder->>Augmenter: apply_augmentation_and_preprocessing() (Rotations 3D, Z-score)
-    DatasetBuilder-->>User: tf.data.Dataset (Optimisé : Prefetch / Parallel Read)
+    DatasetBuilder->>Augmenter: apply_augmentation_and_preprocessing() (3D Rotations, Z-score)
+    DatasetBuilder-->>User: tf.data.Dataset (Optimized with Prefetch / Parallel Read)
     deactivate DatasetBuilder
 
     User->>Callbacks: build_callbacks_list() (Checkpoint, EarlyStopping, TensorBoard)
     Callbacks-->>User: list[tf_keras.callbacks.Callback]
 
-    User->>Trainer: Instanciation Trainer(model, train_ds, val_ds, callbacks)
+    User->>Trainer: Instantiation of Trainer(model, train_ds, val_ds, callbacks)
     User->>Trainer: train_model()
     activate Trainer
-    Note over Trainer: Exécution de la boucle : model.fit()
-    Trainer-->>User: TrainingHistory
+    Note over Trainer: Execution of core Keras loop: model.fit()
+    Trainer-->>User: TrainingHistory Object
     deactivate Trainer
 
-    Note over User, Evaluator: ÉTAPE 5 : Post-Processing, Évaluation Globale & Soumission
+    Note over User, Evaluator: STEP 5: Post-Processing, Global Evaluation & Submission
     User->>Evaluator: run_inference(test_ds)
     activate Evaluator
-    Note over Evaluator: Chargement des meilleurs poids & Prédiction finale
-    Evaluator->>Evaluator: format_submission() (Génération du submission.csv conforme RSNA)
-    Evaluator-->>User: Statut de complétion / Fichier de sortie prêt
+    Note over Evaluator: Best weights restoration & final testing inference
+    Evaluator->>Evaluator: format_submission() (Generates competition-compliant submission.csv)
+    Evaluator-->>User: Completion status / Output file ready
     deactivate Evaluator
 ```
 
