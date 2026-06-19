@@ -554,6 +554,10 @@ def main():
                 **paths_cfg["csv"]
             )
 
+            # Process DICOM data and serialize into TFRecord format
+            tfrecord_files_manager = TFRecordFilesManager(logger)
+            actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
+
             # Retrieve compiled model or build a new one from scratch
             model: tf_keras.Model = _get_or_build_model(series_depth, config, logger)
 
@@ -561,15 +565,16 @@ def main():
                 "Starting training process.", extra={"status": "started", "log_dir": log_dir}
             )
 
-            # Process DICOM data and serialize into TFRecord format
-            tfrecord_files_manager = TFRecordFilesManager(logger)
-            actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
-
             # Update cache file tracking generated TFRecords
             _update_tfrecord_cache_file(
                 paths_cfg["tfrecord_metadata_cache"],
                 actual_nb_tfrecord_files
             )
+
+            # Update the singleton DataFrameClassCount with the new balancing weights
+            from src.core.utils.dataframe_class_count import DataFrameClassCount
+            df_class_count = DataFrameClassCount()
+            df_class_count.set_balancing_weights()
 
             logger.info(
                 f"Cache successfully updated in {paths_cfg['tfrecord_metadata_cache']}/cache.json"

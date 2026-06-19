@@ -123,7 +123,7 @@ class RSNALossAndMetricProvider:
         try:
             self._config = ConfigLoader().get()
             self._logger = logger
-            self._balancing_weights = DataFrameClassCount().get_balancing_weights()
+            self._balancing_weights = None
             self._class_weights = get_class_weights()
         except Exception:
             raise
@@ -142,7 +142,7 @@ class RSNALossAndMetricProvider:
                 the provider's balancing weights.
         """
         class_weights = self._class_weights
-        balancing_weights = self._balancing_weights
+        balancing_weights = self._get_balancing_weights()
 
         def rsna_weighted_log_loss(y_true: tf.Tensor, y_pred: tf.Tensor):
             """
@@ -181,9 +181,39 @@ class RSNALossAndMetricProvider:
         """
         return RSNAKaggleMetric(
             class_weights=self._class_weights,
-            balancing_weights=self._balancing_weights,
+            balancing_weights=self._get_balancing_weights(),
             logger=self._logger
         )
+
+    def _get_balancing_weights(self):
+        """
+        Retrieves the dataset-specific balancing weights from the DataFrameClassCount singleton.
+
+        Returns:
+            tf.Tensor: A 1D float32 tensor containing the balancing weights for each class.
+        """
+        try:
+            # Access the singleton instance of DataFrameClassCount
+            df_class_count = DataFrameClassCount()
+
+            if not df_class_count.is_balancing_weights_valid():
+                df_class_count.set_balancing_weights()
+                balancing_weights = df_class_count.get_balancing_weights()
+
+            else:
+                balancing_weights = df_class_count.get_balancing_weights()
+
+            return balancing_weights
+
+        except Exception as e:
+            self._logger.critical(
+                "Failed to retrieve balancing weights: %s",
+                e,
+                exc_info=True,
+                extra={'status': 'failed'}
+            )
+            tf.print("Failed to retrieve balancing weights:", e)
+            raise
 
 
 # --- 2. The Metric Class (for Monitoring) ---
@@ -214,11 +244,15 @@ class RSNAKaggleMetric(tf_keras.metrics.Metric):
         critical_msg = "RSNAKaggleMetric initialization failed: %s"
 
         try:
-            super(RSNAKaggleMetric, self).__init__(name=name, **kwargs)
+            super().__init__(name=name, **kwargs)
 
             self._config = ConfigLoader().get()
             self._class_weights = class_weights
             self._balancing_weights = balancing_weights
+
+            if balancing_weights is None or tf.convert_to_tensor(balancing_weights).shape[0] == 0:
+                error_msg = "Attribute self._balancing_weights must be provided and cannot be None."
+                raise ValueError(f"Error in RSNAKaggleMetric.__init__(): {error_msg}")
 
             self._debug_mode = False
             if self._config and self._config.get('logging', {}).get('level') == "DEBUG":

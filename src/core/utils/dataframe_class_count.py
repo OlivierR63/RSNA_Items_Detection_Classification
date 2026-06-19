@@ -21,12 +21,17 @@ class DataFrameClassCount(metaclass=SingletonMeta):
 
         # Resolve the full path to the cache file
         self._cache = Path(cache_path).resolve()/"cache.json"
+        tf.print("DataFrameClassCount initialized with cache path:", self._cache)
 
         # Load and cache the data in memory during the first instantiation
         self._severity_labels_counts = self._get()
 
-        # Handle class imbalance by calculating balancing weights
-        self._balancing_weights = self._calculate_balancing_weights()
+        # Handle class imbalance by calculating balancing weights dynamically later
+        self._balancing_weights = None
+        tf.print(
+            "HELLO AGAIN! DataFrameClassCount initialized with balancing weights:",
+            self._balancing_weights
+        )
 
     def _get(self) -> Dict[str, int]:
         """
@@ -84,3 +89,25 @@ class DataFrameClassCount(metaclass=SingletonMeta):
         Returns the cached severity class weights.
         """
         return self._balancing_weights
+
+    def set_balancing_weights(self):
+        """
+        Sets the balancing weights for severity classes.
+        This method calculates the balancing weights based on the current
+        severity label counts and updates the internal state.
+        """
+        # Force reloading the dict from the updated cache file on disk
+        self._severity_labels_counts = self._get()
+        self._balancing_weights = self._calculate_balancing_weights()
+
+    def is_balancing_weights_valid(self) -> bool:
+        """
+        Checks if the internal balancing weights are valid and non-empty.
+        """
+        if self._balancing_weights is None:
+            return False
+
+        if self._balancing_weights.shape[0] == 0:
+            return False
+
+        return True

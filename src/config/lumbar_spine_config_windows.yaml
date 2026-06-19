@@ -69,7 +69,7 @@ compilation:
     Moderate: 2.0
     Severe: 4.0
 
-  run_eagerly: True
+  run_eagerly: False
 
 # ----------------- Hardware & Maintenance ----------------
 system:
