@@ -96,50 +96,93 @@ The following sequence diagram maps the chronological order in which singletons,
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Run Script
-    participant Main as Main Orchestrator<br/>(RSNA_2024_..._Classification.py)
-    participant Cfg as ConfigLoader<br/>(Singleton)
-    participant DFCount as DataFrameClassCount<br/>(Singleton)
-    participant Handler as CSVMetadataHandler
+    actor User as Orchestrateur / Main
+    participant Config as ConfigLoader (Singleton)
+    participant MetadataHandler as CSVMetadataHandler
+    participant TFRecordMgr as TFRecordFilesManager
+    participant ClassCount as DataFrameClassCount (Singleton)
     participant Provider as RSNALossAndMetricProvider
+    participant Factory as ModelFactory (_get_or_build_model)
+    participant Backbone as Backbone & Head Builder
     participant Metric as RSNAKaggleMetric
-    User->>Main: Executing main pipeline
-    activate Main
-    note over Main,Cfg: Phase 1: Environment & Config Setup
-    Main->>Cfg: ConfigLoader() (First Instantiation)
-    activate Cfg
-    Cfg-->>Main: ConfigLoader Instance
-    deactivate Cfg
-    Main->>DFCount: DataFrameClassCount() (First Instantiation)
-    activate DFCount
-    note over DFCount: Reads cache.json & calculates<br/>balancing weights
-    DFCount-->>Main: DataFrameClassCount Instance
-    deactivate DFCount
-    note over Main,Handler: Phase 2: Metadata Handlers & Mapping
-    Main->>Handler: CSVMetadataHandler() (Instantiation)
-    activate Handler
-    Handler-->>Main: CSVMetadataHandler Instance
-    deactivate Handler
-    note over Main,Provider: Phase 3: Losses & Metrics Providing Setup
-    Main->>Provider: RSNALossAndMetricProvider(logger)
+    participant DatasetBuilder as TFRecordDatasetBuilder
+    participant Augmenter as DataAugmenter / Preprocessor
+    participant Callbacks as CallbackFactory
+    participant Trainer as ModelTrainer
+    participant Evaluator as InferenceEngine / Predictor
+
+    Note over User, TFRecordMgr: ÉTAPE 1 : Initialisation & Sérialisation des Données (Pipeline ETL)
+    User->>Config: get() / get_value() (Chargement YAML)
+    User->>MetadataHandler: Initialisation (Parsing des CSV & Mapping des labels)
+    
+    User->>TFRecordMgr: generate_tfrecord_files()
+    activate TFRecordMgr
+    Note over TFRecordMgr: Lecture DICOM, Normalisation des Volumes & Écriture TFRecords
+    TFRecordMgr-->>User: actual_nb_tfrecord_files (Écrit/met à jour cache.json)
+    deactivate TFRecordMgr
+
+    Note over User, ClassCount: ÉTAPE 2 : Calcul Dynamique des Poids d'Équilibrage
+    User->>ClassCount: set_balancing_weights()
+    activate ClassCount
+    ClassCount->>ClassCount: _get() (Recharge le cache.json frais depuis le disque)
+    ClassCount->>ClassCount: _calculate_balancing_weights() (Inverse frequency)
+    deactivate ClassCount
+
+    Note over User, Metric: ÉTAPE 3 : Construction, Assemblage & Compilation du Modèle
+    User->>Provider: Initialisation ( get_class_weights() )
+    User->>Factory: Invoque la construction du modèle (_get_or_build_model)
+    activate Factory
+    
+    Factory->>Backbone: build_backbone() (EfficientNet / ResNet3D)
+    Backbone-->>Factory: Feature Extractor
+    Factory->>Backbone: build_spine_classifier_head() (25 Task Heads)
+    Backbone-->>Factory: Multi-task Functional Model
+    
+    Factory->>Provider: get_loss()
     activate Provider
-    Provider->>Cfg: get()
-    Provider->>DFCount: get_balancing_weights()
-    Provider->>Handler: get_raw_mapper() (via get_class_weights)
-    Provider-->>Main: Provider Instance (with cached weights)
-    note over Main,Metric: Phase 4: Loss Extraction & Metric Instantiation
-    Main->>Provider: get_loss()
-    Provider-->>Main: rsna_weighted_log_loss (Closure function)
-    Main->>Provider: get_metrics()
-    Provider->>Metric: RSNAKaggleMetric(class_weights, balancing_weights, logger)
-    activate Metric
-    Metric-->>Provider: Metric Instance
-    deactivate Metric
-    Provider-->>Main: Metric Instance
+    Provider->>ClassCount: get_balancing_weights()
+    Provider-->>Factory: Retourne la fermeture rsna_weighted_log_loss
     deactivate Provider
-    Main->>Main: model.compile(loss=rsna_weighted_log_loss, metrics=[rsna_main_score])
-    Main->>Main: model.fit() (Launch Training Loop)
-    deactivate Main
+
+    Factory->>Provider: get_metrics()
+    activate Provider
+    Provider->>ClassCount: get_balancing_weights()
+    Provider->>Metric: Instanciation RSNAKaggleMetric(weights)
+    activate Metric
+    Note over Metric: Validation stricte des poids injectés
+    Metric-->>Provider: Instance de métrique prête
+    deactivate Metric
+    Provider-->>Factory: Retourne la liste des métriques (Loss Core + Accuracy)
+    deactivate Provider
+
+    Note over Factory: Compilation Keras (model.compile avec run_eagerly=False)
+    Factory-->>User: Instance tf_keras.Model compilée et prête
+    deactivate Factory
+
+    Note over User, Trainer: ÉTAPE 4 : Génération des Datasets & Orchestration de l'Entraînement
+    User->>DatasetBuilder: build_train_and_val_datasets(tfrecord_files)
+    activate DatasetBuilder
+    DatasetBuilder->>Augmenter: apply_augmentation_and_preprocessing() (Rotations 3D, Z-score)
+    DatasetBuilder-->>User: tf.data.Dataset (Optimisé : Prefetch / Parallel Read)
+    deactivate DatasetBuilder
+
+    User->>Callbacks: build_callbacks_list() (Checkpoint, EarlyStopping, TensorBoard)
+    Callbacks-->>User: list[tf_keras.callbacks.Callback]
+
+    User->>Trainer: Instanciation Trainer(model, train_ds, val_ds, callbacks)
+    User->>Trainer: train_model()
+    activate Trainer
+    Note over Trainer: Exécution de la boucle : model.fit()
+    Trainer-->>User: TrainingHistory
+    deactivate Trainer
+
+    Note over User, Evaluator: ÉTAPE 5 : Post-Processing, Évaluation Globale & Soumission
+    User->>Evaluator: run_inference(test_ds)
+    activate Evaluator
+    Note over Evaluator: Chargement des meilleurs poids & Prédiction finale
+    Evaluator->>Evaluator: format_submission() (Génération du submission.csv conforme RSNA)
+    Evaluator-->>User: Statut de complétion / Fichier de sortie prêt
+    deactivate Evaluator
 ```
 
 ---
