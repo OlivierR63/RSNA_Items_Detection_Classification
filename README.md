@@ -51,41 +51,79 @@ graph TD
 The pipeline uses decoupled modules following single-responsibility principles. The diagram below represents the system architecture and runtime workflow.
 
 ```mermaid
-graph TD
-    subgraph Execution Entry
-        Main["RSNA_2024_Lumbar_Spine_Degenerative_Classification.py<br/>(Main Orchestrator)"]
+graph TB
+    %% Styles definition
+    classDef orchestrator fill:#2b5c8f,stroke:#1a3a5f,stroke-width:2px,color:#fff;
+    classDef singleton fill:#7d2d3b,stroke:#4a151e,stroke-width:2px,color:#fff;
+    classDef component fill:#2e7d32,stroke:#1b5e20,stroke-width:1px,color:#fff;
+    classDef subcomponent fill:#cfd8dc,stroke:#90a4ae,stroke-width:1px,color:#000;
+
+    subgraph Execution Entry [1. Runtime Entry Point]
+        Main["RSNA_2024_Lumbar_Spine_Degenerative_Classification.py<br/><b>(Main Orchestrator)</b>"]
     end
     
-    subgraph Data & Configuration Setup
-        Config["ConfigLoader<br/>(Loads YAML configs)"]
-        CSV["CSVMetadataHandler<br/>(Orchestrates labels & clinical CSVs)"]
-        TFRecord["TFRecordFilesManager<br/>(Converts DICOMs to TFRecords)"]
+    subgraph Global Services [2. Core Infrastructure & Singletons]
+        Config["ConfigLoader<br/><b>[SINGLETON]</b><br/><i>Loads & Distributes YAML Settings</i>"]
+        ClassCount["DataFrameClassCount<br/><b>[SINGLETON]</b><br/><i>Tracks Label Counts & Balancing Weights</i>"]
     end
     
-    subgraph Model & Training Architecture
-        Factory["ModelFactory<br/>(Builds hybrid 2D/3D model)"]
-        Losses["RSNA_lumbar_losses_and_metric.py<br/>(RSNALossAndMetricProvider)"]
-        Trainer["ModelTrainer<br/>(Runs the fitting loop & logs)"]
+    subgraph Data Pipeline [3. Data Processing & ETL Pipeline]
+        CSV["CSVMetadataHandler<br/><i>Orchestrates Metadata & Clinical CSVs</i>"]
+        TFRecord["TFRecordFilesManager<br/><i>Converts DICOM Volumes to TFRecords</i>"]
+        Dataset["TFRecordDatasetBuilder<br/><i>Builds tf.data Parallel Input Stream</i>"]
+        Augmenter["DataAugmenter / Preprocessor<br/><i>3D Rotations, Scaling & Z-score Normalization</i>"]
     end
     
-    subgraph Sub-Components
-        Backbone["Backbone2D<br/>(MobileNetV2 / ResNet50)"]
-        Aggregator["Conv3DAggregator<br/>(3D CNN Temporal Aggregation)"]
-        Padding["TemporalPaddingLayer<br/>(Static shape padding)"]
-        Dataset["LumbarDicomTFRecordDataset<br/>(tf.data pipeline builder)"]
-        Callbacks["Training Callbacks<br/>(Loss Balancer, Resource Monitor)"]
+    subgraph Model & Training Architecture [4. Neural Network & Training Core]
+        Factory["ModelFactory<br/><i>Assembles Multi-task 2D/3D Hybrid Model</i>"]
+        Provider["RSNALossAndMetricProvider<br/><i>Loss & Metric Factory Wrapper</i>"]
+        Metric["RSNAKaggleMetric<br/><i>Tracks Global Competition Weighted Log Loss</i>"]
+        Trainer["ModelTrainer<br/><i>Runs Keras .fit() Loop & Tracks Performance</i>"]
+        Callbacks["CallbackFactory<br/><i>Generates Checkpoints, EarlyStopping & TensorBoard Hooks</i>"]
     end
-    Main --> Config
-    Main --> CSV
-    Main --> TFRecord
-    Main --> Factory
-    Main --> Losses
-    Main --> Trainer
-    Trainer --> Dataset
-    Trainer --> Callbacks
-    Factory --> Backbone
-    Factory --> Aggregator
-    Factory --> Padding
+    
+    subgraph Model Sub-Components [5. Layer & Network Sub-Components]
+        Backbone["Backbone 3D / 2D Extractors<br/><i>EfficientNet / ResNet3D Feature Learning</i>"]
+        HeadBuilder["SpineClassifierHead<br/><i>Maps Shared Features to 25 Distinct Task Heads</i>"]
+    end
+
+    subgraph Evaluation [6. Inference & Post-Processing]
+        Predictor["InferenceEngine / Predictor<br/><i>Restores Best Weights & Generates submission.csv</i>"]
+    end
+
+    %% Apply Classes
+    class Main orchestrator;
+    class Config,ClassCount singleton;
+    class CSV,TFRecord,Dataset,Factory,Provider,Trainer,Predictor component;
+    class Augmenter,Metric,Callbacks,Backbone,HeadBuilder subcomponent;
+
+    %% Control & Initialization Flows
+    Main -->|Loads Specs| Config
+    Main -->|Parses Labels| CSV
+    Main -->|Serializes DICOMs| TFRecord
+    Main -->|Triggers Re-weighting| ClassCount
+    Main -->|Requests Compilation| Factory
+    Main -->|Invokes Fitting| Trainer
+    Main -->|Generates Kaggle Outputs| Predictor
+
+    %% Singleton Dependency Injections
+    Config -.->|Injected Into| Main & CSV & TFRecord & ClassCount & Provider & Metric & Factory
+    ClassCount -.->|Provides Target Weights To| Provider & Metric
+
+    %% Data Pipeline Dependencies
+    TFRecord -->|Updates cache.json| ClassCount
+    Dataset -->|Streams Batches| Trainer
+    Dataset -->|Pipelines Transformations| Augmenter
+
+    %% Factory & Provider Compilation Wiring
+    Factory -->|Encapsulates| Backbone
+    Factory -->|Splits Outputs| HeadBuilder
+    Factory -->|Requests Closures| Provider
+    Provider -->|Injects Loss| Factory
+    Provider -->|Instantiates| Metric
+
+    %% Training Execution Dependencies
+    Trainer -->|Monitors via| Callbacks
 ```
 
 ---
