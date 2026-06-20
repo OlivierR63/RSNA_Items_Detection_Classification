@@ -167,8 +167,8 @@ sequenceDiagram
     deactivate ClassCount
 
     Note over User, Metric: STEP 3: Model Construction, Assembly & Compilation
-    User->>Provider: Initialization ( Involque get_class_weights() )
-    User->>Factory: Involkes model building (_get_or_build_model)
+    User->>Provider: Initialization ( Invokes get_class_weights() )
+    User->>Factory: Invokes model building (_get_or_build_model)
     activate Factory
     
     Factory->>Backbone: build_backbone() (EfficientNet / ResNet3D)
