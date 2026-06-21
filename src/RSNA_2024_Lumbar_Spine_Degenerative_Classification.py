@@ -9,6 +9,7 @@ from typing import Tuple, Dict, Any
 import gc
 import json
 import os
+import tensorflow as tf
 import tf_keras
 
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
@@ -265,6 +266,7 @@ def _build_fresh_or_salvage(
 def _finalize_and_compile_model(
     model: 'tf_keras.Model',
     config: dict,
+    location_weight_var: tf.Variable,
     logger: logging.Logger
 ) -> 'tf_keras.Model':
 
@@ -276,9 +278,15 @@ def _finalize_and_compile_model(
     - Mean Squared Error (MSE) for 'location_output' to penalize outliers.
     - Custom loss weighting to balance classification and coordinate regression.
 
+    By passing a tf.Variable instead of a raw float to the loss weights dictionary,
+    the Keras execution graph maintains a direct memory link, enabling custom callbacks
+    to adjust weights seamlessly at runtime.
+
     Args:
         model (tf_keras.Model): The built Keras model instance.
         config (dict): Global configuration dictionary.
+        location_weight_var (tf.Variable): The shared TensorFlow variable tracking
+            the coordinate regression loss weight, updated dynamically during training.
         logger (logging.Logger): Logger for compilation status tracking.
 
     Returns:
@@ -307,7 +315,7 @@ def _finalize_and_compile_model(
 
         loss_weights = {
             "severity_output": loss_weights_settings["severity_output"],
-            "location_output": loss_weights_settings["location_output"]
+            "location_output": location_weight_var
         }
 
         # --- Define Metrics ---
@@ -359,6 +367,7 @@ def _finalize_and_compile_model(
 def _get_or_build_model(
     depth: int,
     config: dict,
+    location_weight_var: tf.Variable,
     logger: logging.Logger
 ) -> 'tf_keras.Model':
 
@@ -381,8 +390,11 @@ def _get_or_build_model(
             used for 3D convolution input shapes.
         config (dict): Global configuration dictionary containing paths,
             hyperparameters, and model settings.
-        logger (logging.Logger): Logger instance for status
-            tracking and error reporting.
+        location_weight_var (tf.Variable): The shared TensorFlow variable used during
+            model compilation to track and dynamically balance the coordinate
+            regression loss weight.
+        logger (logging.Logger): Logger instance for status tracking
+            and error reporting.
 
     Returns:
         tf_keras.Model: A compiled TensorFlow Keras model ready for training,
@@ -402,7 +414,7 @@ def _get_or_build_model(
     if model is None:
         model = _build_fresh_or_salvage(depth, config, checkpoint_path, logger)
 
-    return _finalize_and_compile_model(model, config, logger)
+    return _finalize_and_compile_model(model, config, location_weight_var, logger)
 
 
 def _initialize_system_environment(config: dict) -> int:
@@ -515,7 +527,6 @@ def main():
     _configure_tensorflow_threading(cpu_threads)
 
     # Project Framework Imports
-    import tensorflow as tf
     from src.core.utils.logger import setup_logger
     from src.core.utils.clean_logs import clean_old_logs
     from src.projects.lumbar_spine.model_trainer import ModelTrainer
@@ -558,8 +569,19 @@ def main():
             tfrecord_files_manager = TFRecordFilesManager(logger)
             actual_nb_tfrecord_files = tfrecord_files_manager.generate_tfrecord_files()
 
+            loss_weight_var = tf.Variable(
+                config['compilation']['loss_weights']['location_output'],
+                dtype=tf.float32,
+                trainable=False
+            )
+
             # Retrieve compiled model or build a new one from scratch
-            model: tf_keras.Model = _get_or_build_model(series_depth, config, logger)
+            model: tf_keras.Model = _get_or_build_model(
+                depth=series_depth,
+                config=config,
+                location_weight_var=loss_weight_var,
+                logger=logger
+            )
 
             logger.info(
                 "Starting training process.", extra={"status": "started", "log_dir": log_dir}
@@ -584,7 +606,8 @@ def main():
             trainer = ModelTrainer(
                 logger=logger,
                 model=model,
-                model_depth=series_depth
+                model_depth=series_depth,
+                loss_weight_var=loss_weight_var
             )
 
             trainer.prepare_training_and_validation_datasets()

@@ -1,0 +1,16 @@
+{
+  "id": "olivierrochat/run-rsna-lumbar-spine",
+  "title": "Run RSNA Lumbar Spine",
+  "code_file": "run_rsna.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "high_mem",
+  "dataset_sources": ["olivierrochat/rsna-2024-lumbar-spine-tfrecords"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

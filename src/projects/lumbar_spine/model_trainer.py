@@ -41,7 +41,8 @@ class ModelTrainer:
         self,
         model: tf_keras.Model,
         logger: logging.Logger | None,
-        model_depth: int = 1
+        model_depth: int = 1,
+        loss_weight_var: tf.Variable = None
     ) -> None:
 
         """
@@ -53,6 +54,10 @@ class ModelTrainer:
                 Defaults to the current system logger if not provided.
             - model_depth (int): The depth of the 3D input volume, used for
                 dataset dimension configuration.
+            - loss_weight_var (Optional[tf.Variable]): A shared TensorFlow variable
+                used during model compilation to track and dynamically adjust the
+                coordinate regression loss weight. Defaults to None, which triggers
+                a local fallback initialization.
         """
 
         # Force a clean break between lines
@@ -70,12 +75,15 @@ class ModelTrainer:
         # Test line: if the error is here, it's a scope issue
         self._model_depth = model_depth
 
-        # Initializing the TF Variable with the starting metadata
-        self._loss_weight_var = tf.Variable(
-            self._config['compilation']['loss_weights']['location_output'],
-            dtype=tf.float32,
-            trainable=False
-        )
+        # Use the shared variable if provided, else create a local one (fallback)
+        if loss_weight_var is not None:
+            self._loss_weight_var = loss_weight_var
+        else:
+            self._loss_weight_var = tf.Variable(
+                self._config['compilation']['loss_weights']['location_output'],
+                dtype=tf.float32,
+                trainable=False
+            )
 
         self._nb_train = None
         self._nb_val = None
@@ -362,6 +370,13 @@ class ModelTrainer:
             verbose=1
         )
 
+        ram_cleaner_callback = LambdaCallback(
+            on_epoch_end=lambda epoch, logs: (
+                gc.collect(),
+                tf_keras.backend.clear_session()
+            )
+        )
+
         callbacks_cfg = self._config['callbacks']
         patience_cfg = callbacks_cfg['patience']
 
@@ -374,12 +389,14 @@ class ModelTrainer:
             ProgbarLogger(),
             dynamic_loss_balancer_callback,
             lr_scheduler,
+            ram_cleaner_callback,
 
             # Save the best version of the model for final inference
             tf_keras.callbacks.ModelCheckpoint(
                 filepath=str(best_path),
                 save_best_only=True,
-                monitor="val_loss",
+                save_weights_only=True,
+                monitor="val_severity_output_rsna_main_score",
                 mode="min"
             ),
 
@@ -387,12 +404,13 @@ class ModelTrainer:
             tf_keras.callbacks.ModelCheckpoint(
                 filepath=str(last_path),
                 save_best_only=False,
+                save_weights_only=True,
                 verbose=1
             ),
 
             # Stop training if validation loss plateaus.
             tf_keras.callbacks.EarlyStopping(
-                monitor="val_loss",
+                monitor="val_severity_output_rsna_main_score",
                 patience=patience_cfg,
                 restore_best_weights=True,
                 verbose=1
