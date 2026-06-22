@@ -10,7 +10,7 @@
   "enable_internet": "true",
   "machine_shape": "high_mem",
   "dataset_sources": ["olivierrochat/rsna-2024-lumbar-spine-tfrecords"],
-  "competition_sources": [],
+  "competition_sources": ["rsna-2024-lumbar-spine-degenerative-classification"],
   "kernel_sources": [],
   "model_sources": []
 }
