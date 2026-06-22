@@ -1,7 +1,7 @@
 # coding: utf-8
 import concurrent.futures
 import multiprocessing
-from typing import Tuple, Optional, List, Union, Dict, Any
+from typing import Tuple, List, Union, Dict, Any
 import logging
 import tensorflow as tf
 import numpy as np
@@ -79,14 +79,14 @@ class TFRecordFilesManager:
 
     def __init__(
         self,
-        logger: logging.Logger
+        logger: logging.Logger | None = None
     ) -> None:
 
         """
         Initializes the TFRecordFilesManager with configuration and logging.
 
         Args:
-            logger (Optional[logging.Logger]): Logger instance for tracking
+            logger (logging.Logger | None): Logger instance for tracking
                 the conversion process. If None, a default logger will be used.
         """
 
@@ -99,7 +99,7 @@ class TFRecordFilesManager:
         self._max_records = self._config['data_specs']['max_records_per_frame']
 
     @log_method()
-    def generate_tfrecord_files(self, *, logger: Optional[logging.Logger] = None) -> int:
+    def generate_tfrecord_files(self, *, logger: logging.Logger | None = None) -> int:
         """
         Generates TFRecord files from DICOM images and associated metadata.
 
@@ -221,7 +221,7 @@ class TFRecordFilesManager:
         metadata_df: pd.DataFrame,
         tfrecord_dir: str,
         *,
-        logger: logging.Logger | None
+        logger: logging.Logger | None = None
     ) -> int:
         """
         Converts DICOM files stored in a hierarchical directory structure into
@@ -543,7 +543,7 @@ class TFRecordFilesManager:
         self,
         study_path: Path,
         metadata_df: pd.DataFrame,
-        logger: logging.Logger | None
+        logger: logging.Logger | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
         """
@@ -552,7 +552,7 @@ class TFRecordFilesManager:
         Args:
             - study_path (Path): Path to the study directory.
             - metadata_df (pd.DataFrame): Metadata already filtered for this study.
-            - logger (Optional[logging.Logger]): Logger instance.
+            - logger (logging.Logger | None): Logger instance.
 
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame]: (input_features_df, labels_df)
@@ -728,7 +728,7 @@ class TFRecordFilesManager:
         study_path: Path,
         tfrecord_path: Path,
         error: Exception,
-        logger: logging.Logger | None
+        logger: logging.Logger | None = None
     ) -> None:
         """
         Handles unexpected exceptions during study processing.
@@ -879,7 +879,7 @@ class TFRecordFilesManager:
         input_features_df: pd.DataFrame,
         labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> Tuple[int, int, int, int]:
 
         """
@@ -951,7 +951,7 @@ class TFRecordFilesManager:
     def _plan_series_sequence(
         self,
         dicom_files: List[Path],
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> List[Union[Path, int]]:
         """
         Calculates the final sequence of instances to reach series_depth.
@@ -1059,7 +1059,7 @@ class TFRecordFilesManager:
     def _get_series_stats(
         self,
         series_path: Path,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> Tuple[int, int]:
 
         """
@@ -1071,7 +1071,7 @@ class TFRecordFilesManager:
 
         Args:
             series_path (Path): Path to the directory containing the DICOM series.
-            logger (Optional[logging.Logger]): Logger instance for error reporting.
+            logger (logging.Logger | None): Logger instance for error reporting.
 
         Returns:
             Tuple[int, int]: A tuple containing the (global_min, global_max) pixel values
@@ -1146,7 +1146,7 @@ class TFRecordFilesManager:
         path: Path,
         global_min: float,
         global_max: float,
-        logger: logging.Logger | None
+        logger: logging.Logger | None = None
     ) -> Tuple[float, float, bool]:
         """
         Reads a single DICOM file and updates the running min/max intensity values.
@@ -1155,7 +1155,7 @@ class TFRecordFilesManager:
             path (Path): Path to the DICOM file.
             global_min (float): Current global minimum.
             global_max (float): Current global maximum.
-            logger (Optional[logging.Logger]): Logger for warnings.
+            logger (logging.Logger | None): Logger for warnings.
 
         Returns:
             Tuple[float, float, bool]: Updated (min, max) and a success flag.
@@ -1185,8 +1185,8 @@ class TFRecordFilesManager:
         labels_df: pd.DataFrame,
         writer: tf.io.TFRecordWriter,
         instance_num: int,
-        is_padding: bool = False,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None,
+        is_padding: bool = False
     ) -> bool:
 
         """
@@ -1201,7 +1201,7 @@ class TFRecordFilesManager:
              - writer (tf.io.TFRecordWriter): Active writer for TFRecord export.
              - instance_num (int): The specific instance number to process/simulate.
              - is_padding (bool): If True, generates a 1x1 dummy pixel instead of reading a file.
-             - logger (Optional[logging.Logger]): Logger instance.
+             - logger (logging.Logger | None): Logger instance.
 
         Returns:
             bool: True if successful, False otherwise.
@@ -1291,7 +1291,7 @@ class TFRecordFilesManager:
         series_max: int,
         input_features_df: pd.DataFrame,
         labels_df: pd.DataFrame,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> tf.train.Example:
         """
         Generates a 1x1 dummy pixel feature set for padding.
@@ -1395,7 +1395,7 @@ class TFRecordFilesManager:
         series_max: int,
         input_features_df: pd.DataFrame,
         labels_df: pd.DataFrame,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> tf.train.Example:
         """
         Orchestrates image loading, padding, and TF serialization.
@@ -1406,7 +1406,7 @@ class TFRecordFilesManager:
             - series_max (int): Maximum pixel intensity value for the entire series.
             - input_features_df (pd.DataFrame): DataFrame containing series-level descriptions.
             - labels_df (pd.DataFrame): DataFrame containing ground truth labels and coordinates.
-            - logger (Optional[logging.Logger]): Logger instance for status and error tracking.
+            - logger (logging.Logger | None): Logger instance for status and error tracking.
 
         Returns:
             tf.train.Example: A serialized TensorFlow Example containing image bytes,
@@ -1495,7 +1495,7 @@ class TFRecordFilesManager:
     def _load_normalized_dicom(
         self,
         dicom_path: Path,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> Tuple[np.ndarray, int]:
 
         """
@@ -1550,7 +1550,7 @@ class TFRecordFilesManager:
         self,
         dicom_path: Path,
         input_features_df: pd.DataFrame,
-        logger: logging.Logger | None
+        logger: logging.Logger | None = None
     ) -> Tuple[int, int, int]:
         """
         Retrieves the target dimensions and series description from the metadata DataFrame.
@@ -1726,7 +1726,7 @@ class TFRecordFilesManager:
         description: int,
         labels_df: pd.DataFrame,
         nb_max_records: int,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> dict:
 
         """
@@ -1752,7 +1752,7 @@ class TFRecordFilesManager:
             - labels_df (pd.DataFrame): DataFrame containing condition levels, severity,
                                         and coordinates.
             - nb_max_records (int): Expected number of condition levels (e.g., 25).
-            - logger (Optional[logging.Logger]): Logger instance for execution tracking.
+            - logger (logging.Logger | None): Logger instance for execution tracking.
 
         Returns:
             dict: A dictionary mapping feature names to `tf.train.Feature` objects.
