@@ -1,21 +1,29 @@
 # coding: utf-8
 
 # ----------------- Standard imports --------------------------------------------------------
-import signal
+import os
 import sys
+
+import signal
 import logging
 from pathlib import Path
 from typing import Tuple, Dict, Any
 import gc
 import json
-import os
 import tensorflow as tf
 import tf_keras
 
-from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
-from src.projects.lumbar_spine.model_trainer import ModelTrainer
-from src.core.models.model_factory import ModelFactory
-from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import RSNALossAndMetricProvider
+# Add the project root directory to the Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler   # noqa: E402
+from src.projects.lumbar_spine.model_trainer import ModelTrainer                # noqa: E402
+from src.core.models.model_factory import ModelFactory                          # noqa: E402
+import src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric as lm_metrics    # noqa: E402
+
+# ----------------- End of Standard imports -------------------------------------------------
 
 
 # ----------------- TensorFlow and projects imports -----------------------------------------
@@ -297,7 +305,7 @@ def _finalize_and_compile_model(
     """
 
     try:
-        provider = RSNALossAndMetricProvider(logger=logger)
+        provider = lm_metrics.RSNALossAndMetricProvider(logger=logger)
 
         # --- Define Losses ---
         # Using MSE for location to penalize large spatial errors more heavily
