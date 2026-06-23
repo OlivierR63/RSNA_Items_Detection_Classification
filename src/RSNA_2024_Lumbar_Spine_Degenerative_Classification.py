@@ -548,10 +548,11 @@ def main():
 
     paths_cfg = config['paths']
     log_dir = Path(paths_cfg["output"]) / "logs"
+    log_mirror_file_path = Path(paths_cfg["log_mirror"])
 
     # Redirect terminal stdout and stderr streams to a single log file
     from src.core.utils.system_stream_tee import SystemStreamTee
-    SystemStreamTee(str(log_dir / "terminal_output.log"))
+    SystemStreamTee(log_mirror_file_path)
 
     # 2. Contextual Execution Block
     with setup_logger(process_name="train", log_dir=log_dir) as logger:

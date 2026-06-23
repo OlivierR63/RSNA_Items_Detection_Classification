@@ -608,7 +608,7 @@ class TFRecordFilesManager:
             error_msg = (
                 f"Issue in function {class_name}.{func_name}. "
                 f"Study {study_id} has an invalid number of labels. "
-                f"Found {actual_nb_labels} labels, but expected {expected_nb_labels} "
+                f"Found {actual_nb_labels} labels, instead of {expected_nb_labels} expected. "
                 "Skipped study"
             )
 

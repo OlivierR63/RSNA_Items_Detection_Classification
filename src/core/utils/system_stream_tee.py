@@ -32,11 +32,10 @@ class SystemStreamTee(object):
     Intercepts and duplicates both stdout and stderr into a single log file.
     """
 
-    def __init__(self, file_string):
+    def __init__(self, file_path: Path):
         """
         Initializes the dual logger and replaces global system streams.
         """
-        file_path = Path(file_string)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Open the single shared log file in append mode
