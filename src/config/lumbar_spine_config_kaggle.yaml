@@ -72,13 +72,13 @@ system:
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
-  chunksize: 50 # 50 for HDD. 500 is acceptable for SSD
+  chunksize: 500 # 50 for HDD. 500 is acceptable for SSD
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 1       # Equivalent to cycle_length
+    parallel_files: 7       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   
