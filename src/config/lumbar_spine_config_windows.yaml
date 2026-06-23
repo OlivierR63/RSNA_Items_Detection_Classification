@@ -73,7 +73,7 @@ compilation:
 
 # ----------------- Hardware & Maintenance ----------------
 system:
-  nb_cores: 7 # 0 = all cores
+  nb_cores: -1  # 0 = all cores ; -n = all logical cores but n
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
