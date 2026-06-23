@@ -306,9 +306,13 @@ class ModelTrainer:
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        checkpoint_dir = Path(paths_cfg["checkpoint"])
+        checkpoint_dir = Path(paths_cfg["checkpoint"]).resolve()
 
         checkpoint_dir = checkpoint_dir.resolve()
+
+        # Ensure the directory tree exists before attempting to write the file
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
         last_path = checkpoint_dir / self.CHECKPOINT_FILENAME
         best_path = checkpoint_dir / self.BEST_MODEL_FILENAME
 

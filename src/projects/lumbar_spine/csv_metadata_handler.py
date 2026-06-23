@@ -199,6 +199,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         else:
             self._instances_series_format_df = self._get_instances_series_format()
 
+            # Ensure the directory tree exists before attempting to write the file
             output_path = self._paths_dict['instances_series_format']
             output_path.parent.mkdir(parents=True, exist_ok=True)
 

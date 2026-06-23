@@ -501,7 +501,8 @@ def _update_tfrecord_cache_file(cache_dir_path: str, actual_nb_files: int):
     Safely reads, updates, and rewrites the shared JSON cache file
     with the total number of successfully generated TFRecord files.
     """
-    cache_path = Path(cache_dir_path) / "cache.json"
+    cache_dir = Path(cache_dir_path).resolve()
+    cache_path = cache_dir / "cache.json"
     cache_data = {}
 
     if cache_path.exists():
@@ -513,6 +514,9 @@ def _update_tfrecord_cache_file(cache_dir_path: str, actual_nb_files: int):
                 cache_data = {}
 
     cache_data['actual_nb_tfrecord_files'] = actual_nb_files
+
+    # Ensure the directory tree exists before attempting to write the file
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     with open(cache_path, 'w', encoding='utf-8') as f:
         json.dump(cache_data, f, indent=4)
@@ -547,6 +551,11 @@ def main():
     tf.get_logger().setLevel(logging.ERROR)
 
     paths_cfg = config['paths']
+    output_dir = Path(paths_cfg["output"]).resolve()
+
+    # Ensure the directory tree exists for logs and output before starting the training process
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     log_dir = Path(paths_cfg["output"]) / "logs"
     log_mirror_file_path = Path(paths_cfg["log_mirror"])
 
