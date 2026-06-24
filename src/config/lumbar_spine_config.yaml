@@ -12,7 +12,7 @@ paths:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
-    instances_series_format: "/kaggle/working/csv_file/train_instances_series_format.csv"
+    instances_series_format: "/kaggle/working/csv_file/train_train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
