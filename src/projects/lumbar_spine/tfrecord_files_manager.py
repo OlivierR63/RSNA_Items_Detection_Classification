@@ -92,8 +92,9 @@ class TFRecordFilesManager:
 
         self._config = ConfigLoader().get()
 
-        path_str = self._config['paths']['tfrecord']
-        self._tfrecord_dir = Path(path_str)
+        tfrecord_paths = self._config['paths']['tfrecord']
+        self._tfrecord_read_dir = Path(tfrecord_paths['read_only_dir'])
+        self._tfrecord_write_dir = Path(tfrecord_paths['read_write_dir'])
 
         self._logger = logger
         self._max_records = self._config['data_specs']['max_records_per_frame']
@@ -137,7 +138,7 @@ class TFRecordFilesManager:
 
         try:
             # 1. Prepare the directories
-            self._tfrecord_dir.mkdir(parents=True, exist_ok=True)
+            self._tfrecord_write_dir.mkdir(parents=True, exist_ok=True)
 
             # 2. Load and merge metadata
             # Build the reference dataframe
@@ -178,7 +179,8 @@ class TFRecordFilesManager:
             nb_created_tfrecord_files = self._convert_dicom_to_tfrecords(
                 studies_dir=dicom_studies_dir,
                 metadata_df=metadata_df,
-                tfrecord_dir=str(self._tfrecord_dir)
+                tfrecord_read_dir=str(self._tfrecord_read_dir),
+                tfrecord_write_dir=str(self._tfrecord_write_dir)
             )
 
             logger.info(
@@ -219,7 +221,8 @@ class TFRecordFilesManager:
         self,
         studies_dir: str,
         metadata_df: pd.DataFrame,
-        tfrecord_dir: str,
+        tfrecord_read_dir: str,
+        tfrecord_write_dir: str,
         *,
         logger: logging.Logger | None = None
     ) -> int:
@@ -230,7 +233,8 @@ class TFRecordFilesManager:
         Args:
             - studies_dir (str): The full path to the root directory containing study subfolders.
             - metadata_df (pd.DataFrame): A DataFrame containing pre-processed metadata.
-            - tfrecord_dir (str): The directory where the resulting TFRecord files will be saved.
+            - tfrecord_read_dir (str): The directory where existing TFRecord files are located.
+            - tfrecord_write_dir (str): The directory where new TFRecord files will be written.
             - logger: Automatically injected logger (optional).
 
         Returns:
@@ -261,7 +265,8 @@ class TFRecordFilesManager:
 
         try:
             # Ensure the destination directory for TFRecord files exists and return its Path.
-            tfrecord_path = self._setup_tfrecord_directory(tfrecord_dir)
+            tfrecord_write_path = self._setup_tfrecord_directory(tfrecord_write_dir)
+            tfrecord_read_path = Path(tfrecord_read_dir)
             nb_saved_tfrecord_files = 0
 
             # Determine number of workers (leave one core for the system)
@@ -275,7 +280,8 @@ class TFRecordFilesManager:
                 future_to_study = {
                     executor.submit(
                         self._convert_single_study,
-                        tfrecord_path,
+                        tfrecord_read_path,
+                        tfrecord_write_path,
                         study_path,
                         metadata_df
                     ): study_path for study_path in study_list
@@ -372,7 +378,8 @@ class TFRecordFilesManager:
 
     def _convert_single_study(
         self,
-        tfrecord_path: Path,
+        tfrecord_read_path: Path,
+        tfrecord_write_path: Path,
         study_full_path: Path,
         metadata_df: pd.DataFrame
     ) -> Dict[str, Any]:
@@ -383,14 +390,16 @@ class TFRecordFilesManager:
         This worker function performs the end-to-end processing for one study:
         1. Validates the existence and content of the study directory.
         2. Cross-references the study ID with the provided metadata.
-        3. Checks if a corresponding TFRecord file already exists to avoid redundant work.
+        3. Checks if a corresponding TFRecord file already exists in either the read-only
+           or writeable directory to avoid redundant work.
         4. Triggers the pixel processing and file serialization.
 
         All events (errors, warnings, and info) are captured in a structured log list
         to ensure compatibility with parallel execution and centralized logging.
 
         Args:
-            - tfrecord_path (Path): Destination directory where the TFRecord file will be saved.
+            - tfrecord_read_path (Path): Directory where existing TFRecord files are located.
+            - tfrecord_write_path (Path): Directory where new TFRecord files will be saved.
             - study_full_path (Path): System path to the study directory containing DICOM series.
             - metadata_df (pd.DataFrame): Global DataFrame containing target labels and metadata
                 for all studies. Must include a 'study_id' column.
@@ -454,12 +463,14 @@ class TFRecordFilesManager:
             result["logs"].append(("warning", msg_warning))
             return result
 
-        # Check the existence of the target file
-        tfrecord_file = tfrecord_path / f"{study_id_str}.tfrecord"
+        # Check the existence of the target file in both folders
+        tfrecord_read_file = tfrecord_read_path / f"{study_id_str}.tfrecord"
+        tfrecord_write_file = tfrecord_write_path / f"{study_id_str}.tfrecord"
 
-        if tfrecord_file.exists():
+        if tfrecord_read_file.exists() or tfrecord_write_file.exists():
+            exists_path = tfrecord_read_file if tfrecord_read_file.exists() else tfrecord_write_file
             info_msg = (
-                f"Processing study {study_id_str}: file {tfrecord_file} "
+                f"Processing study {study_id_str}: file {exists_path} "
                 "already exists. Skip to the next one."
             )
             result["logs"].append(("info", info_msg))
@@ -468,7 +479,7 @@ class TFRecordFilesManager:
         # Actual processing
         try:
             success = self._process_study(
-                study_full_path, study_metadata_df, tfrecord_path, result["logs"]
+                study_full_path, study_metadata_df, tfrecord_write_path, result["logs"]
             )
 
             result["saved"] = int(success)

@@ -5,7 +5,9 @@
 # ----------------- Environmental & Paths -----------------
 paths:
   dicom_studies: "../../data/lumbar_spine/dicom/training/"
-  tfrecord: "../../data/lumbar_spine/tfrecords"
+  tfrecord:
+    read_only_dir: "../../data/lumbar_spine/tfrecords"
+    read_write_dir: "../../data/lumbar_spine/tfrecords"
   tfrecord_metadata_cache: "../../data/lumbar_spine/output/cache_metadata"
   output: "../../data/lumbar_spine/output/"
   checkpoint: "../../data/lumbar_spine/output/checkpoints"
@@ -40,7 +42,7 @@ models:
 # ----------------- Training & Compilation ----------------
 training:
   batch_size: 1
-  epochs: 10
+  epochs: 15
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
   loss_balancer:

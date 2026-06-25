@@ -19,7 +19,10 @@ class Sequence:
 REQUIRED_SCHEMA = {
     "paths": {
         "dicom_studies": str,
-        "tfrecord": str,
+        "tfrecord": {
+            "read_only_dir": str,
+            "read_write_dir": str
+        },
         "tfrecord_metadata_cache": str,
         "output": str,
         "checkpoint": str,

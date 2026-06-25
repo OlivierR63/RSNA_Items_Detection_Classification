@@ -5,7 +5,6 @@ import tensorflow as tf
 import logging
 import gc
 from typing import Type
-from pathlib import Path
 import tf_keras
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
     RSNALossAndMetricProvider,
@@ -85,7 +84,6 @@ class ModelFactory:
         self._config = ConfigLoader().get()
         self._logger = logger
         self._nb_output_records = nb_output_records
-        self._tfrecord_dir = Path(self._config['paths']['tfrecord'])
 
         # Calculate or retrieve series_depth (max slices per series)
         if series_depth == 0:

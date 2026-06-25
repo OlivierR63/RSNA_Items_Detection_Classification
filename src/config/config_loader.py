@@ -100,7 +100,6 @@ class ConfigLoader(metaclass=SingletonMeta):
         # Iterate through known keys to convert relative paths (starting with '.') to absolute
         core_keys = [
             "dicom_studies",
-            "tfrecord",
             "tfrecord_metadata_cache",
             "output",
             "inspection",
@@ -110,6 +109,13 @@ class ConfigLoader(metaclass=SingletonMeta):
 
         for key in core_keys:
             self._resolve_single_paths(paths_cfg, key, config_dir)
+
+        # --- Resolve TFRecord Paths ---
+        # Handle nested dictionary for TFRecord directory locations
+        if "tfrecord" in paths_cfg:
+            tfrecord_dict = paths_cfg["tfrecord"]
+            for tf_key in tfrecord_dict:
+                self._resolve_single_paths(tfrecord_dict, tf_key, config_dir)
 
         # --- Resolve CSV File Paths ---
         # Handle nested dictionary for CSV file locations

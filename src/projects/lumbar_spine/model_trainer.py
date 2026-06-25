@@ -66,11 +66,9 @@ class ModelTrainer:
         self._logger = logger or get_current_logger()
         self._process = psutil.Process(os.getpid())
 
-        # Define the directory where the TFRecord files shall be stored.
-        self._tfrecord_dir = Path(self._config["paths"]["tfrecord"]).resolve()
-
-        # Define the pattern to match all TFRecord files in the directory.
-        self._tfrecord_pattern = str(self._tfrecord_dir / "*.tfrecord")
+        tfrecord_paths = self._config["paths"]["tfrecord"]
+        self._tfrecord_read_dir = Path(tfrecord_paths["read_only_dir"]).resolve()
+        self._tfrecord_write_dir = Path(tfrecord_paths["read_write_dir"]).resolve()
 
         # Test line: if the error is here, it's a scope issue
         self._model_depth = model_depth
@@ -201,8 +199,17 @@ class ModelTrainer:
                 self._model_depth
             )
 
-            # 1. List files and shuffle them
-            all_tfrecord_files = tf.io.gfile.glob(self._tfrecord_pattern)
+            # 1. List files and shuffle them from both directories
+            read_files = tf.io.gfile.glob(str(self._tfrecord_read_dir / "*.tfrecord"))
+            write_files = tf.io.gfile.glob(str(self._tfrecord_write_dir / "*.tfrecord"))
+
+            # Deduplicate by filename (to prevent double counting if the same patient is in both)
+            file_map = {}
+            for f in read_files:
+                file_map[Path(f).name] = f
+            for f in write_files:
+                file_map[Path(f).name] = f
+            all_tfrecord_files = list(file_map.values())
 
             # 2. Shuffle the files
             shuffled_tfrecord_list = tf.random.shuffle(all_tfrecord_files, seed=42)
@@ -237,6 +244,9 @@ class ModelTrainer:
             del shuffled_tfrecord_list
             del train_list
             del val_list
+            del read_files
+            del write_files
+            del file_map
 
             gc.collect()
             logger.info("Training and validation dataset created successfully.",

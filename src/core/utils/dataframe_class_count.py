@@ -21,17 +21,12 @@ class DataFrameClassCount(metaclass=SingletonMeta):
 
         # Resolve the full path to the cache file
         self._cache = Path(cache_path).resolve()/"cache.json"
-        tf.print("DataFrameClassCount initialized with cache path:", self._cache)
 
         # Load and cache the data in memory during the first instantiation
         self._severity_labels_counts = self._get()
 
         # Handle class imbalance by calculating balancing weights dynamically later
         self._balancing_weights = None
-        tf.print(
-            "HELLO AGAIN! DataFrameClassCount initialized with balancing weights:",
-            self._balancing_weights
-        )
 
     def _get(self) -> Dict[str, int]:
         """
