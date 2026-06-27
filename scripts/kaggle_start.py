@@ -5,11 +5,15 @@ from pathlib import Path
 import shutil
 import os
 
-# --- Local Path Configurations (Windows) ---
-# Root directory of your local Git project
-base_project_path = Path(
-    r"C:\Users\Olivier\Desktop\Projet_Kaggle\RSNA_Items_Detection_Classification"
-)
+# --- Dynamic Path Configurations (Agnostic: Windows & Kaggle Linux) ---
+# __file__ refers to the absolute path of 'kaggle_start.py'
+# .resolve() ensures any symlinks or relative dots are expanded cleanly
+script_path = Path(__file__).resolve()
+
+# Since the script is in '.../RSNA_Items_Detection_Classification/scripts/kaggle_start.py',
+# script_path.parent gives '.../scripts'
+# script_path.parents[1] gives the project root: '.../RSNA_Items_Detection_Classification'
+base_project_path = script_path.parents[1]
 
 # Directory containing your 'run_rsna.ipynb' notebook and 'kernel-metadata.json' config file
 kaggle_run_dir = base_project_path / "Kaggle_run"
@@ -54,9 +58,6 @@ def prepare_and_push_to_kaggle():
     print(f"command = {command_str}")
 
     env = os.environ.copy()
-
-    # Paste your raw key value from kaggle.json here
-    #env["KAGGLE_API_TOKEN"] = "KGAT_a525e5127e52f44d4d8d1cfabe46a69e"
 
     # Using shell=True is the standard way when passing arguments as a string
     try:

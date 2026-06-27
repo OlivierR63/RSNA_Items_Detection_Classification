@@ -2,9 +2,9 @@
 paths:
   dicom_studies: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_images"
   tfrecord:
-    read_only_dir: "/kaggle/input/olivierrochat/rsna-2024-lumbar-spine-tfrecords"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/outcome/tfrecords"
     read_write_dir: "/kaggle/working/lumbar_spine/rsna-2024-lumbar-spine-tfrecords"
-  tfrecord_metadata_cache: "/kaggle/working/lumbar_spine/output/cache_metadata"
+  tfrecord_metadata_cache: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/outcome/output/cache_metadata"
   output: "/kaggle/working/lumbar_spine/output/"
   checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
   log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
