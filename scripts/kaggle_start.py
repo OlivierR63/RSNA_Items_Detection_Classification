@@ -56,7 +56,7 @@ def prepare_and_push_to_kaggle():
     env = os.environ.copy()
 
     # Paste your raw key value from kaggle.json here
-    env["KAGGLE_API_TOKEN"] = "KGAT_a525e5127e52f44d4d8d1cfabe46a69e"
+    #env["KAGGLE_API_TOKEN"] = "KGAT_a525e5127e52f44d4d8d1cfabe46a69e"
 
     # Using shell=True is the standard way when passing arguments as a string
     try:

@@ -371,3 +371,6 @@ data/
 # VS Code / Code Runner temporary files
 scripts/tempCodeRunnerFile.ps1
 **/tempCodeRunnerFile.ps1
+
+# Ignore the Kaggle dataset staging directory
+kaggle_staging_temporary/
