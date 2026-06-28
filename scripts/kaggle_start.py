@@ -54,9 +54,6 @@ def prepare_and_push_to_kaggle():
 
     # Set up the CLI command arguments as a single clean string
     command_str = f'python -m kaggle kernels push -p "{kaggle_run_dir}"'
-
-    print(f"command = {command_str}")
-
     env = os.environ.copy()
 
     # Using shell=True is the standard way when passing arguments as a string

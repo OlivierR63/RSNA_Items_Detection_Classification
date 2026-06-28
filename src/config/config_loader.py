@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, List
+import shutil
 import yaml
 import logging
 import json
@@ -40,22 +41,26 @@ class ConfigLoader(metaclass=SingletonMeta):
         if hasattr(self, '_config'):
             return  # Already initialized by a previous call
 
-        # Ensure the configuration path is provided during the initial call
-        if config_path is None:
-            raise ValueError(
-                "ConfigLoader must be initialized with a config_path on its first call."
-            )
+        try:
+            # Ensure the configuration path is provided during the initial call
+            if config_path is None:
+                raise ValueError(
+                    "ConfigLoader must be initialized with a config_path on its first call."
+                )
 
-        # Check file existence
-        config_file_path = Path(config_path).resolve()
-        if not config_file_path.exists():
-            raise FileNotFoundError(f"Configuration file {config_path} not found.")
+            # Check file existence
+            config_file_path = Path(config_path).resolve()
+            if not config_file_path.exists():
+                raise FileNotFoundError(f"Configuration file {config_path} not found.")
 
-        self._load_and_initialize_dict(config_file_path)
-        self._resolve_all_paths(config_file_path.parent)
+            self._load_and_initialize_dict(config_file_path)
+            self._resolve_all_paths(config_file_path.parent)
 
-        # Final check: Verify the compliance of the config dictionary
-        self._check_config_compliance()
+            # Final check: Verify the compliance of the config dictionary
+            self._check_config_compliance()
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize ConfigLoader: {e}") from e
 
     def _load_and_initialize_dict(self, config_file_path: Path) -> None:
         """
@@ -93,36 +98,44 @@ class ConfigLoader(metaclass=SingletonMeta):
         """
         Helper to resolve paths, reducing __init__ complexity.
         """
-        # Reference to the paths dictionary to avoid repetitive lookups
-        paths_cfg = self._config.get('paths', {})
+        try:
+            # Reference to the paths dictionary to avoid repetitive lookups
+            paths_cfg = self._config.get('paths', {})
 
-        # --- Resolve Core Relative Paths ---
-        # Iterate through known keys to convert relative paths (starting with '.') to absolute
-        core_keys = [
-            "dicom_studies",
-            "tfrecord_metadata_cache",
-            "output",
-            "inspection",
-            "checkpoint",
-            "log_mirror"
-        ]
+            # --- Resolve Core Relative Paths ---
+            # Iterate through known keys to convert relative paths (starting with '.') to absolute
+            core_keys = [
+                "dicom_studies",
+                "output",
+                "inspection",
+                "checkpoint",
+                "log_mirror"
+            ]
 
-        for key in core_keys:
-            self._resolve_single_paths(paths_cfg, key, config_dir)
+            for key in core_keys:
+                self._resolve_single_paths(paths_cfg, key, config_dir)
 
-        # --- Resolve TFRecord Paths ---
-        # Handle nested dictionary for TFRecord directory locations
-        if "tfrecord" in paths_cfg:
-            tfrecord_dict = paths_cfg["tfrecord"]
-            for tf_key in tfrecord_dict:
-                self._resolve_single_paths(tfrecord_dict, tf_key, config_dir)
+            # --- Resolve TFRecord Paths ---
+            # Handle nested dictionary for TFRecord directory locations
+            if "tfrecord" in paths_cfg:
+                tfrecord_dict = paths_cfg["tfrecord"]
+                for tf_key in tfrecord_dict:
+                    self._resolve_single_paths(tfrecord_dict, tf_key, config_dir)
 
-        # --- Resolve CSV File Paths ---
-        # Handle nested dictionary for CSV file locations
-        if "csv" in paths_cfg:
-            csv_dict = paths_cfg["csv"]
-            for csv_key in csv_dict:
-                self._resolve_single_paths(csv_dict, csv_key, config_dir)
+            # --- Resolve Metadata Cache Paths ---
+            # Handle nested dictionary for cache locations (read_only_dir and read_write_dir)
+            if "tfrecord_metadata_cache" in paths_cfg:
+                self._unify_cache_paths(paths_cfg, config_dir)
+
+            # --- Resolve CSV File Paths ---
+            # Handle nested dictionary for CSV file locations
+            if "csv" in paths_cfg:
+                csv_dict = paths_cfg["csv"]
+                for csv_key in csv_dict:
+                    self._resolve_single_paths(csv_dict, csv_key, config_dir)
+
+        except Exception as e:
+            raise RuntimeError(f"Error resolving paths in configuration: {e}")
 
     def _resolve_single_paths(self, target_dict: dict, key: str, root: Path) -> None:
         """
@@ -136,6 +149,52 @@ class ConfigLoader(metaclass=SingletonMeta):
                 # Resolve path relative to the config file location
                 resolved_path = (root / val).resolve()
                 target_dict[key] = str(resolved_path)
+
+    def _unify_cache_paths(self, paths_cfg: dict, config_dir: Path) -> None:
+        """
+        Ensures that both read_only_dir and read_write_dir are resolved to absolute paths.
+        """
+        try:
+            cache_dict = paths_cfg["tfrecord_metadata_cache"]
+
+            if isinstance(cache_dict, dict):
+                for cache_key in cache_dict:
+                    requirement = (
+                        cache_key in ["read_only_dir", "read_write_dir"] and
+                        isinstance(cache_dict[cache_key], str)
+                    )
+                    if not requirement:
+                        raise ValueError(
+                            f"Unexpected key '{cache_key}' in 'tfrecord_metadata_cache'. "
+                            "Expected keys are 'read_only_dir' and 'read_write_dir'."
+                        )
+                    self._resolve_single_paths(cache_dict, cache_key, config_dir)
+
+                # Ensure that the read_write_dir is a copy of read_only_dir
+                # This is important for Kaggle environments where read-only directories
+                ro_cache = Path(cache_dict["read_only_dir"]).resolve()/"cache.json"
+                rw_dir = Path(cache_dict["read_write_dir"]).resolve()
+                rw_cache = rw_dir/"cache.json"
+
+                if ro_cache.exists():
+                    rw_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(ro_cache, rw_cache)
+
+                # Flatten the configuration parameter to a single absolute path string
+                paths_cfg["tfrecord_metadata_cache"] = str(rw_dir)
+
+            elif isinstance(cache_dict, str):
+                # Fallback format standard (string) pour Windows/Local
+                self._resolve_single_paths(paths_cfg, "tfrecord_metadata_cache", config_dir)
+
+            else:
+                raise ValueError(
+                    "Invalid format for 'tfrecord_metadata_cache'. "
+                    "Expected a dictionary with 'read_only_dir' and 'read_write_dir' or a string."
+                )
+
+        except Exception as e:
+            raise RuntimeError(f"Error unifying cache paths in configuration: {e}")
 
     def set_value(self, key: str, value: Any) -> None:
         """
@@ -185,56 +244,72 @@ class ConfigLoader(metaclass=SingletonMeta):
         shape for the model while limiting the impact of extreme outliers.
 
         The function implements a smart cache mechanism that persists the
-        calculated depth in a JSON file. The cache is automatically invalidated
-        if the number of studies changes or if any study directory has been
-        modified (based on filesystem timestamps).
-
-        Args:
-            config (Dict[str, str]): Configuration dictionary containing paths
-                and threshold parameters.
-            logger (logging.Logger, optional): Logger for tracking progress and
-                cache status. Defaults to None.
-
-        Returns:
-            int: The calculated reference depth (number of slices) based on
-                the configured percentile.
+        calculated depth in a JSON file.
         """
         if logger:
-            logger.info("Starting  function calculate_series_depth")
+            logger.info("Starting function calculate_series_depth")
 
-        TFRecord_cache_dir = Path(tfrecord_cache_dir).resolve()
-        dicom_studies_dir = Path(dicom_studies_dir).resolve()
+        try:
+            studies_dirs_list = self._get_studies_dirs(dicom_studies_dir, logger)
+            if not studies_dirs_list:
+                return 0
+
+            cache_file = Path(tfrecord_cache_dir).resolve() / "cache.json"
+
+            series_depth = self._resolve_series_depth_with_cache(
+                cache_file,
+                studies_dirs_list,
+                percentile,
+                logger
+            )
+
+            if logger:
+                logger.info(
+                    "Function calculate_series_depth : "
+                    f"calculated series depth = {series_depth}"
+                )
+
+            return series_depth
+
+        except Exception as e:
+            if logger:
+                logger.error(f"Error in get_series_depth: {e}")
+            raise e
+
+    def _get_studies_dirs(self, dicom_studies_dir: str, logger: logging.Logger) -> List[Path]:
+        """
+        Retrieves and logs the list of study directories from the given path.
+        """
+        resolved_studies_dir = Path(dicom_studies_dir).resolve()
+        if logger:
+            logger.info(f"dicom_studies_dir = {resolved_studies_dir}")
+
+        studies_dirs_list = [study for study in resolved_studies_dir.iterdir() if study.is_dir()]
 
         if logger:
-            logger.info(f"dicom_studies_dir = {dicom_studies_dir}")
+            logger.info(f"Function calculate_series_depth: found {len(studies_dirs_list)} studies")
 
-        cache_file = TFRecord_cache_dir / "cache.json"
+        return studies_dirs_list
 
-        studies_dirs_list = [study for study in dicom_studies_dir.iterdir() if study.is_dir()]
-        studies_count = len(studies_dirs_list)
-
-        if logger:
-            logger.info(f"Function calculate_series_depth: found {studies_count} studies")
-
-        if studies_count == 0:
-            return 0
-
-        series_depth = None
-
-        # Smart Cache Management
+    def _resolve_series_depth_with_cache(
+        self,
+        cache_file: Path,
+        studies_dirs_list: List[Path],
+        percentile: float,
+        logger: logging.Logger
+    ) -> int:
+        """
+        Resolves the series depth either by loading it from a valid cache
+        or by calculating and persisting it.
+        """
         if cache_file.exists():
             series_depth = self._get_depth_from_cache(cache_file, studies_dirs_list, logger)
+            if series_depth is not None:
+                return series_depth
 
-        # Depth calculation (Only if series_depth has not been recovered from the cache)
-        if series_depth is None:
-            series_depth = self._calculate_series_depth(studies_dirs_list, percentile)
-            self._save_depth_to_cache(cache_file, studies_count, series_depth, logger)
-
-        if logger:
-            logger.info(
-                "Function calculate_series_depth : "
-                f"calculated series depth = {series_depth}"
-            )
+        # Fallback to calculation if cache is missing, stale, or failed
+        series_depth = self._calculate_series_depth(studies_dirs_list, percentile)
+        self._save_depth_to_cache(cache_file, len(studies_dirs_list), series_depth, logger)
 
         return series_depth
 
@@ -407,8 +482,11 @@ class ConfigLoader(metaclass=SingletonMeta):
             the initialization of the ConfigLoader.
         """
 
-        self._recursive_validate(self._config, REQUIRED_SCHEMA, "root")
-        self._validate_business_rules()
+        try:
+            self._recursive_validate(self._config, REQUIRED_SCHEMA, "root")
+            self._validate_business_rules()
+        except (ValueError, TypeError) as e:
+            raise e
 
     def _recursive_validate(
         self,

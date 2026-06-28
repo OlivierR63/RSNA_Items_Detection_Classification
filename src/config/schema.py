@@ -23,7 +23,7 @@ REQUIRED_SCHEMA = {
             "read_only_dir": str,
             "read_write_dir": str
         },
-        "tfrecord_metadata_cache": str,
+        "tfrecord_metadata_cache": OneOf(str, dict),
         "output": str,
         "checkpoint": str,
         "log_mirror": str,
