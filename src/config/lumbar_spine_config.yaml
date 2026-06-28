@@ -1,24 +1,20 @@
-
-# ----------------- Root directory of the application -----------
-#root_dir : config["root_dir"] is defined dynamically by the class ConfigLoader.
-
 # ----------------- Environmental & Paths -----------------
 paths:
-  dicom_studies: "../../data/lumbar_spine/input/dicom/training/"
+  dicom_studies: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_images"
   tfrecord:
-    read_only_dir: "../../data/lumbar_spine/outcome/tfrecords"
-    read_write_dir: "../../data/lumbar_spine/outcome/tfrecords"
-  tfrecord_metadata_cache: "../../data/lumbar_spine/outcome/output/cache_metadata"
-  output: "../../data/lumbar_spine/outcome/output/"
-  checkpoint: "../../data/lumbar_spine/outcome/output/checkpoints"
-  log_mirror: "../../data/lumbar_spine/outcome/output/logs/full_session_output.log"
-  tf_cache: "../../data/tensorflow_cache"
-  inspection: "../../data/lumbar_spine/input_data_inspection/"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/outcome/tfrecords"
+    read_write_dir: "/kaggle/working/lumbar_spine/rsna-2024-lumbar-spine-tfrecords"
+  tfrecord_metadata_cache: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/outcome/output/cache_metadata"
+  output: "/kaggle/working/lumbar_spine/output/"
+  checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
+  log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
+  tf_cache: "/tmp/tensorflow_cache/lumbar_train"
+  inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
   csv:
-    series_description: "../../data/lumbar_spine/input/csv/train_series_descriptions.csv"
-    label_coordinates: "../../data/lumbar_spine/input/csv/train_label_coordinates.csv"
-    train: "../../data/lumbar_spine/input/csv/train.csv"
-    instances_series_format: "../../data/lumbar_spine/input/csv/train_instances_series_format.csv"
+    series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
+    label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
+    train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
+    instances_series_format: "/kaggle/working/csv_file/train_train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -30,10 +26,9 @@ data_specs:
 models:
   backbone_2d:
     type: "MobileNetV2"
-    #type: "ResNet50"
     img_shape: [224, 224, 3]
     freeze: True
-    scaling: {"min": -1.0, "max": 1.0}
+    scaling: { min: -1.0, max: 1.0 }
 
   head_3d:
     type: "cnn3d"
@@ -52,7 +47,7 @@ training:
 
 optimizer:
   type: adam
-  learning_rate: 1e-6
+  learning_rate: 0.0001
   clipnorm: 1.0
 
 callbacks:
@@ -64,8 +59,8 @@ compilation:
   # by the LossBalancerCallback after each epoch.
   loss_weights:
     severity_output: 1.0
-    location_output: 10
-
+    location_output: 10.0
+    
   class_weights:
     Normal/Mild: 1.0
     Moderate: 2.0
@@ -79,13 +74,13 @@ system:
   log_retention_days: 30
   seed: 42
   memory_threshold_percent: 90
-  chunksize: 50 # 50 for HDD. 500 is acceptable for SSD
+  chunksize: 100 # 50 for HDD. 500 is acceptable for SSD
 
 # -------------------- Dataset steering -------------------
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 7       # Equivalent to cycle_length
+    parallel_files: 4       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   
@@ -104,7 +99,7 @@ dataset_steering:
   use_cache: False
 
 #--- Actual series depth (do not confuse with the percentile) --
-# series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader. 
+# series_depth: config['series_depth'] is defined dynamically by the class ConfigLoader.
 
 # ----------------- Logging & Debugging -------------------
 logging:
@@ -113,7 +108,7 @@ logging:
   level: "INFO"
 
   # Whether to display logs in the terminal
-  console_display: False
+  console_display: True
   
   # Use JSON formatting for structured logs
   use_json: False
