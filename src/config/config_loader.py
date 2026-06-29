@@ -188,9 +188,9 @@ class ConfigLoader(metaclass=SingletonMeta):
                     shutil.copy(ro_cache, rw_cache)
 
                 # Flatten the configuration parameter to a single absolute path string
-                self._config["path"]["tfrecord_metadata_cache"] = str(rw_dir)
+                self._config["paths"]["tfrecord_metadata_cache"] = str(rw_dir)
 
-                print(f"self._config['path']['tfrecord_metadata_cache'] = {self._config['path']['tfrecord_metadata_cache']}")
+                print(f"self._config['paths']['tfrecord_metadata_cache'] = {self._config['paths']['tfrecord_metadata_cache']}")
 
             elif isinstance(cache_dict, str):
                 # Fallback format standard (string) pour Windows/Local
