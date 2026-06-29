@@ -125,7 +125,10 @@ class LumbarDicomTFRecordDataset():
             else steering_cfg.get('num_parallel_calls')
         )
         group_studies = steering_cfg.get('group_studies') * total_slices_per_patient
+
         prefetch_batches = steering_cfg.get('prefetch_batches')
+        buffer_size = tf.data.AUTOTUNE if prefetch_batches == -1 else prefetch_batches
+
         use_cache = steering_cfg.get('use_cache')
 
         # 1. Main Pipeline: Iterate through the list of TFRecord files
@@ -189,7 +192,7 @@ class LumbarDicomTFRecordDataset():
         dataset = dataset.repeat()
 
         # 11. Prefetch the next batch in the background to hide latency
-        dataset = dataset.prefetch(prefetch_batches)
+        dataset = dataset.prefetch(buffer_size)
 
         self._logger.debug("Function generate_tfrecord_dataset completed successfully")
 
