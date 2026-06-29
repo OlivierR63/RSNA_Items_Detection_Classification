@@ -5,14 +5,12 @@
 # ----------------- Environmental & Paths -----------------
 paths:
   dicom_studies: "../../data/lumbar_spine/input/dicom/training/"
-  tfrecord:
-    read_only_dir: "../../data/lumbar_spine/outcome/tfrecords"
-    read_write_dir: "../../data/lumbar_spine/outcome/tfrecords"
+  tfrecord: "../../data/lumbar_spine/outcome/tfrecords"
   tfrecord_metadata_cache: "../../data/lumbar_spine/outcome/output/cache_metadata"
   output: "../../data/lumbar_spine/outcome/output/"
   checkpoint: "../../data/lumbar_spine/outcome/output/checkpoints"
   log_mirror: "../../data/lumbar_spine/outcome/output/logs/full_session_output.log"
-  tf_cache: "../../data/tensorflow_cache"
+  # tf_cache: "../../data/tensorflow_cache"
   inspection: "../../data/lumbar_spine/input_data_inspection/"
   csv:
     series_description: "../../data/lumbar_spine/input/csv/train_series_descriptions.csv"

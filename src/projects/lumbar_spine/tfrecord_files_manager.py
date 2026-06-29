@@ -93,8 +93,13 @@ class TFRecordFilesManager:
         self._config = ConfigLoader().get()
 
         tfrecord_paths = self._config['paths']['tfrecord']
-        self._tfrecord_read_dir = Path(tfrecord_paths['read_only_dir'])
-        self._tfrecord_write_dir = Path(tfrecord_paths['read_write_dir'])
+
+        if isinstance(tfrecord_paths, dict):
+            self._tfrecord_read_dir = Path(tfrecord_paths['read_only_dir'])
+            self._tfrecord_write_dir = Path(tfrecord_paths['read_write_dir'])
+        else:
+            self._tfrecord_read_dir = None
+            self._tfrecord_write_dir = Path(tfrecord_paths)
 
         self._logger = logger
         self._max_records = self._config['data_specs']['max_records_per_frame']
@@ -266,7 +271,7 @@ class TFRecordFilesManager:
         try:
             # Ensure the destination directory for TFRecord files exists and return its Path.
             tfrecord_write_path = self._setup_tfrecord_directory(tfrecord_write_dir)
-            tfrecord_read_path = Path(tfrecord_read_dir)
+            tfrecord_read_path = Path(tfrecord_read_dir) if tfrecord_read_dir is not None else None
             nb_saved_tfrecord_files = 0
 
             # Determine number of workers (leave one core for the system)
@@ -378,7 +383,7 @@ class TFRecordFilesManager:
 
     def _convert_single_study(
         self,
-        tfrecord_read_path: Path,
+        tfrecord_read_path: Path | None,
         tfrecord_write_path: Path,
         study_full_path: Path,
         metadata_df: pd.DataFrame
@@ -398,7 +403,8 @@ class TFRecordFilesManager:
         to ensure compatibility with parallel execution and centralized logging.
 
         Args:
-            - tfrecord_read_path (Path): Directory where existing TFRecord files are located.
+            - tfrecord_read_path (Path): Directory where existing TFRecord files are stored
+                                         as datasets in Kaggle platform.
             - tfrecord_write_path (Path): Directory where new TFRecord files will be saved.
             - study_full_path (Path): System path to the study directory containing DICOM series.
             - metadata_df (pd.DataFrame): Global DataFrame containing target labels and metadata
@@ -464,11 +470,20 @@ class TFRecordFilesManager:
             return result
 
         # Check the existence of the target file in both folders
-        tfrecord_read_file = tfrecord_read_path / f"{study_id_str}.tfrecord"
-        tfrecord_write_file = tfrecord_write_path / f"{study_id_str}.tfrecord"
+        tfrecord_read_file = (
+            None if tfrecord_read_path is None else
+            tfrecord_read_path / f"{study_id_str}.tfrecord"
+        )
+        tfrecord_write_file = (
+            None if tfrecord_write_path is None else
+            tfrecord_write_path / f"{study_id_str}.tfrecord"
+        )
 
-        if tfrecord_read_file.exists() or tfrecord_write_file.exists():
-            exists_path = tfrecord_read_file if tfrecord_read_file.exists() else tfrecord_write_file
+        read_file_exists = tfrecord_read_file is not None and tfrecord_read_file.exists()
+        write_file_exists = tfrecord_write_file is not None and tfrecord_write_file.exists()
+
+        if read_file_exists or write_file_exists:
+            exists_path = tfrecord_read_file if read_file_exists else tfrecord_write_file
             info_msg = (
                 f"Processing study {study_id_str}: file {exists_path} "
                 "already exists. Skip to the next one."

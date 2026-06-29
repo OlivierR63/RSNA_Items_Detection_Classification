@@ -19,15 +19,24 @@ class Sequence:
 REQUIRED_SCHEMA = {
     "paths": {
         "dicom_studies": str,
-        "tfrecord": {
-            "read_only_dir": str,
-            "read_write_dir": str
-        },
-        "tfrecord_metadata_cache": OneOf(str, dict),
+        "tfrecord": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
+        "tfrecord_metadata_cache": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
         "output": str,
         "checkpoint": str,
         "log_mirror": str,
-        "tf_cache": str,
+        # "tf_cache": str,
         "inspection": str,
         "csv": {
             "series_description": str,

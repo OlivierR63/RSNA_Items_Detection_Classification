@@ -31,7 +31,7 @@ class ConfigLoader(metaclass=SingletonMeta):
 
         Args:
             config_path (str, optional): File system path to the YAML configuration file.
-            Required only for the first instantiation
+                Required only for the first instantiation
 
         Raises:
             FileNotFoundError: If the configuration file does not exist.
@@ -53,11 +53,14 @@ class ConfigLoader(metaclass=SingletonMeta):
             if not config_file_path.exists():
                 raise FileNotFoundError(f"Configuration file {config_path} not found.")
 
+            # 1. Load the raw dictionary from the YAML file
             self._load_and_initialize_dict(config_file_path)
-            self._resolve_all_paths(config_file_path.parent)
 
-            # Final check: Verify the compliance of the config dictionary
+            # 2. Verify compliance on the raw dictionary structure (Schema and Business Rules)
             self._check_config_compliance()
+
+            # 3. Resolve relative paths and unify cache structures once data is validated
+            self._resolve_all_paths(config_file_path.parent)
 
         except Exception as e:
             raise RuntimeError(f"Failed to initialize ConfigLoader: {e}") from e
@@ -118,9 +121,13 @@ class ConfigLoader(metaclass=SingletonMeta):
             # --- Resolve TFRecord Paths ---
             # Handle nested dictionary for TFRecord directory locations
             if "tfrecord" in paths_cfg:
-                tfrecord_dict = paths_cfg["tfrecord"]
-                for tf_key in tfrecord_dict:
-                    self._resolve_single_paths(tfrecord_dict, tf_key, config_dir)
+                tfrecord_val = paths_cfg["tfrecord"]
+
+                if isinstance(tfrecord_val, dict):
+                    for tf_key in tfrecord_val:
+                        self._resolve_single_paths(tfrecord_val, tf_key, config_dir)
+                else:
+                    self._resolve_single_paths(paths_cfg, "tfrecord", config_dir)
 
             # --- Resolve Metadata Cache Paths ---
             # Handle nested dictionary for cache locations (read_only_dir and read_write_dir)
@@ -522,11 +529,33 @@ class ConfigLoader(metaclass=SingletonMeta):
                         )
 
                 case OneOf() as marker:
-                    # 4. Scalar Type choice (OneOf)
-                    if not isinstance(value, marker.types):
+                    # 4. Scalar Type choice or structural dictionary (OneOf)
+                    is_valid = False
+                    last_error = None
+
+                    for expected_option in marker.types:
+                        if isinstance(expected_option, dict):
+                            # If the option is a sub-schema dict, check if the value is a dict
+                            # and complies with the recursive validation
+                            if isinstance(value, dict):
+                                try:
+                                    self._recursive_validate(value, expected_option, current_path)
+                                    is_valid = True
+                                    break
+                                except (ValueError, TypeError) as e:
+                                    last_error = e
+                        else:
+                            # Standard primitive type check (e.g., str, int, float)
+                            if isinstance(value, expected_option):
+                                is_valid = True
+                                break
+
+                    if not is_valid:
+                        if last_error:
+                            raise last_error
                         raise TypeError(
                             f"Type mismatch at '{current_path}': "
-                            f"expected one of {marker.types}, got {type(value).__name__}"
+                            f"value does not match any allowed structures or types in OneOf."
                         )
 
                 case Sequence() as marker:
@@ -576,3 +605,18 @@ class ConfigLoader(metaclass=SingletonMeta):
         # Batch size logic
         if cfg['training']['batch_size'] <= 0:
             raise ValueError("Configuration error: 'batch_size' must be strictly positive.")
+
+        # --- New Structural Coherence Logic ---
+        # Ensure 'tfrecord' and 'tfrecord_metadata_cache' are of the same nature
+        paths = cfg.get('paths', {})
+        tfrecord_val = paths.get('tfrecord')
+        cache_val = paths.get('tfrecord_metadata_cache')
+
+        # Check if both are dicts or both are strings (non-dicts) using isinstance
+        if isinstance(tfrecord_val, dict) != isinstance(cache_val, dict):
+            raise TypeError(
+                "Configuration error: structural mismatch in 'paths'. "
+                f"'tfrecord' ({type(tfrecord_val).__name__}) and "
+                f"'tfrecord_metadata_cache' ({type(cache_val).__name__}) "
+                "must be of the exact same nature (both strings or both dictionaries)."
+            )
