@@ -38,7 +38,7 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 1
+  batch_size: 8
   epochs: 15
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
