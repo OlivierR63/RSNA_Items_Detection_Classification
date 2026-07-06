@@ -374,3 +374,12 @@ scripts/tempCodeRunnerFile.ps1
 
 # Ignore the Kaggle dataset staging directory
 kaggle_staging_temporary/
+
+# Do not ignore the source code files for the project
+!src/
+!src/projects/
+!src/projects/lumbar_spine/
+
+# Ignore main.py and tmp_dataset if they exist in the root directory
+main.py
+tmp_dataset/

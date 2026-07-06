@@ -10,12 +10,13 @@ import pydicom
 import SimpleITK as sitk
 import inspect
 import ast
+import json
+import os
 from src.core.utils.logger import log_method
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from src.config.config_loader import ConfigLoader
 from pathlib import Path
 from tqdm import tqdm
-import json
 
 
 # ----------------------- Helper functions -------------------------------
@@ -384,7 +385,7 @@ class TFRecordFilesManager:
     def _convert_single_study(
         self,
         tfrecord_read_path: Path | None,
-        tfrecord_write_path: Path,
+        tfrecord_write_path: Path | None,
         study_full_path: Path,
         metadata_df: pd.DataFrame
     ) -> Dict[str, Any]:
@@ -416,6 +417,8 @@ class TFRecordFilesManager:
                 - "logs" (List[Tuple[str, str]]): A list of log entries in the format
                   (level, message) to be processed by the main orchestrator.
         """
+        self._logger.debug(f"Starting conversion of study: {study_full_path.name}")
+
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
@@ -436,8 +439,15 @@ class TFRecordFilesManager:
             result["logs"].append(("warning", msg_warning))
             return result
 
-        # Case directory study_full_path is empty
-        if not any(study_full_path.iterdir()):
+        # High-performance empty folder validation: O(1) complexity instead of O(N)
+        # for previous methods Path.iterdir() or os.listdir()
+        try:
+            next(os.scandir(study_full_path))
+            is_empty = False
+        except StopIteration:
+            is_empty = True
+
+        if is_empty:
             msg_warning = (
                 f"Function {class_name}.{func_name}:\n"
                 f"Skipping empty directory {study_id_str} "
@@ -469,14 +479,27 @@ class TFRecordFilesManager:
             result["logs"].append(("warning", msg_warning))
             return result
 
-        # Check the existence of the target file in both folders
-        tfrecord_read_file = (
-            None if tfrecord_read_path is None else
-            tfrecord_read_path / f"{study_id_str}.tfrecord"
+        # Check if the path is valid (neither None type, nor the string "None")
+        is_read_path_valid = (
+            tfrecord_read_path is not None and
+            str(tfrecord_read_path) != "None"
         )
+
+        tfrecord_read_file = (
+            tfrecord_read_path / f"{study_id_str}.tfrecord"
+            if is_read_path_valid else None
+        )
+
+        # Apply the same safeguard for the write_path as precaution
+        # against misconfigurations or accidental None values.
+        is_write_path_valid = (
+            tfrecord_write_path is not None and
+            str(tfrecord_write_path) != "None"
+        )
+
         tfrecord_write_file = (
-            None if tfrecord_write_path is None else
             tfrecord_write_path / f"{study_id_str}.tfrecord"
+            if is_write_path_valid else None
         )
 
         read_file_exists = tfrecord_read_file is not None and tfrecord_read_file.exists()

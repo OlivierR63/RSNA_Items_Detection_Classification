@@ -10,7 +10,6 @@ from typing import Optional, Callable, Generator
 import json
 from functools import wraps
 from inspect import signature
-from src.config.config_loader import ConfigLoader
 
 # Global variable to hold the current logger instance
 _CURRENT_LOGGER: Optional[logging.Logger] = None
@@ -37,10 +36,22 @@ def setup_logger(
 
     global _CURRENT_LOGGER
 
-    logging_cfg = ConfigLoader().get_value('logging', None)
-    logging_level = logging_cfg.get('level', None)
-    console_display = logging_cfg.get('console_display', False)
-    use_json = logging_cfg.get('use_json', False)
+    # Default settings in case config loader is missing or not yet in sys.path
+    logging_level = "INFO"
+    console_display = True
+    use_json = False
+
+    try:
+        # Lazy import of ConfigLoader to avoid circular/missing dependencies during bootstrap
+        from src.config.config_loader import ConfigLoader
+        logging_cfg = ConfigLoader().get_value('logging', None)
+        if logging_cfg:
+            logging_level = logging_cfg.get('level', logging_level)
+            console_display = logging_cfg.get('console_display', console_display)
+            use_json = logging_cfg.get('use_json', use_json)
+    except Exception:
+        # Silent fallback to default console settings during initial bootstrap phases
+        pass
 
     # 1. Get the current process ID
     pid = os.getpid()
@@ -55,6 +66,7 @@ def setup_logger(
 
     # 4. Configure the logger
     logger = logging.getLogger(f"{process_name}_{pid}")
+    logger.propagate = False  # Prevent logs from being propagated to the root logger
 
     if (logging_level == "DEBUG"):
         logger.setLevel(logging.DEBUG)
@@ -67,7 +79,7 @@ def setup_logger(
             handler.close()
         _CURRENT_LOGGER.handlers.clear()
 
-    # 5. Formatter
+    # 6. Formatter
     if use_json:
         formatter = JSONFormatter()
     else:
@@ -76,12 +88,12 @@ def setup_logger(
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
-    # 6. File handler (automatically closed at the end of the block)
+    # 7. File handler (automatically closed at the end of the block)
     file_handler = logging.FileHandler(str(log_file), encoding='utf-8')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    # 7. Console handler
+    # 8. Console handler
     if console_display:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
@@ -123,7 +135,8 @@ def get_current_logger() -> logging.Logger:
 
 
 def log_method(logger_key: str = "logger") -> Callable:
-    """Decorator that injects the current logger into a function's kwargs when appropriate.
+    """
+    Decorator that injects the current logger into a function's kwargs when appropriate.
 
     The decorator inspects the wrapped function's signature and will inject the current
     logger under `logger_key` only if:
@@ -162,7 +175,9 @@ def log_method(logger_key: str = "logger") -> Callable:
 
 
 class JSONFormatter(logging.Formatter):
-    """Custom JSON formatter for structured logging."""
+    """
+    Custom JSON formatter for structured logging.
+    """
     def format(self, record):
         log_data = {
             'timestamp': self.formatTime(record),

@@ -1,11 +1,11 @@
-# coding utf-8
+# coding: utf-8
 
 import tensorflow as tf
 import pytest
 import logging
+from unittest.mock import patch
 from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import (
     compute_rsna_loss_core,
-    rsna_weighted_log_loss,
     RSNAKaggleMetric
 )
 
@@ -27,7 +27,10 @@ class TestRSNALossesAndMetrics:
         y_true = tf.constant([[1.0, 0.0, 0.0]], dtype=tf.float32)
         y_pred = tf.constant([[0.9999, 0.0, 0.0]], dtype=tf.float32)
 
-        loss = compute_rsna_loss_core(y_true, y_pred)
+        class_weights = tf.constant([1.0, 2.0, 4.0], dtype=tf.float32)
+        balancing_weights = tf.constant([1.0, 1.0, 1.0], dtype=tf.float32)
+
+        loss = compute_rsna_loss_core(y_true, y_pred, class_weights, balancing_weights)
 
         # Loss should be very small
         tf.debugging.assert_near(loss, [0.0], atol=1e-3)
@@ -41,18 +44,35 @@ class TestRSNALossesAndMetrics:
         y_true_severe = tf.constant([[0.0, 0.0, 1.0]], dtype=tf.float32)
         y_pred = tf.constant([[0.9, 0.0, 0.1]], dtype=tf.float32)
 
+        class_weights = tf.constant([1.0, 2.0, 4.0], dtype=tf.float32)
+        balancing_weights = tf.constant([1.0, 1.0, 1.0], dtype=tf.float32)
+
         # The loss for the Severe class (index 2) is multiplied by 4.0
-        loss_val = rsna_weighted_log_loss(y_true_severe, y_pred)
+        weighted_loss = compute_rsna_loss_core(y_true_severe, y_pred, class_weights, balancing_weights)
+        loss_val = tf.reduce_mean(weighted_loss)
 
         # Expected calculation: -1.0 * log(0.1) * 4.0
         expected_loss = -tf.math.log(0.1) * 4.0
         tf.debugging.assert_near(loss_val, expected_loss, atol=1e-5)
 
-    def test_rsna_kaggle_metric_accumulation(self, mock_logger):
+    @patch("src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric.ConfigLoader")
+    def test_rsna_kaggle_metric_accumulation(self, mock_config_loader, mock_logger):
         """
         Tests the Keras metric state management (update_state, result, reset).
         """
-        metric = RSNAKaggleMetric(logger=mock_logger)
+        # Mock ConfigLoader to return simple logging configuration
+        mock_config_loader.return_value.get.return_value = {
+            "logging": {"level": "INFO"}
+        }
+
+        class_weights = tf.constant([1.0, 2.0, 4.0], dtype=tf.float32)
+        balancing_weights = tf.ones([1, 3], dtype=tf.float32)
+
+        metric = RSNAKaggleMetric(
+            class_weights=class_weights,
+            balancing_weights=balancing_weights,
+            logger=mock_logger
+        )
 
         # Batch 1
         y_true_1 = tf.constant([[1.0, 0.0, 0.0]], dtype=tf.float32)
@@ -65,8 +85,13 @@ class TestRSNALossesAndMetrics:
         metric.update_state(y_true_2, y_pred_2)
 
         # Check result (should be mean of the two batches)
-        loss1 = compute_rsna_loss_core(y_true_1, y_pred_1)
-        loss2 = compute_rsna_loss_core(y_true_2, y_pred_2)
+        # Apply label smoothing as done in metric update_state
+        from src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric import apply_label_smoothing
+        y_smoothed_1 = apply_label_smoothing(y_true_1)
+        y_smoothed_2 = apply_label_smoothing(y_true_2)
+
+        loss1 = compute_rsna_loss_core(y_smoothed_1, y_pred_1, class_weights, balancing_weights)
+        loss2 = compute_rsna_loss_core(y_smoothed_2, y_pred_2, class_weights, balancing_weights)
         expected_result = (tf.reduce_mean(loss1) + tf.reduce_mean(loss2)) / 2.0
 
         tf.debugging.assert_near(metric.result(), expected_result, atol=1e-5)

@@ -7,22 +7,20 @@ import sys
 import signal
 import logging
 from pathlib import Path
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, TYPE_CHECKING
 import gc
 import json
-import tensorflow as tf
-import tf_keras
 
+# Imports for type checking only, to avoid circular dependencies and heavy imports at runtime
+if TYPE_CHECKING:
+    import tensorflow as tf
+    import tf_keras
 
-# Add the project root directory to the Python path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler   # noqa: E402
-from src.projects.lumbar_spine.model_trainer import ModelTrainer                # noqa: E402
-from src.core.models.model_factory import ModelFactory                          # noqa: E402
-import src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric as lm_metrics    # noqa: E402
+from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
+from src.projects.lumbar_spine.model_trainer import ModelTrainer
+from src.core.models.model_factory import ModelFactory
+import src.projects.lumbar_spine.RSNA_lumbar_losses_and_metric as lm_metrics
+from src.core.utils.logger import get_current_logger, setup_logger
 
 # ----------------- End of Standard imports -------------------------------------------------
 
@@ -36,6 +34,7 @@ def setup_config_symlink(config_dir_path: str) -> None:
     Args:
         config_dir_path (str): Absolute path to the directory containing YAML files.
     """
+    logger = get_current_logger()
     config_dir = Path(config_dir_path).resolve()
     main_config = config_dir / "lumbar_spine_config.yaml"
 
@@ -51,7 +50,7 @@ def setup_config_symlink(config_dir_path: str) -> None:
 
     # Safety check: does the target source file exist?
     if not target_file.exists():
-        print(f"Warning: Source file {target_file} not found. Symlink skipped.")
+        logger.warning(f"Warning: Source file {target_file} not found. Symlink skipped.")
         return
 
     # Create or update the symlink
@@ -63,7 +62,13 @@ def setup_config_symlink(config_dir_path: str) -> None:
         main_config.symlink_to(target_file)
 
     except Exception as e:
-        print(f"Failed to create symlink: {e}")
+        logger.warning(f"Failed to create symlink: {e}. Falling back to copy...")
+        try:
+            import shutil
+            shutil.copy(target_file, main_config)
+            logger.info("Successfully copied config file as fallback.")
+        except Exception as copy_err:
+            logger.critical(f"Failed to copy config file: {copy_err}")
 
 
 def handle_interrupt(signum, frame):
@@ -147,7 +152,7 @@ def _load_existing_model(
     checkpoint_path: Path | None,
     mode: str,
     logger: logging.Logger
-) -> tf_keras.Model | None:
+) -> 'tf_keras.Model | None':
     """
     Attempts to load a complete Keras model from a given checkpoint path.
 
@@ -164,8 +169,10 @@ def _load_existing_model(
     Returns:
         tf_keras.Model | None: The loaded model if successful, else None.
     """
+    logger.info(f"Attempting to load existing model in '{mode}' mode from {checkpoint_path}")
 
     if not checkpoint_path:
+        logger.info("No existing model found.")
         return None
 
     try:
@@ -275,7 +282,7 @@ def _build_fresh_or_salvage(
 def _finalize_and_compile_model(
     model: 'tf_keras.Model',
     config: dict,
-    location_weight_var: tf.Variable,
+    location_weight_var: 'tf.Variable',
     logger: logging.Logger
 ) -> 'tf_keras.Model':
 
@@ -327,6 +334,11 @@ def _finalize_and_compile_model(
             "location_output": location_weight_var
         }
 
+        # This local import is essential to avoid a global import at the top,
+        # which is not advised because it triggers a too early TensorFlow context initialization,
+        # leading to potential threading issues.
+        import tf_keras
+
         # --- Define Metrics ---
         metrics = {
             # Added accuracy for a quick baseline
@@ -376,7 +388,7 @@ def _finalize_and_compile_model(
 def _get_or_build_model(
     depth: int,
     config: dict,
-    location_weight_var: tf.Variable,
+    location_weight_var: 'tf.Variable',
     logger: logging.Logger
 ) -> 'tf_keras.Model':
 
@@ -455,26 +467,34 @@ def _initialize_system_environment(config: dict) -> int:
     return cpu_threads
 
 
-def _configure_tensorflow_threading(cpu_threads: int):
+def _configure_tensorflow_threading(cpu_threads: int) -> None:
     """
     Applies intra and inter-op parallelism threads configuration to TensorFlow.
     Gently catches runtime errors if the context was already initialized.
     """
-    import tensorflow as tf
+
+    logger = get_current_logger()
+
+    # Checking has tensorflow already been imported to avoid reconfiguration errors ?
+    if 'tensorflow' in sys.modules:
+        return
+
+    # If not imported yet, we can safely configure threading before the context is initialized
     try:
+        import tensorflow as tf
         tf.config.threading.set_intra_op_parallelism_threads(cpu_threads)
         tf.config.threading.set_inter_op_parallelism_threads(cpu_threads)
-    except RuntimeError:
-        print("TF Context already initialized, impossible to update threading.")
+        logger.info(f"TF Threading successfully configured with {cpu_threads} threads.")
+
+    except RuntimeError as e:
+        logger.error(f"Failed to configure TF threading: {e}")
 
 
-def _resolve_series_depth(config: dict, config_loader) -> int:
+def _resolve_series_depth(config: dict, config_loader, logger: logging.Logger) -> int:
     """
     Resolves the maximum DICOM files depth per series, either by fetching it from
     the static configuration or by computing it dynamically via percentile analysis.
     """
-    from src.core.utils.logger import get_current_logger
-    logger = get_current_logger()
 
     if config["series_depth"] is not None:
         return config_loader.get_value("series_depth")
@@ -522,7 +542,7 @@ def _update_tfrecord_cache_file(cache_dir_path: str, actual_nb_files: int):
         json.dump(cache_data, f, indent=4)
 
 
-def main():
+def main() -> None:
     """
     Main orchestrator function to initialize the system environment, load configurations,
     execute the TFRecord extraction pipeline, and trigger the 3D model training framework.
@@ -535,12 +555,14 @@ def main():
     config_loader = ConfigLoader("src/config/lumbar_spine_config.yaml")
     config: dict = config_loader.get()
 
-    # 1. System and Environmental initialization
+    # System and Environmental initialization
     cpu_threads = _initialize_system_environment(config)
+
+    import tensorflow as tf
+    import tf_keras
     _configure_tensorflow_threading(cpu_threads)
 
     # Project Framework Imports
-    from src.core.utils.logger import setup_logger
     from src.core.utils.clean_logs import clean_old_logs
     from src.projects.lumbar_spine.model_trainer import ModelTrainer
     from src.projects.lumbar_spine.tfrecord_files_manager import TFRecordFilesManager
@@ -569,7 +591,7 @@ def main():
 
         try:
             # Resolve maximum DICOM frame depth
-            series_depth = _resolve_series_depth(config, config_loader)
+            series_depth = _resolve_series_depth(config, config_loader, logger)
             logger.info(
                 f"Max TFRecord files depth (number of DICOM files per series): {series_depth}"
             )

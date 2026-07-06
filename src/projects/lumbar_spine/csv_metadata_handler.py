@@ -436,7 +436,10 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         Save outcome in CSV file
         Optimized for Windows 10 and HDD environments.
         """
-
+        self._logger.info(
+            "Starting DICOM metadata extraction for getting instance series formats.",
+            extra={"action": "extract_metadata"}
+        )
         func_name = inspect.currentframe().f_code.co_name
         class_name = self.__class__.__name__
 
@@ -461,7 +464,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
 
             results: List[Tuple] = []
 
-            # 'chunksize' is increased to 50 (see yaml config file) to reduce the overhead of
+            # 'chunksize' is set(see yaml config file) to reduce the overhead of
             # communication between CPU and HDD.
             chunksize = self._config['system']['chunksize']
             with Pool(processes=num_workers) as pool:

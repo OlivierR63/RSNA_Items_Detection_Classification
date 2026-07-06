@@ -18,9 +18,7 @@ $DatasetName   = "rsna-lumbar-spine-tfrecords"
 $KaggleExe     = "C:\Users\Olivier\anaconda3\envs\airflow_env\Scripts\kaggle.exe"
 # -------------------------------------------------------
 
-# 0. Force Environment Variables for the current PowerShell session process
-$env:KAGGLE_USERNAME = $null
-$env:KAGGLE_KEY      = $null
+
 
 # 1. Prepare target destination (clean it if it exists to ensure accurate mirror)
 if (Test-Path -Path $TargetDestDir) {
@@ -31,10 +29,11 @@ if (Test-Path -Path $TargetDestDir) {
 }
 
 # 2. Download the entire dataset files structure
-Write-Host "[INFO] Pulling extracted tree from 'olivierrochat/rsna-lumbar-spine-tfrecords'..." -ForegroundColor Yellow
+Write-Host "[INFO] Pulling extracted tree from 'olivierrochat/run-rsna-lumbar-spine'..." -ForegroundColor Yellow
 
 # Using the standard download command directly on the target folder
 & $KaggleExe datasets download -d "$KaggleUserId/$DatasetName" -p $TargetDestDir --unzip
+# & $KaggleExe kernels output olivierrochat/rsna-lumbar-spine-tfrecords -p $TargetDestDir --unzip
 
 if ($LastExitCode -eq 0) {
     Write-Host "[SUCCESS] Entire directory tree successfully restored to: $TargetDestDir" -ForegroundColor Green

@@ -11,6 +11,7 @@
         "aggreg",
         "appxbundle",
         "appxupload",
+        "arcname",
         "attributs",
         "autonumber",
         "AUTOTUNE",
@@ -21,6 +22,7 @@
         "broadcastable",
         "buildhelp",
         "Cabe",
+        "cand",
         "carré",
         "Cela",
         "checkin",
@@ -81,6 +83,7 @@
         "Génération",
         "getpid",
         "gfile",
+        "gmtime",
         "hardlink",
         "healthcheck",
         "healthchecksdb",
@@ -138,6 +141,7 @@
         "pycache",
         "pydicom",
         "pytest",
+        "PYTHONIOENCODING",
         "recalage",
         "reconstituée",
         "reconstituer",
@@ -145,6 +149,7 @@
         "récupère",
         "référence",
         "reindexing",
+        "reinjected",
         "Remappage",
         "replis",
         "résultant",
@@ -190,6 +195,7 @@
         "wwwroot",
         "xlabel",
         "xpress",
-        "ylabel"
+        "ylabel",
+        "zipf"
     ]
 }

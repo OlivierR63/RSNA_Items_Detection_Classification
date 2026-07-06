@@ -5,7 +5,7 @@ paths:
     read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/tfrecords"
     read_write_dir: "/kaggle/working/lumbar_spine/rsna-2024-lumbar-spine-tfrecords"
   tfrecord_metadata_cache: 
-    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/output/cache_metadata"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-training/output/cache_metadata"
     read_write_dir: "/kaggle/working/lumbar_spine/output/cache_metadata"
   output: "/kaggle/working/lumbar_spine/output/"
   checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
@@ -16,7 +16,7 @@ paths:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
-    instances_series_format: "/kaggle/working/csv_file/train_train_instances_series_format.csv"
+    instances_series_format: "/kaggle/working/csv_file/train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -39,7 +39,7 @@ models:
 # ----------------- Training & Compilation ----------------
 training:
   batch_size: 8
-  epochs: 15
+  epochs: 1
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
   loss_balancer:

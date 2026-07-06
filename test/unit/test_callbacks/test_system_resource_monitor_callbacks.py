@@ -3,7 +3,7 @@
 import pytest
 import psutil
 from unittest.mock import MagicMock, patch
-from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallbacks
+from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
 
 
 class TestSystemResourceMonitorCallbacks:
@@ -25,7 +25,7 @@ class TestSystemResourceMonitorCallbacks:
         """
         Ensures the callback initializes with the correct memory threshold.
         """
-        callback = SystemResourceMonitorCallbacks(memory_threshold_percent=85.0)
+        callback = SystemResourceMonitorCallback(memory_threshold_percent=85.0)
         assert callback.memory_threshold == 85.0
         assert isinstance(callback.process, psutil.Process)
 
@@ -40,7 +40,7 @@ class TestSystemResourceMonitorCallbacks:
         # Mock RSS memory (1 GB in bytes)
         mock_mem_info.return_value.rss = 1024 ** 3
 
-        callback = SystemResourceMonitorCallbacks(memory_threshold_percent=90.0)
+        callback = SystemResourceMonitorCallback(memory_threshold_percent=90.0)
         callback.model = mock_model
 
         callback.on_train_batch_end(batch=0)
@@ -58,7 +58,7 @@ class TestSystemResourceMonitorCallbacks:
         mock_virt_mem.return_value.percent = 95.0
         mock_mem_info.return_value.rss = 2 * (1024 ** 3)
 
-        callback = SystemResourceMonitorCallbacks(memory_threshold_percent=90.0)
+        callback = SystemResourceMonitorCallback(memory_threshold_percent=90.0)
         callback.model = mock_model
 
         callback.on_train_batch_end(batch=10)
@@ -72,7 +72,7 @@ class TestSystemResourceMonitorCallbacks:
         """
         Verifies that Keras session is cleared and GC is collected at epoch end.
         """
-        callback = SystemResourceMonitorCallbacks()
+        callback = SystemResourceMonitorCallback()
 
         # Execute epoch end logic
         callback.on_epoch_end(epoch=0)
@@ -87,7 +87,7 @@ class TestSystemResourceMonitorCallbacks:
         Ensures the batch number is correctly handled in the print output.
         """
         mock_virt_mem.return_value.percent = 50.0
-        callback = SystemResourceMonitorCallbacks()
+        callback = SystemResourceMonitorCallback()
         callback.model = mock_model
 
         # Test with batch 0 (should print as Batch 001)

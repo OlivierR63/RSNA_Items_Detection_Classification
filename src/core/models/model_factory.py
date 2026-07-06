@@ -16,6 +16,7 @@ from src.core.models.conv3d_aggregator import Conv3DAggregator
 from src.core.callbacks.log_training_callback import LogTrainingCallback
 from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
 from src.core.callbacks.dynamic_loss_balancer_callback import DynamicLossBalancerCallback
+from src.core.callbacks.robust_model_checkpoint_callback import RobustModelCheckpointCallback
 from src.config.config_loader import ConfigLoader
 
 
@@ -50,7 +51,8 @@ class ModelFactory:
         "study_id_link": study_id_zero_link,
         "LogTrainingCallback": LogTrainingCallback,
         "SystemResourceMonitorCallback": SystemResourceMonitorCallback,
-        "DynamicLossBalancerCallback": DynamicLossBalancerCallback
+        "DynamicLossBalancerCallback": DynamicLossBalancerCallback,
+        "RobustModelCheckpointCallback": RobustModelCheckpointCallback,
     }
 
     @classmethod
@@ -160,7 +162,7 @@ class ModelFactory:
         # --- 2. Define Inputs for each series ---
         # Images shapes are (self._series_depth, height, width, channels)
 
-        self._logger.info("Start building model")
+        self._logger.info("Starting to build new model")
         height, width, channels = self._config['models']['backbone_2d']['img_shape']
 
         # Sagittal T1
@@ -370,7 +372,7 @@ class ModelFactory:
 
         gc.collect()
 
-        self._logger.info("Building model completed")
+        self._logger.info("Model architecture built successfully")
 
         return model
 

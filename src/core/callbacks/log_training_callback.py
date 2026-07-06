@@ -41,7 +41,6 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         Args:
             logs (dict, optional): Currently unused by this method.
         """
-        self.epoch_start_time = time()
 
         # Initialize record for average step time
         self.step_times = []
@@ -52,10 +51,10 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         self.total_batches = self.nb_epochs * self.nb_steps
 
         # Ensure we have integers for comparison
-        print("\n" + "="*50)
-        print("    Training session started!")
-        print(f"    Targeting {self.nb_epochs} epochs with {self.nb_steps} steps each.")
-        print("="*50 + "\n")
+        self.logger.info("\n" + "="*50)
+        self.logger.info("    Training session started!")
+        self.logger.info(f"    Targeting {self.nb_epochs} epochs with {self.nb_steps} steps each.")
+        self.logger.info("="*50 + "\n")
 
     def on_epoch_begin(self, epoch, logs=None):
         """
@@ -111,7 +110,8 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         eta_str = strftime("%H:%M:%S", gmtime(eta_seconds))
 
         # Log the performance metrics
-        print(f"\n >>> Step {batch_int + 1:04d} | Time: {step_time:.2f}s | ETA: {eta_str}")
+        info_msg = f" Batch {batch_int + 1:04d} | Time: {step_time:.2f}s | ETA: {eta_str}"
+        self.logger.info(info_msg)
 
     def on_test_begin(self, logs=None):
         """
@@ -124,9 +124,9 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         # Note: 'validation_steps' is often stored as 'steps' in the test context
         val_steps = self._val_steps_fixed
 
-        print("\n" + "-"*30)
-        print(f" >>> Starting Validation Phase ({val_steps} steps)")
-        print("-"*30)
+        self.logger.info("\n" + "-"*30)
+        self.logger.info(f" >>> Starting Validation Phase ({val_steps} steps)")
+        self.logger.info("-"*30)
         self.val_start_time = perf_counter()
 
     def on_test_end(self, logs=None):
@@ -137,8 +137,8 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
             logs (dict, optional): Metrics from the validation phase.
         """
         val_duration = perf_counter() - self.val_start_time
-        print(f" >>> Validation Phase finished in {val_duration:.2f}s")
-        print("-"*30 + "\n")
+        self.logger.info(f" >>> Validation Phase finished in {val_duration:.2f}s")
+        self.logger.info("-"*30 + "\n")
 
     def on_epoch_end(self, epoch, logs=None):
         """
@@ -162,7 +162,7 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
             f"\n\nEpoch {epoch + 1} finished: \n\t - {metrics_str} | "
             f"Avg Step Time: {avg_step_time:.2f}s"
         )
-        print(f"\n >>> {summary_msg}")
+        self.logger.info(f"\n >>> {summary_msg}")
 
         self.logger.info(
             summary_msg,
@@ -176,3 +176,18 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
 
         # Reset step times for next epoch
         self.step_times = []
+
+    def get_config(self):
+        """
+        Returns the configuration of the callback for serialization.
+        """
+        config = super().get_config()
+        config.update({
+            "validation_steps": self._val_steps_fixed
+        })
+
+        # Important: Remove the logger from the config, as it cannot be serialized
+        # This prevents issues when saving/loading the model with this callback.
+        config.pop("logger", None)
+
+        return config
