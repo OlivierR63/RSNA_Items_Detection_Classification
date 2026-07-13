@@ -125,9 +125,6 @@ def scan_kaggle_inputs(input_dir: Path) -> tuple[Path | None, Path | None, Path 
     }
 
     for root, dirs, files in os.walk(input_dir):
-        print(f"root = {root}")
-        print(f"      dirs = {dirs}")
-        print(f"            files = {files}")
         # Prune giant folders in-place to prevent scanning millions of image files
         dirs[:] = [d for d in dirs if d not in ignored_folders]
         root_path = Path(root)
