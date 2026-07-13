@@ -496,7 +496,12 @@ def main():
 
     # 1. Setup
     dicom_dir = Path(DICOM_STUDIES_DIR).resolve()
-    log_dir = Path(config["paths"].get("inspection", "logs")) / "logs"
+
+    if isinstance(config["paths"]["inspection"], dict):
+        log_dir = Path(config["paths"]["inspection"]['read_write_dir']) / "logs"
+    else:
+        log_dir = Path(config["paths"]["inspection"]) / "logs"
+
     studies = [s for s in dicom_dir.iterdir() if s.is_dir()]
     labeled_set = _get_labeled_files(CSV_LABEL_COORDINATES)
 

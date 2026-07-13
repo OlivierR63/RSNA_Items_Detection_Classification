@@ -143,45 +143,56 @@ class TFRecordFilesManager:
         dicom_studies_dir = paths_cfg['dicom_studies']
 
         try:
-            # 1. Prepare the directories
+            # 1. Prepare the output directory
             self._tfrecord_write_dir.mkdir(parents=True, exist_ok=True)
 
             # 2. Load and merge metadata
-            # Build the reference dataframe
             metadata_df = CSVMetadataHandler().get_merged_metadata()
             logger.info("Loaded metadata from CSV files",
                         extra={"csv": list(paths_cfg["csv"].keys())})
 
-            logger.info("  Creating TFRecord files...")
-
-            # Save in the cache file some information about the pathologies severity
-            # labels and frequencies
+            # Calculate severity counts
             severity_df = metadata_df.severity
             values_counts_dict = self._get_series_values_counts(severity_df)
 
-            str_path = self._config["paths"]["tfrecord_metadata_cache"]
-            cache_path = Path(str_path).resolve()/"cache.json"
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                try:
-                    cache_data = json.load(f)
+            # 3. Determine paths for the cache
+            cache_config = paths_cfg["tfrecord_metadata_cache"]
 
-                except json.JSONDecodeError:
-                    # In case the file is empty or corrupted
-                    cache_data = {}
+            if isinstance(cache_config, dict):
+                ro_cache_file = Path(cache_config['read_only_dir']).resolve() / "cache.json"
+                rw_cache_file = Path(cache_config['read_write_dir']).resolve() / "cache.json"
 
-            # Add the new key / value pair:
+                # Logic: Use RO if it exists AND RW does not exist.
+                # Otherwise, fallback to RW (covers missing RO or existing RW).
+                if ro_cache_file.exists() and not rw_cache_file.exists():
+                    cache_path = ro_cache_file
+                else:
+                    cache_path = rw_cache_file
+
+                write_path = rw_cache_file
+            else:
+                cache_path = Path(cache_config).resolve() / "cache.json"
+                write_path = cache_path
+
+            # Ensure the directory for the write path exists
+            write_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 4. Load existing cache data (using the determined cache_path)
+            cache_data = {}
+            if cache_path.exists():
+                with cache_path.open('r', encoding='utf-8') as f:
+                    try:
+                        cache_data = json.load(f)
+                    except json.JSONDecodeError:
+                        cache_data = {}
+
+            # 5. Update and write cache
             cache_data['values_counts'] = values_counts_dict
 
-            # Rewrite the cache file:
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                try:
-                    json.dump(cache_data, f, indent=4)
+            with write_path.open('w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=4)
 
-                except json.JSONDecodeError as e:
-                    logger.critical(f"Unable to update the cache : {e}")
-                    raise
-
-            # Generate TFRecord files
+            # 6. Generate TFRecord files
             nb_created_tfrecord_files = self._convert_dicom_to_tfrecords(
                 studies_dir=dicom_studies_dir,
                 metadata_df=metadata_df,
@@ -189,28 +200,14 @@ class TFRecordFilesManager:
                 tfrecord_write_dir=str(self._tfrecord_write_dir)
             )
 
-            logger.info(
-                "DICOM to TFRecord conversion completed.",
-                extra={"status": "success"}
-            )
-
-            logger.debug(
-                f"Function {class_name}.{func_name} completed successfully",
-                extra={"status": "success"}
-            )
-
+            logger.info("DICOM to TFRecord conversion completed.", extra={"status": "success"})
             return nb_created_tfrecord_files
 
         except Exception as e:
-            critical_msg = (
-                f"function {class_name}.{func_name} failed."
-                f"Error generating TFRecords: {str(e)}"
-            )
-
             logger.critical(
-                critical_msg,
+                f"Function {class_name}.{func_name} failed. Error: {str(e)}",
                 exc_info=True,
-                extra={"status": "failure", "error": str(e)}
+                extra={"status": "failure"}
             )
             raise
 

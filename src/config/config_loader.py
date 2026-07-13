@@ -99,52 +99,35 @@ class ConfigLoader(metaclass=SingletonMeta):
 
     def _resolve_all_paths(self, config_dir: Path) -> None:
         """
-        Helper to resolve paths, reducing __init__ complexity.
+        Entry point to trigger the recursive resolution of all relative paths
+        defined within the 'paths' section of the configuration.
         """
         try:
-            # Reference to the paths dictionary to avoid repetitive lookups
             paths_cfg = self._config.get('paths', {})
-
-            # --- Resolve Core Relative Paths ---
-            # Iterate through known keys to convert relative paths (starting with '.') to absolute
-            core_keys = [
-                "dicom_studies",
-                "output",
-                "inspection",
-                "checkpoint",
-                "log_mirror"
-            ]
-
-            for key in core_keys:
-                self._resolve_single_paths(paths_cfg, key, config_dir)
-
-            # --- Resolve TFRecord Paths ---
-            # Handle nested dictionary for TFRecord directory locations
-            if "tfrecord" in paths_cfg:
-                tfrecord_val = paths_cfg["tfrecord"]
-
-                if isinstance(tfrecord_val, dict):
-                    for tf_key in tfrecord_val:
-                        self._resolve_single_paths(tfrecord_val, tf_key, config_dir)
-                else:
-                    self._resolve_single_paths(paths_cfg, "tfrecord", config_dir)
-
-            # --- Resolve Metadata Cache Paths ---
-            # Handle nested dictionary for cache locations (read_only_dir and read_write_dir)
-            if "tfrecord_metadata_cache" in paths_cfg:
-                self._unify_cache_paths(paths_cfg, config_dir)
-
-            # --- Resolve CSV File Paths ---
-            # Handle nested dictionary for CSV file locations
-            if "csv" in paths_cfg:
-                csv_dict = paths_cfg["csv"]
-                for csv_key in csv_dict:
-                    self._resolve_single_paths(csv_dict, csv_key, config_dir)
+            self._walk_and_resolve(paths_cfg, config_dir)
 
         except Exception as e:
             raise RuntimeError(f"Error resolving paths in configuration: {e}")
 
-    def _resolve_single_paths(self, target_dict: dict, key: str, root: Path) -> None:
+    def _walk_and_resolve(self, node: Any, config_dir: Path) -> None:
+        """
+        Recursively traverses the configuration dictionary to locate and resolve
+        relative paths to absolute ones based on the configuration directory.
+        """
+        try:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if isinstance(value, dict):
+                        # Continue recursion for nested dictionary structures
+                        self._walk_and_resolve(value, config_dir)
+                    else:
+                        # Resolve path for leaf nodes using the helper method
+                        self._resolve_single_path(node, key, config_dir)
+
+        except Exception as e:
+            raise e
+
+    def _resolve_single_path(self, target_dict: dict, key: str, root: Path) -> None:
         """
         Logic for one single path resolution
         """
@@ -175,7 +158,7 @@ class ConfigLoader(metaclass=SingletonMeta):
                             f"Unexpected key '{cache_key}' in 'tfrecord_metadata_cache'. "
                             "Expected keys are 'read_only_dir' and 'read_write_dir'."
                         )
-                    self._resolve_single_paths(cache_dict, cache_key, config_dir)
+                    self._resolve_single_path(cache_dict, cache_key, config_dir)
 
                 # Ensure that the read_write_dir is a copy of read_only_dir
                 # This is important for Kaggle environments where read-only directories
@@ -192,7 +175,7 @@ class ConfigLoader(metaclass=SingletonMeta):
 
             elif isinstance(cache_dict, str):
                 # Fallback format standard (string) pour Windows/Local
-                self._resolve_single_paths(paths_cfg, "tfrecord_metadata_cache", config_dir)
+                self._resolve_single_path(paths_cfg, "tfrecord_metadata_cache", config_dir)
 
             else:
                 raise ValueError(
@@ -310,11 +293,16 @@ class ConfigLoader(metaclass=SingletonMeta):
         or by calculating and persisting it.
         """
         if cache_file.exists():
+            logger.info(f"Found cache file {cache_file} for getting series depth")
             series_depth = self._get_depth_from_cache(cache_file, studies_dirs_list, logger)
             if series_depth is not None:
                 return series_depth
 
         # Fallback to calculation if cache is missing, stale, or failed
+        logger.info(
+            f"The cache file {cache_file} is missing or stale. "
+            " Calculating the series depth by parsing the whole dataset."
+        )
         series_depth = self._calculate_series_depth(studies_dirs_list, percentile)
         self._save_depth_to_cache(cache_file, len(studies_dirs_list), series_depth, logger)
 

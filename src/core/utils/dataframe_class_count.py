@@ -20,13 +20,26 @@ class DataFrameClassCount(metaclass=SingletonMeta):
         cache_path = ConfigLoader().get_value('paths').get('tfrecord_metadata_cache')
 
         # Resolve the full path to the cache file
-        self._cache = Path(cache_path).resolve()/"cache.json"
+        if isinstance(cache_path, dict):
+            ro_cache_path = cache_path['read_only_dir']
+            ro_cache_file = Path(ro_cache_path).resolve()/"cache.json"
+            rw_cache_path = cache_path['read_write_dir']
+            rw_cache_file = Path(rw_cache_path).resolve()/"cache.json"
+
+            if rw_cache_file.exists():
+                self._cache = rw_cache_file
+            elif ro_cache_file.exists():
+                self._cache = ro_cache_file
+            else:
+                raise FileNotFoundError("No cache file found. Check your file system.")
+        else:
+            self._cache = Path(cache_path).resolve()/"cache.json"
 
         # Load and cache the data in memory during the first instantiation
-        self._severity_labels_counts = self._get()
+        self._severity_labels_counts: dict[str, int] = self._get()
 
         # Handle class imbalance by calculating balancing weights dynamically later
-        self._balancing_weights = None
+        self._balancing_weights: tf.Tensor | None = None
 
     def _get(self) -> Dict[str, int]:
         """
@@ -67,6 +80,9 @@ class DataFrameClassCount(metaclass=SingletonMeta):
                 each class, sorted by class ID.
         """
 
+        if not self._severity_labels_counts:
+            return tf.constant([], dtype=tf.float32)
+
         total = sum(self._severity_labels_counts.values())
         num_classes = len(self._severity_labels_counts)
 
@@ -79,13 +95,13 @@ class DataFrameClassCount(metaclass=SingletonMeta):
 
         return tf.constant(weights, dtype=tf.float32)
 
-    def get_balancing_weights(self):
+    def get_balancing_weights(self) -> tf.Tensor | None:
         """
         Returns the cached severity class weights.
         """
         return self._balancing_weights
 
-    def set_balancing_weights(self):
+    def set_balancing_weights(self) -> None:
         """
         Sets the balancing weights for severity classes.
         This method calculates the balancing weights based on the current

@@ -4,15 +4,15 @@
   "code_file": "main.py",
   "language": "python",
   "kernel_type": "script",
-  "is_private": "true",
-  "enable_gpu": "true",
-  "enable_tpu": "false",
-  "enable_internet": "true",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
   "machine_shape": "",
   "dataset_sources": [
-    "olivierrochat/rsna-lumbar-src-code",
+    "olivierrochat/rsna-lumbar-spine-src-code",
     "olivierrochat/rsna-lumbar-spine-tfrecords",
-    "olivierrochat/rsna-lumbar-spine-training"
+    "olivierrochat/rsna-lumbar-spine-logs-and-checkpoints"
   ],
   "competition_sources": [
     "rsna-2024-lumbar-spine-degenerative-classification"

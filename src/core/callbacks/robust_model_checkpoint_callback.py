@@ -3,30 +3,37 @@
 import tf_keras
 import logging
 
+from typing import Any
+
 
 class RobustModelCheckpointCallback(tf_keras.callbacks.ModelCheckpoint):
     """
     Custom ModelCheckpoint that logs the specific success/failure result
     of the save operation directly via the application logger.
     """
-    def __init__(self, logger: logging.Logger, **kwargs):
+    def __init__(self, logger: logging.Logger | None = None, **kwargs):
         super().__init__(**kwargs)
         self.logger = logger
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None):
+
+        logs = logs or {}
         try:
             # Attempt to save the model using the parent class method
             super().on_epoch_end(epoch, logs)
 
-            # If we reached this line, the save was successful (or at least no exception raised)
-            self.logger.info(
-                f"Successfully saved checkpoint for epoch {epoch + 1} at: {self.filepath}"
-            )
+            if self.logger:
+                # If we reached this line, the save was successful (or at least no exception raised)
+                self.logger.info(
+                    f"Successfully saved checkpoint for epoch {epoch + 1} at: {self.filepath}"
+                )
         except Exception as e:
-            # If an exception is raised, log the failure clearly
-            self.logger.error(
-                f"FAILED to save checkpoint for epoch {epoch + 1} to {self.filepath}. Error: {e}"
-            )
+            if self.logger:
+                # If an exception is raised, log the failure clearly
+                self.logger.error(
+                    f"FAILED to save checkpoint for epoch {epoch + 1} "
+                    f"to {self.filepath}. Error: {e}"
+                )
             # Re-raise the exception to let the training process know something went wrong
             raise e
 

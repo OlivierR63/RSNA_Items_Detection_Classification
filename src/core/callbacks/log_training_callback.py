@@ -3,6 +3,7 @@
 import tf_keras
 import psutil
 import os
+from typing import Any
 from time import time, perf_counter, strftime, gmtime
 
 
@@ -34,57 +35,76 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         self.total_batches = 0
         self.current_epoch = 0
 
-    def on_train_begin(self, logs=None):
+    def on_train_begin(self, logs=None) -> None:
         """
         Sets up the global session parameters and initializes the session timer.
 
         Args:
-            logs (dict, optional): Currently unused by this method.
+            logs (dict, optional): Currently unused by this method but required by
+            the Keras API.
         """
+        logs = logs or {}
+
+        super().on_train_begin(logs)
 
         # Initialize record for average step time
         self.step_times = []
 
-        # Safely retrieve parameters
-        self.nb_epochs = self.params.get('epochs', 0)
-        self.nb_steps = self.params.get('steps', 0)
+        # Safely retrieve parameters.
+        # As a reminder: the keys 'epochs' and 'steps' derive from the arguments
+        # 'epochs' and 'steps_per_epoch' passed through the model.fit() method
+        try:
+            self.nb_epochs = int(self.params.get('epochs', 0))
+            self.nb_steps = int(self.params.get('steps', 0))
+        except (ValueError, TypeError):
+            raise ValueError("Parameters 'epochs' or 'steps' must be integers.")
+
         self.total_batches = self.nb_epochs * self.nb_steps
 
-        # Ensure we have integers for comparison
+        if self.total_batches <= 0:
+            raise ValueError(
+                "Invalid configuration for 'epochs' or 'steps'. "
+                "Please revise the YAML configuration file"
+            )
+
+        # Ensure parameters are integers for calculation
         self.logger.info("\n" + "="*50)
         self.logger.info("    Training session started!")
         self.logger.info(f"    Targeting {self.nb_epochs} epochs with {self.nb_steps} steps each.")
         self.logger.info("="*50 + "\n")
 
-    def on_epoch_begin(self, epoch, logs=None):
+    def on_epoch_begin(self, epoch, logs: dict[str, Any] | None = None):
         """
         Tracks the current epoch index and resets step-specific metrics.
 
         Args:
             epoch (int): Index of the epoch starting.
-            logs (dict, optional): Currently unused by this method.
+            logs (dict, optional): Currently unused by this method but
+            required by the Keras API.
         """
+        logs = logs or {}
+        super().on_epoch_begin(epoch, logs)
         self.current_epoch = epoch
         self.step_times = []
 
-    def on_train_batch_begin(self, batch, logs=None):
+    def on_train_batch_begin(self, batch: int, logs: dict[str, Any] | None = None) -> None:
         """
         Captures the exact start time of a training batch.
 
         Args:
             batch (int): Index of the batch within the current epoch.
-            logs (dict, optional): Currently unused by this method.
+            logs (dict, optional): Currently unused by this method but required
+            by the Keras API.
         """
-        # Force conversion to python int to avoid EagerTensor conflicts
-        # batch_int = int(batch)
+        logs = logs or {}
+
+        # Correctly call the parent method to maintain Keras callback chain
+        super().on_train_batch_begin(batch, logs)
 
         # Record the start time of the current batch
-        self.batch_start_time = time()
+        self.batch_start_time = perf_counter()
 
-        # We use datetime for the human-readable display
-        # current_time = datetime.now().strftime("%H:%M:%S")
-
-    def on_train_batch_end(self, batch, logs=None):
+    def on_train_batch_end(self, batch: int, logs: dict[str, Any] | None = None):
         """
         Calculates batch duration, updates the progress bar, and computes the ETA.
 
@@ -92,11 +112,15 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
             batch (int): Index of the batch that just finished.
             logs (dict, optional): Metrics for the current batch (e.g., loss).
         """
+        logs = logs or {}
+
         # Force conversion to python int to avoid EagerTensor conflicts
         batch_int = int(batch)
 
+        super().on_train_batch_end(batch, logs)
+
         # Calculate time spent on this step
-        step_time = time() - self.batch_start_time
+        step_time = perf_counter() - self.batch_start_time
         self.step_times.append(step_time)
 
         # Calculate ETA
@@ -107,19 +131,23 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
 
         avg_time = sum(self.step_times) / len(self.step_times)
         eta_seconds = batches_left * avg_time
-        eta_str = strftime("%H:%M:%S", gmtime(eta_seconds))
+        eta_timestamp = time() + eta_seconds
+        eta_str = strftime("%H:%M:%S", gmtime(eta_timestamp))
 
         # Log the performance metrics
         info_msg = f" Batch {batch_int + 1:04d} | Time: {step_time:.2f}s | ETA: {eta_str}"
         self.logger.info(info_msg)
 
-    def on_test_begin(self, logs=None):
+    def on_test_begin(self, logs: dict[str, Any] | None = None):
         """
         Signals the start of the validation (testing) phase.
 
         Args:
             logs (dict, optional): Currently unused by this method.
         """
+        logs = logs or {}
+        super().on_test_begin(logs)
+
         # Retrieve validation steps from Keras params
         # Note: 'validation_steps' is often stored as 'steps' in the test context
         val_steps = self._val_steps_fixed
@@ -129,18 +157,22 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         self.logger.info("-"*30)
         self.val_start_time = perf_counter()
 
-    def on_test_end(self, logs=None):
+    def on_test_end(self, logs: dict[str, Any] | None = None):
         """
         Signals the completion of the validation phase and logs its duration.
 
         Args:
-            logs (dict, optional): Metrics from the validation phase.
+            logs (dict, optional): Metrics from the validation phase. Required
+            by the Keras API.
         """
+        logs = logs or {}
+        super().on_test_end(logs)
+
         val_duration = perf_counter() - self.val_start_time
         self.logger.info(f" >>> Validation Phase finished in {val_duration:.2f}s")
         self.logger.info("-"*30 + "\n")
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch: int, logs=None):
         """
         Summarizes final epoch metrics and redirects them to the logger.
 
@@ -149,6 +181,9 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
             logs (dict, optional): Aggregated metrics for the epoch.
         """
         logs = logs or {}
+
+        super().on_epoch_end(epoch, logs)
+
         # Format metrics into a readable string for the console/log file
         # Example: loss: 0.4521 - accuracy: 0.8912
         metrics_str = " - ".join([f"{k}: {v:.4f}\n\t" for k, v in logs.items()])
@@ -177,7 +212,7 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         # Reset step times for next epoch
         self.step_times = []
 
-    def get_config(self):
+    def get_config(self) -> dict[str, Any]:
         """
         Returns the configuration of the callback for serialization.
         """

@@ -3,20 +3,24 @@ paths:
   dicom_studies: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_images"
   tfrecord:
     read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/tfrecords"
-    read_write_dir: "/kaggle/working/lumbar_spine/rsna-2024-lumbar-spine-tfrecords"
+    read_write_dir: "/kaggle/working/output/tfrecords"
   tfrecord_metadata_cache: 
-    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-training/output/cache_metadata"
-    read_write_dir: "/kaggle/working/lumbar_spine/output/cache_metadata"
-  output: "/kaggle/working/lumbar_spine/output/"
-  checkpoint: "/kaggle/working/lumbar_spine/output/checkpoints"
-  log_mirror: "/kaggle/working/lumbar_spine/output/logs/full_session_output.log"
-  #tf_cache: "/tmp/tensorflow_cache/lumbar_train"
-  inspection: "/kaggle/working/lumbar_spine/input_data_inspection/"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/output/cache_metadata"
+    read_write_dir: "/kaggle/working/output/output/cache_metadata"
+  output:
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/output/"
+    read_write_dir: "/kaggle/working/output/output"
+  checkpoint:
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/output/checkpoint"
+    read_write_dir: "/kaggle/working/output/output/checkpoints"
+  inspection:
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/input_data_inspection/"
+    read_write_dir: "/kaggle/working/output/output/input_data_inspection"
   csv:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
-    instances_series_format: "/kaggle/working/csv_file/train_instances_series_format.csv"
+    instances_series_format: "/kaggle/working/output/csv_file/train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:

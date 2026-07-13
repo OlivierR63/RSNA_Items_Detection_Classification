@@ -36,19 +36,39 @@ class SystemResourceMonitorCallback(tf_keras.callbacks.Callback):
         frequency=10,
         logger: logging.Logger | None = None
     ):
+        """
+        Initializes the monitor with custom thresholds and logging settings.
+
+        Args:
+            memory_threshold_percent (float): Percentage of system RAM usage
+                triggering an automatic training stop (default: 90.0).
+            frequency (int): Interval in batches at which the current process
+                memory usage is logged (default: 10).
+            logger (logging.Logger, optional): Dedicated logger for monitor
+                events. If None, the module's default logger is used.
+        """
         super().__init__()
         self.memory_threshold = memory_threshold_percent
         self.frequency = frequency
         self.logger = logger or logging.getLogger(__name__)
         self.process = psutil.Process(os.getpid())
 
-    def on_train_batch_end(self, batch, logs=None):
+    def on_train_batch_end(self, batch, logs=None) -> None:
         """
         Check system and process memory usage after each training batch.
+
+        Args:
+            batch (int): Index of the batch within the current epoch.
+            logs (dict, optional): Dictionary containing metric results for the
+                current batch (e.g., loss, accuracy). Provided by the Keras
+                training loop, kept for API compatibility even if unused here.
 
         If the total system RAM usage exceeds the defined threshold,
         it sets the model's 'stop_training' flag to True to prevent a crash.
         """
+
+        logs = logs or {}
+        super().on_train_batch_end(batch, logs)
 
         # Force conversion to python int to avoid EagerTensor conflicts
         batch_int = int(batch) + 1
@@ -56,19 +76,7 @@ class SystemResourceMonitorCallback(tf_keras.callbacks.Callback):
         # 1. Get system-wide memory usage
         mem = psutil.virtual_memory()
 
-        # 2. Get current process memory usage (RSS)
-        process_mem_gb = self.process.memory_info().rss / (1024 ** 3)
-
-        # 3. Log the status
-        # if batch_int % 5 == 0: # Log every 5 batches to avoid cluttering
-        info_msg = (
-            f"\n\n[System Monitor] Batch {batch_int:03d}: "
-            f"System RAM: {mem.percent}% | "
-            f"Process RAM: {process_mem_gb:.2f} GB"
-        )
-        self.logger.info(info_msg)
-
-        # 4. Emergency stop
+        # 2. Emergency stop (Check before anything else)
         if float(mem.percent) > self.memory_threshold:
             critical_msg = (
                 f"\n[CRITICAL] Memory usage ({mem.percent}%) exceeded threshold! "
@@ -77,14 +85,36 @@ class SystemResourceMonitorCallback(tf_keras.callbacks.Callback):
             self.logger.critical(critical_msg)
             self.model.stop_training = True
 
+        # 3. Get current process memory usage (RSS)
+        if batch_int % self.frequency == 0:
+            process_mem_gb = self.process.memory_info().rss / (1024 ** 3)
+
+            # 3. Log the status
+            # if batch_int % 5 == 0: # Log every 5 batches to avoid cluttering
+            info_msg = (
+                f"\n\n[System Monitor] Batch {batch_int:03d}: "
+                f"System RAM: {mem.percent}% | "
+                f"Process RAM: {process_mem_gb:.2f} GB"
+            )
+
+            self.logger.info(info_msg)
+
     def on_epoch_end(self, epoch, logs=None):
         """
         Perform a deep memory cleanup at the end of every epoch.
 
-        Resets the Keras global state and forces Python's garbage collector
-        to release unreferenced tensors, gradients, and validation buffers
-        before starting the next epoch.
+        Args:
+            epoch (int): Index of the epoch.
+            logs (dict, optional): Dictionary containing metric results for the
+                epoch. Provided by Keras, included to maintain signature
+                consistency with the Callback API.
+
+        Forces Python's garbage collector to release unreferenced tensors,
+        gradients, and validation buffers before starting the next epoch.
         """
+
+        logs = logs or {}
+        super().on_epoch_end(epoch, logs)
 
         # 1. Trigger the Python Garbage Collector
         # This forces the immediate release of unreferenced objects in RAM
@@ -100,6 +130,9 @@ class SystemResourceMonitorCallback(tf_keras.callbacks.Callback):
     def get_config(self):
         """
         Returns the configuration of the callback for serialization.
+
+        Returns:
+            dict: Configuration parameters used for model saving/loading.
         """
         config = super().get_config()
         config.update({

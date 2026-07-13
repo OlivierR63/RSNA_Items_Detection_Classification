@@ -39,47 +39,54 @@ class DynamicLossBalancerCallback(Callback):
         self._min_weight = min_weight
         self._max_weight = max_weight
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch: int, logs: dict | None = None):
         """
         Calculates and updates the loss weight at the end of each epoch.
         """
         logs = logs or {}
 
-        # 1. Retrieve the raw losses from the logs dictionary
-        # Note: Ensure these names match the output layers in your model
+        super().on_epoch_end(epoch, logs)
+
+        # 1. Retrieve raw losses and ensure float conversion.
+        # Keras logs may contain tf.Tensor or numpy types; casting to float ensures
+        # consistent scalar arithmetic and prevents potential issues with graph-mode tensors.
         sev_loss = logs.get('severity_output_loss')
         loc_loss = logs.get('location_output_loss')
 
-        if sev_loss is not None and loc_loss is not None and loc_loss > 1e-6:
-            # 2. Calculate the target weight to balance magnitudes
-            # Aim: weight_variable * loc_loss ≈ sev_loss
-            target_weight = sev_loss / (loc_loss + K.epsilon())
+        if sev_loss is not None and loc_loss is not None:
+            sev_loss = float(sev_loss)
+            loc_loss = float(loc_loss)
 
-            # 3. Apply momentum-based smoothing to ensure training stability
-            # This prevents the weight from oscillating wildly between epochs
-            current_weight = float(K.get_value(self._loss_weight_var))
-            new_loc_weight = (
-                (self._momentum * current_weight) +
-                ((1 - self._momentum) * target_weight)
-            )
+            if loc_loss > 1e-6:
+                # 2. Calculate the target weight to balance magnitudes
+                # Aim: weight_variable * loc_loss ≈ sev_loss
+                target_weight = sev_loss / (loc_loss + K.epsilon())
 
-            # 4. Clip the weight within a safe range to avoid extreme bias
-            new_loc_weight = np.clip(new_loc_weight, self._min_weight, self._max_weight)
-
-            # 5. Update the TensorFlow variable directly
-            # This reflects in the model's loss calculation for the next epoch
-            K.set_value(self._loss_weight_var, new_loc_weight)
-
-            # 6. Logging the balancing operation
-            if self._logger:
-                self._logger.info(
-                    f" [LossBalancer] End of Epoch {epoch + 1} Stats: "
-                    f"Severity Loss = {sev_loss:.4f}, Location Loss = {loc_loss:.4f}"
+                # 3. Apply momentum-based smoothing to ensure training stability
+                # This prevents the weight from oscillating wildly between epochs
+                current_weight = float(K.get_value(self._loss_weight_var))
+                new_loc_weight = (
+                    (self._momentum * current_weight) +
+                    ((1 - self._momentum) * target_weight)
                 )
-                self._logger.info(
-                    f" [LossBalancer] Location Weight Update for Epoch {epoch + 2}: "
-                    f"{current_weight:.2f} -> {new_loc_weight:.2f}"
-                )
+
+                # 4. Clip the weight within a safe range to avoid extreme bias
+                new_loc_weight = np.clip(new_loc_weight, self._min_weight, self._max_weight)
+
+                # 5. Update the TensorFlow variable directly
+                # This reflects in the model's loss calculation for the next epoch
+                K.set_value(self._loss_weight_var, new_loc_weight)
+
+                # 6. Logging the balancing operation
+                if self._logger:
+                    self._logger.info(
+                        f" [LossBalancer] End of Epoch {epoch + 1} Stats: "
+                        f"Severity Loss = {sev_loss:.4f}, Location Loss = {loc_loss:.4f}"
+                    )
+                    self._logger.info(
+                        f" [LossBalancer] Location Weight Update for Epoch {epoch + 2}: "
+                        f"{current_weight:.2f} -> {new_loc_weight:.2f}"
+                    )
         else:
             # Warning if logs are missing or loss is zero
             if self._logger:

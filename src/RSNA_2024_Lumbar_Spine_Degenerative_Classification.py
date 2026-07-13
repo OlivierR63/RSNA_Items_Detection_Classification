@@ -130,12 +130,20 @@ def _get_target_checkpoint(config: dict[str, str | dict]) -> Tuple[Path | None, 
     """
     # Select the checkpoint loading policy: 'best' for the lowest validation loss
     # or 'last' to continue from the most recent epoch.
-    checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+    if isinstance(config["paths"]["checkpoint"], dict):
+        checkpoint_dir = Path(config["paths"]["checkpoint"]['read_only_dir']).resolve()
+    else:
+        checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+
     resume_mode = config["callbacks"]["resume_mode"]
+
+    print(f"Appel de _get_target_checkpoint : checkpoint_dir = {checkpoint_dir}")
 
     # Define filenames based on your ModelTrainer saving logic
     best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
     last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
+
+    print(f"last_path = {last_path}")
 
     # Select the target file
     if resume_mode == "best" and best_path.is_file():
@@ -230,7 +238,11 @@ def _build_fresh_or_salvage(
 
     try:
         max_records = config['data_specs']['max_records_per_frame']
-        checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
+
+        if isinstance(config["paths"]["checkpoint"], dict):
+            checkpoint_dir = Path(config["paths"]["checkpoint"]['read_write_dir']).resolve()
+        else:
+            checkpoint_dir = Path(config["paths"]["checkpoint"]).resolve()
 
         factory_model = ModelFactory(
             series_depth=depth,
@@ -430,6 +442,8 @@ def _get_or_build_model(
     # Initial validation
     _validate_input_params(depth, config, logger)
     checkpoint_path, mode = _get_target_checkpoint(config)
+
+    print(f"checkpoint_path = {checkpoint_path} et mode = {mode}")
     model = _load_existing_model(checkpoint_path, mode, logger)
 
     if model is None:
@@ -503,9 +517,23 @@ def _resolve_series_depth(config: dict, config_loader, logger: logging.Logger) -
     data_specs_cfg = config["data_specs"]
     percentile_str = data_specs_cfg["series_depth_percentile"]
 
+    if isinstance(paths_cfg["tfrecord_metadata_cache"], dict):
+        ro_dir = paths_cfg["tfrecord_metadata_cache"]['read_only_dir']
+        ro_file = Path(ro_dir).resolve() / "cache.json"
+
+        rw_dir = paths_cfg["tfrecord_metadata_cache"]['read_write_dir']
+        rw_file = Path(rw_dir).resolve() / "cache.json"
+
+        if ro_file.exists() and not rw_file.exists():
+            tfrecord_cache_dir = str(ro_file.parent)
+        else:
+            tfrecord_cache_dir = str(rw_file.parent)
+    else:
+        tfrecord_cache_dir = str(Path(paths_cfg["tfrecord_metadata_cache"]))
+
     if "tfrecord" in paths_cfg and "dicom_studies" in paths_cfg:
         series_depth = config_loader.get_series_depth(
-            tfrecord_cache_dir=paths_cfg["tfrecord_metadata_cache"],
+            tfrecord_cache_dir=tfrecord_cache_dir,
             dicom_studies_dir=paths_cfg["dicom_studies"],
             percentile=float(percentile_str),
             logger=logger
@@ -573,13 +601,17 @@ def main() -> None:
     tf.get_logger().setLevel(logging.ERROR)
 
     paths_cfg = config['paths']
-    output_dir = Path(paths_cfg["output"]).resolve()
+
+    if isinstance(paths_cfg["output"], dict):
+        output_dir = Path(paths_cfg["output"]['read_write_dir']).resolve()
+    else:
+        output_dir = Path(paths_cfg["output"]).resolve()
 
     # Ensure the directory tree exists for logs and output before starting the training process
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    log_dir = Path(paths_cfg["output"]) / "logs"
-    log_mirror_file_path = Path(paths_cfg["log_mirror"])
+    log_dir = output_dir / "logs"
+    log_mirror_file_path = log_dir / "full_session_output.log"
 
     # Redirect terminal stdout and stderr streams to a single log file
     from src.core.utils.system_stream_tee import SystemStreamTee
@@ -628,9 +660,25 @@ def main() -> None:
                 "Starting training process.", extra={"status": "started", "log_dir": log_dir}
             )
 
-            # Update cache file tracking generated TFRecords
+            # Resolve cache directory using a Read-Only/Read-Write cascade:
+            # Prioritize Read-Only directory if it exists and Read-Write is empty,
+            # otherwise default to Read-Write for persistence.
+            if isinstance(paths_cfg["tfrecord_metadata_cache"], dict):
+                ro_str = paths_cfg["tfrecord_metadata_cache"]['read_only_dir']
+                ro_file = Path(ro_str).resolve() / "cache.json"
+                rw_str = paths_cfg["tfrecord_metadata_cache"]['read_write_dir']
+                rw_file = Path(rw_str).resolve() / "cache.json"
+
+                if ro_file.exists() and not rw_file.exists():
+                    tfrecord_cache_dir = str(ro_file.parent)
+                else:
+                    tfrecord_cache_dir = str(rw_file.parent)
+            else:
+                tfrecord_cache_dir = str(Path(paths_cfg["tfrecord_metadata_cache"]))
+
+            # Update TFRecord metadata cache to reflect current generation state
             _update_tfrecord_cache_file(
-                paths_cfg["tfrecord_metadata_cache"],
+                tfrecord_cache_dir,
                 actual_nb_tfrecord_files
             )
 

@@ -139,13 +139,18 @@ class ModelTrainer:
             # Train the model
             _ = self._train_with_callbacks()
 
+            if isinstance(self._config['paths']['checkpoint'], dict):
+                checkpoint_dir = self._config['paths']['checkpoint']['read_write_dir']
+            else:
+                checkpoint_dir = self._config['paths']['checkpoint']
+
+            checkpoint_file = Path(checkpoint_dir).resolve() / "model_checkpoint.keras"
+
             logger.info(
-                f"Model saved to {self._config['paths']['checkpoint']}/model_checkpoint.keras",
+                f"Model saved to {checkpoint_file}",
                 extra={
                     "status": "success",
-                    "model_path": str(
-                        Path(self._config["paths"]["checkpoint"])/"model_checkpoint.keras"
-                    )
+                    "model_path": str(checkpoint_file)
                 }
             )
 
@@ -317,14 +322,21 @@ class ModelTrainer:
         logger = logger or self._logger
 
         paths_cfg = self._config["paths"]
-        output_dir = paths_cfg['output']
+
+        if isinstance(paths_cfg['output'], dict):
+            output_dir = paths_cfg['output']['read_write_dir']
+        else:
+            output_dir = paths_cfg['output']
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         # Paths for checkpointing
         # 'best_model.keras' stores the weights with the lowest validation loss
         # 'last_model.keras' is updated every epoch to allow training resumption
-        checkpoint_dir_path = Path(paths_cfg["checkpoint"]).resolve()
+        if isinstance(paths_cfg['checkpoint'], dict):
+            checkpoint_dir_path = Path(paths_cfg["checkpoint"]['read_write_dir']).resolve()
+        else:
+            checkpoint_dir_path = Path(paths_cfg["checkpoint"]).resolve()
 
         # Ensure the directory tree exists before attempting to write the file
         checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
@@ -386,8 +398,9 @@ class ModelTrainer:
         )
 
         kaggle_sync_callback = KaggleSync(
-            checkpoint_dir=str(checkpoint_dir_path),
-            checkpoint_filename=self.CHECKPOINT_FILENAME
+            dataset_id='olivierrochat/rsna-lumbar-spine-logs_and_checkpoints',
+            config=self._config,
+            logs=self._logger
         )
 
         lr_scheduler = ReduceLROnPlateau(
@@ -400,7 +413,6 @@ class ModelTrainer:
 
         ram_cleaner_callback = MemoryCleanupCallback(
             run_gc=True,
-            clear_session=False,
             logger=self._logger
         )
 
@@ -437,8 +449,8 @@ class ModelTrainer:
             best_checkpoint_callback,
             last_checkpoint_callback,
             ram_cleaner_callback,
-            kaggle_sync_callback,
             dynamic_loss_balancer_callback,
+            kaggle_sync_callback,
 
             # Stop training if validation loss plateaus.
             tf_keras.callbacks.EarlyStopping(
@@ -502,6 +514,11 @@ class ModelTrainer:
                         "final_loss": history.history['loss'][-1],
                         "final_accuracy": final_acc
                 })
+
+            # Upload in the dataset
+            kaggle_sync_callback._update_logs_and_checkpoints_dataset(epoch=epochs_cfg)
+            logger.info("Final Kaggle synchronization triggered.")
+
             return history
 
         except Exception as e:
@@ -528,7 +545,12 @@ class ModelTrainer:
                  Defaults to 0 if no log file is found or if parsing fails.
         """
         self._logger.info("Calculating initial epoch for training resumption...")
-        log_dir = Path(self._config['paths']['output']) / "logs"
+
+        if isinstance(self._config['paths']['output'], dict):
+            log_dir = Path(self._config['paths']['output']['read_only_dir']) / "logs"
+        else:
+            log_dir = Path(self._config['paths']['output']) / "logs"
+
         use_json = self._config['logging'].get('use_json', False)
         pattern = "train_*.json" if use_json else "train_*.log"
 

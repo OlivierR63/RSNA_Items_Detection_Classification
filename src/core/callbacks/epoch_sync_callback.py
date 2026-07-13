@@ -1,5 +1,6 @@
 # coding: utf-8
 
+from __future__ import annotations  # Enables deferred evaluation of type annotations
 import tf_keras
 from typing import Any, TYPE_CHECKING
 
@@ -11,11 +12,10 @@ if TYPE_CHECKING:
 class EpochSyncCallback(tf_keras.callbacks.Callback):
     """
     Synchronizes the dataset epoch with the Keras training loop.
-    Replaces the LambdaCallback for better serialization support.
     """
     def __init__(
         self,
-        trainer: ModelTrainer,
+        trainer: 'ModelTrainer',  # Model trainer used to synchronize the global epoch
         initial_offset: int
     ) -> None:
         super().__init__()
@@ -25,7 +25,14 @@ class EpochSyncCallback(tf_keras.callbacks.Callback):
     def on_epoch_begin(
         self,
         epoch: int,
-        logs: dict[str, float] | None=None) -> None:
+        logs: dict[str, Any] | None = None
+    ) -> None:
+        # Ensure logs is initialized as an empty dictionary if None
+        logs = logs or {}
+
+        # Best practice: Always call the method of the parent class
+        super().on_epoch_begin(epoch, logs)
+
         # Sync the dataset manager with the absolute (global) epoch
         self._trainer._set_epoch(epoch + self._initial_offset)
 
@@ -37,6 +44,6 @@ class EpochSyncCallback(tf_keras.callbacks.Callback):
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> 'EpochSyncCallback':
-        # Logic to rebuild this callback from a saved model
-        # trainer=None because it will be reinjected by the ModelTrainer at the next runtime.
+        # Logic to rebuild this callback from a saved model.
+        # trainer is set to None as it will be reinjected by the ModelTrainer at runtime.
         return cls(trainer=None, initial_offset=config["initial_offset"])

@@ -33,11 +33,27 @@ REQUIRED_SCHEMA = {
                 "read_write_dir": str
             }
         ),
-        "output": str,
-        "checkpoint": str,
-        "log_mirror": str,
-        # "tf_cache": str,
-        "inspection": str,
+        "output": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
+        "checkpoint": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
+        "inspection": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
         "csv": {
             "series_description": str,
             "label_coordinates": str,
