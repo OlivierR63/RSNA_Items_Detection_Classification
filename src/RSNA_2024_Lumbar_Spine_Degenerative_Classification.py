@@ -11,10 +11,13 @@ from typing import Tuple, Dict, Any, TYPE_CHECKING
 import gc
 import json
 
+import tf_keras
+import tensorflow as tf
+
 # Imports for type checking only, to avoid circular dependencies and heavy imports at runtime
 if TYPE_CHECKING:
-    import tensorflow as tf
-    import tf_keras
+    pass
+
 
 from src.projects.lumbar_spine.csv_metadata_handler import CSVMetadataHandler
 from src.projects.lumbar_spine.model_trainer import ModelTrainer
@@ -137,13 +140,9 @@ def _get_target_checkpoint(config: dict[str, str | dict]) -> Tuple[Path | None, 
 
     resume_mode = config["callbacks"]["resume_mode"]
 
-    print(f"Appel de _get_target_checkpoint : checkpoint_dir = {checkpoint_dir}")
-
     # Define filenames based on your ModelTrainer saving logic
     best_path = checkpoint_dir / ModelTrainer.BEST_MODEL_FILENAME
     last_path = checkpoint_dir / ModelTrainer.CHECKPOINT_FILENAME
-
-    print(f"last_path = {last_path}")
 
     # Select the target file
     if resume_mode == "best" and best_path.is_file():
@@ -236,6 +235,7 @@ def _build_fresh_or_salvage(
         RuntimeError: If the model cannot be built from the factory.
     """
 
+    # 1. First step: Build the bare model, including the layers without the weights
     try:
         max_records = config['data_specs']['max_records_per_frame']
 
@@ -266,9 +266,14 @@ def _build_fresh_or_salvage(
 
         raise RuntimeError(msg_critical)
 
+    # 2. Second step : load the weights into the model.
     try:
         if checkpoint_path:
-            model.load_weights(checkpoint_path, skip_mismatch=True)
+            model.load_weights(
+                checkpoint_path,
+                by_name=True,
+                skip_mismatch=True
+            )
             logger.info("Weights successfully salvaged with skip_mismatch=True")
 
             new_file = checkpoint_dir / "model_restored_fixed.keras"
@@ -443,7 +448,6 @@ def _get_or_build_model(
     _validate_input_params(depth, config, logger)
     checkpoint_path, mode = _get_target_checkpoint(config)
 
-    print(f"checkpoint_path = {checkpoint_path} et mode = {mode}")
     model = _load_existing_model(checkpoint_path, mode, logger)
 
     if model is None:

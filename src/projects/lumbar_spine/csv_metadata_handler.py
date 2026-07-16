@@ -96,7 +96,6 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         """
         # Check if the singleton has already been initialized to avoid redundant setup
         if hasattr(self, '_config'):
-            print()
             return  # Already initialized by a previous call
 
         self._logger = logger or logging.getLogger(self.__class__.__name__)
@@ -107,7 +106,7 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self._dicom_studies_dir = Path(dicom_studies_dir)
         self._config = ConfigLoader().get()
         self._format_cache = {}
-        self._paths_dict: dict[str, Path] = {}
+        self._paths_dict: dict[str, Path] = self._config['paths']['csv']
         self._series_desc_df = None
         self._label_coords_df = None
         self._instances_series_format_df = None
@@ -115,52 +114,10 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self._raw_mapper = None
         self._csv_merged_clean_df = None
 
-        # Setup file paths
-        self._setup_paths(series_description, label_coordinates, instances_series_format, train)
-
         # Load dataframe and sanitize its data
         self._load_and_cleanse_data()
 
         self._logger.debug("CSVMetadataHandler initialization completed")
-
-    def _setup_paths(
-        self,
-        series_description: str,
-        label_coordinates: str,
-        instances_series_format: str,
-        train: str
-    ) -> None:
-        """
-        Defines paths for raw data and the enriched version (cache)
-        """
-        func_name = inspect.currentframe().f_code.co_name
-        class_name = self.__class__.__name__
-
-        self._logger.debug(f"Starting function {class_name}.{func_name}")
-
-        raw_paths = {
-            'series_description': series_description,
-            'train': train,
-            'label_coordinates': label_coordinates,
-            'instances_series_format': instances_series_format
-        }
-
-        root_dir_cfg = self._config.get("root_dir", None)
-
-        for key, original_path in raw_paths.items():
-            # If the path is relative (e.g., "train.csv"), it is joined with root_dir.
-            path = Path(original_path)
-
-            # If it is already an absolute path (e.g., "/kaggle/input/..."),
-            # the / operator leaves it unchanged.
-            self._paths_dict[key] = Path(root_dir_cfg) / path
-
-        self._logger.debug(f"self._paths_dict = {self._paths_dict}")
-
-        self._logger.debug(
-            f"Function {class_name}.{func_name} completed successfully",
-            extra={"status": "success"}
-        )
 
     def _load_and_cleanse_data(self) -> None:
         """
@@ -182,8 +139,10 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         self._logger.debug(f"Starting function {class_name}.{func_name}")
 
         # Load core metadata files
-        self._train_df = pd.read_csv(self._paths_dict['train'])
-        self._series_desc_df = pd.read_csv(self._paths_dict['series_description'])
+        train_path = str(Path(self._paths_dict['train']).resolve())
+        series_desc_path = str(Path(self._paths_dict['series_description']).resolve())
+        self._train_df = pd.read_csv(train_path)
+        self._series_desc_df = pd.read_csv(series_desc_path)
 
         # DEBUG: check columns of self._series_desc_df right after loading from CSV file
         self._logger.debug(
@@ -193,20 +152,36 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
         # Load the cache format file when it exists.
         # In the other case, explore all the dicom files and build
         # the cache file for a next time
-        format_path = self._paths_dict['instances_series_format']
+        root = self._config['paths']['instances_series_format']
+        if isinstance(root, dict):
+            format_path = Path(root["read_only_dir"]).resolve()
+        else:
+            format_path = Path(root).resolve()
+
         if format_path.is_file():
+            self._logger.info(
+                f"Format file {format_path} has been found. Loading data."
+            )
             self._instances_series_format_df = pd.read_csv(format_path)
         else:
+            self._logger.info(
+                f"Format file not found at {format_path}. "
+                "Scanning all DICOM files to generate a new format cache."
+            )
             self._instances_series_format_df = self._get_instances_series_format()
 
             # Ensure the directory tree exists before attempting to write the file
-            output_path = self._paths_dict['instances_series_format']
+            if isinstance(root, dict):
+                output_path = Path(root["read_write_dir"]).resolve()
+            else:
+                output_path = Path(root).resolve()
+
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             self._instances_series_format_df.to_csv(output_path, index=False)
 
         # Load coordinates file
-        coords_path = self._paths_dict['label_coordinates']
+        coords_path = Path(self._paths_dict['label_coordinates']).resolve()
         self._logger.info(
             f"Loading raw coordinates from: {coords_path.name}"
         )
@@ -780,8 +755,10 @@ class CSVMetadataHandler(metaclass=SingletonMeta):
                 self._logger.error(critical_msg, exc_info=True, extra={"status": "failure"})
                 raise ValueError(critical_msg)
 
+            count_diff = initial_count - final_count
+            suffix = "s" if count_diff > 0 else ""
             self._logger.info(
-                f"Dropped {initial_count - final_count} NaN rows",
+                f"Data cleaning: Dropped {count_diff} row{suffix} with missing values",
                 extra={
                     "step": 1,
                     "initial_count": initial_count,

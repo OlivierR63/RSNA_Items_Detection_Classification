@@ -47,7 +47,21 @@ REQUIRED_SCHEMA = {
                 "read_write_dir": str
             }
         ),
+        "logs": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
         "inspection": OneOf(
+            str,
+            {
+                "read_only_dir": str,
+                "read_write_dir": str
+            }
+        ),
+        "instances_series_format": OneOf(
             str,
             {
                 "read_only_dir": str,
@@ -57,7 +71,6 @@ REQUIRED_SCHEMA = {
         "csv": {
             "series_description": str,
             "label_coordinates": str,
-            "instances_series_format": str,
             "train": str
         }
     },

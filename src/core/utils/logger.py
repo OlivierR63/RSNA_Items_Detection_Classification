@@ -6,13 +6,13 @@ from datetime import datetime
 import os
 import sys
 import contextlib
-from typing import Optional, Callable, Generator
+from typing import Callable, Generator
 import json
 from functools import wraps
 from inspect import signature
 
 # Global variable to hold the current logger instance
-_CURRENT_LOGGER: Optional[logging.Logger] = None
+_CURRENT_LOGGER: logging.Logger | None = None
 
 
 @contextlib.contextmanager
@@ -132,6 +132,23 @@ def get_current_logger() -> logging.Logger:
         _CURRENT_LOGGER = logging.getLogger("default")
 
     return _CURRENT_LOGGER
+
+
+def get_current_log_file() -> Path | None:
+    """
+    Retrieves the absolute path of the current log file.
+
+    Returns:
+        Optional[Path]: The path to the log file if a FileHandler is active,
+                        otherwise None.
+    """
+    logger = get_current_logger()
+
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            return Path(handler.baseFilename).resolve()
+
+    return None
 
 
 def log_method(logger_key: str = "logger") -> Callable:

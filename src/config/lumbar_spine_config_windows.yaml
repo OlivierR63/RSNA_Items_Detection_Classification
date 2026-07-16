@@ -9,13 +9,14 @@ paths:
   tfrecord_metadata_cache: "../../data/lumbar_spine/outcome/output/cache_metadata"
   output: "../../data/lumbar_spine/outcome/output/"
   checkpoint: "../../data/lumbar_spine/outcome/output/checkpoints"
+  logs: "../../data/lumbar_spine/outcome/output/logs"
   log_mirror: "../../data/lumbar_spine/outcome/output/logs/full_session_output.log"
   inspection: "../../data/lumbar_spine/input_data_inspection/"
+  instances_series_format: "../../data/lumbar_spine/outcome/output/csv_file/train_instances_series_format.csv"
   csv:
     series_description: "../../data/lumbar_spine/input/csv/train_series_descriptions.csv"
     label_coordinates: "../../data/lumbar_spine/input/csv/train_label_coordinates.csv"
     train: "../../data/lumbar_spine/input/csv/train.csv"
-    instances_series_format: "../../data/lumbar_spine/input/csv/train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -38,8 +39,8 @@ models:
 
 # ----------------- Training & Compilation ----------------
 training:
-  batch_size: 1
-  epochs: 15
+  batch_size: 8
+  epochs: 2
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
   loss_balancer:
@@ -49,7 +50,7 @@ training:
 
 optimizer:
   type: adam
-  learning_rate: 1e-6
+  learning_rate: 0.0001
   clipnorm: 1.0
 
 callbacks:
@@ -82,7 +83,7 @@ system:
 # Steering values: 1 unit = 1 full TFRecord file (1 patient study)
 dataset_steering:
   interleave:
-    parallel_files: 7       # Equivalent to cycle_length
+    parallel_files: 8       # Equivalent to cycle_length
     block_per_file: 1       # 1 means the entire file is read before switching
     deterministic: False
   

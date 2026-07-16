@@ -5,22 +5,27 @@ paths:
     read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/tfrecords"
     read_write_dir: "/kaggle/working/output/tfrecords"
   tfrecord_metadata_cache: 
-    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-tfrecords/output/cache_metadata"
-    read_write_dir: "/kaggle/working/output/output/cache_metadata"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/cache_metadata"
+    read_write_dir: "/kaggle/working/output/cache_metadata"
   output:
-    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/output/"
-    read_write_dir: "/kaggle/working/output/output"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints"
+    read_write_dir: "/kaggle/working/output"
   checkpoint:
-    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/output/checkpoint"
-    read_write_dir: "/kaggle/working/output/output/checkpoints"
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/checkpoints"
+    read_write_dir: "/kaggle/working/output/checkpoints"
+  logs:
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/logs"
+    read_write_dir: "/kaggle/working/output/logs"
   inspection:
     read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/input_data_inspection/"
-    read_write_dir: "/kaggle/working/output/output/input_data_inspection"
+    read_write_dir: "/kaggle/working/output/input_data_inspection"
+  instances_series_format:
+    read_only_dir: "/kaggle/input/datasets/olivierrochat/rsna-lumbar-spine-logs-and-checkpoints/csv_file/train_instances_series_format.csv"
+    read_write_dir: "/kaggle/working/output/csv_file/train_instances_series_format.csv"
   csv:
     series_description: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_series_descriptions.csv"
     label_coordinates: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train_label_coordinates.csv"
     train: "/kaggle/input/competitions/rsna-2024-lumbar-spine-degenerative-classification/train.csv"
-    instances_series_format: "/kaggle/working/output/csv_file/train_instances_series_format.csv"
 
 # ----------------- Data Engineering ----------------------
 data_specs:
@@ -43,7 +48,7 @@ models:
 # ----------------- Training & Compilation ----------------
 training:
   batch_size: 8
-  epochs: 1
+  epochs: 2
   train_split_ratio: 0.8
   # Metadata for the dynamic loss balancing strategy
   loss_balancer:

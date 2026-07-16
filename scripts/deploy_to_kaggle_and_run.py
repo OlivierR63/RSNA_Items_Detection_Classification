@@ -148,10 +148,9 @@ def scan_kaggle_inputs(input_dir: Path) -> tuple[Path | None, Path | None, Path 
         is_target_root = "rsna-lumbar-spine-logs-and-checkpoints" in root
 
         if is_output_dir and is_target_root:
-            previous_run_dir = root_path / "lumbar_spine"
-            logger.info(f"Found previous run outputs dynamically at: {previous_run_dir}")
+            logger.info(f"Found previous run outputs dynamically at: {root_path}")
 
-    return zip_path, unzipped_src, previous_run_dir
+    return zip_path, unzipped_src, root_path  # previous_run_dir
 
 
 def prepare_source_code(
@@ -183,6 +182,7 @@ def restore_warm_start_data(previous_run_dir: Path | None, target_dir: Path):
     Copies historical model checkpoints and logs from a previous run to
     the current writable run workspace to enable continuous training.
     \"\"\"
+
     if not previous_run_dir or not previous_run_dir.exists():
         logger.info("No previous session history found. Starting training/logs from scratch.")
         return
@@ -202,7 +202,7 @@ if is_kaggle:
 
     # Define paths using pathlib
     working_path = Path("/kaggle/working")
-    kaggle_input_path = Path("/kaggle/input/datasets/olivierrochat")
+    kaggle_input_path = Path("/kaggle/input/datasets/olivierrochat").resolve()
 
     default_zip = (
         kaggle_input_path / "rsna-lumbar-spine-src-code" /
@@ -211,7 +211,7 @@ if is_kaggle:
     default_src = kaggle_input_path / "rsna-lumbar-spine-src-code" / "src"
 
     target_src = working_path / "src"
-    target_lumbar_spine = working_path / "lumbar_spine"
+    target_lumbar_spine = working_path / "output"
 
     # Step 1: Scan Kaggle inputs for essential directories
     zip_found, src_found, previous_run = scan_kaggle_inputs(kaggle_input_path)
@@ -268,13 +268,19 @@ def push_to_kaggle(root_dir: Path, zip_path: Path):
     username = meta["id"].split("/")[0]
     dataset_id = f"{username}/{SRC_DATASET_SLUG}"
 
-    # 2. Initialize or update the Kaggle Dataset
+    # 2. Initialize or update the Kaggle Dataset which contains the source code
     tmp_dir = root_dir / "src_data" / "tmp_dataset"
     tmp_dir.mkdir(exist_ok=True, parents=True)
     dataset_id = f"{username}/{SRC_DATASET_SLUG}"
-    ensure_dataset_exists(tmp_dir, SRC_DATASET_SLUG, dataset_id)
+    ensure_dataset_exists(
+        tmp_dir,
+        SRC_DATASET_SLUG,
+        dataset_id,
+        update_dataset=True
+    )
 
-    # 3. Initialize or update the Kaggle history dataset (logs and checkpoints)
+    # 3. Initialize the Kaggle history dataset (logs and checkpoints).
+    # The dataset is left as-is if it already exists
     src_dir = root_dir / "src_data" / "dataset_init"
     src_dir.mkdir(exist_ok=True, parents=True)
 
@@ -284,7 +290,7 @@ def push_to_kaggle(root_dir: Path, zip_path: Path):
     Path(src_dir / "dummy_file.keep").touch()
 
     dataset_id = f"{username}/{LOGS_CHECKPOINTS_DATASET_SLUG}"
-    ensure_dataset_exists(src_dir, LOGS_CHECKPOINTS_DATASET_SLUG, dataset_id)
+    ensure_dataset_exists(src_dir, LOGS_CHECKPOINTS_DATASET_SLUG, dataset_id, update_dataset=False)
 
     # 4. Push execution Kernel (main.py)
     logger.info("Pushing entry point and triggering remote execution on Kaggle")
@@ -292,7 +298,12 @@ def push_to_kaggle(root_dir: Path, zip_path: Path):
     logger.info("Everything transferred successfully. Training has been initiated.")
 
 
-def ensure_dataset_exists(src_dir: Path, dataset_slug: str, dataset_id: str):
+def ensure_dataset_exists(
+    src_dir: Path,
+    dataset_slug: str,
+    dataset_id: str,
+    update_dataset: bool = True
+) -> None:
     """
     Ensure that the dataset-metadata.json file exists in the src directory.
 
@@ -303,6 +314,8 @@ def ensure_dataset_exists(src_dir: Path, dataset_slug: str, dataset_id: str):
         src_dir (Path): The path to the source directory where metadata should reside.
         dataset_slug (str): The slug identifier for the Kaggle dataset.
         dataset_id (str): The unique ID or owner/slug string for the dataset.
+        update_dataset (bool) : If True, triggers a dataset version update on Kaggle
+                                if the dataset already exists
     """
     metadata_path = src_dir / "dataset-metadata.json"
 
@@ -313,6 +326,7 @@ def ensure_dataset_exists(src_dir: Path, dataset_slug: str, dataset_id: str):
             )
             logger.info(info_msg)
 
+            # Convert slug to readable title
             title = " ".join(
                 [
                     word.upper() if word.lower() == "rsna" else word.capitalize()
@@ -342,13 +356,16 @@ def ensure_dataset_exists(src_dir: Path, dataset_slug: str, dataset_id: str):
         if not exist:
             logger.info(
                 f"Dataset {dataset_id} not found. Creating new dataset "
-                "under directory {src_dir}."
+                f"under directory {src_dir}."
             )
 
             # Run the 'create' command logic
+            # The '-u' flag (unzip) is used to ensure
+            # that compressed files within the dataset are correctly extracted
+            # by the Kaggle platform after upload.
             cmd = [KAGGLE_EXE, "datasets", "create", "-p", str(src_dir), "-u"]
 
-        else:
+        elif update_dataset is True:
             logger.info(f"Dataset {dataset_id} found. Updating version.")
 
             # Run the 'version' command logic
@@ -363,10 +380,14 @@ def ensure_dataset_exists(src_dir: Path, dataset_slug: str, dataset_id: str):
                     "-r",
                     "zip"
                 ]
+        else:
+            cmd = None
+            logger.info(f"Dataset {dataset_id} found and kept as is.")
 
-        logger.info(f"Pushing to kaggle with command {cmd}")
-        subprocess.run(cmd, check=True)
-        logger.info("Push completed successfully")
+        if cmd is not None:
+            logger.info(f"Pushing to kaggle with command {cmd}")
+            subprocess.run(cmd, check=True)
+            logger.info("Push completed successfully")
 
     except subprocess.CalledProcessError as e:
         logger.error(f"Kaggle CLI execution failed: {e}")

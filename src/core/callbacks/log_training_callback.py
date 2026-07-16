@@ -4,7 +4,7 @@ import tf_keras
 import psutil
 import os
 from typing import Any
-from time import time, perf_counter, strftime, gmtime
+from time import perf_counter, strftime, gmtime
 
 
 class LogTrainingCallback(tf_keras.callbacks.Callback):
@@ -130,12 +130,11 @@ class LogTrainingCallback(tf_keras.callbacks.Callback):
         batches_left = self.total_batches - batches_done
 
         avg_time = sum(self.step_times) / len(self.step_times)
-        eta_seconds = batches_left * avg_time
-        eta_timestamp = time() + eta_seconds
-        eta_str = strftime("%H:%M:%S", gmtime(eta_timestamp))
+        ttr_seconds = batches_left * avg_time  # TTR = "Time To Remaining"
+        ttr_str = strftime("%H:%M:%S", gmtime(ttr_seconds))
 
         # Log the performance metrics
-        info_msg = f" Batch {batch_int + 1:04d} | Time: {step_time:.2f}s | ETA: {eta_str}"
+        info_msg = f" Batch {batch_int + 1:04d} | Time: {step_time:.2f}s | Remaining: {ttr_str}"
         self.logger.info(info_msg)
 
     def on_test_begin(self, logs: dict[str, Any] | None = None):

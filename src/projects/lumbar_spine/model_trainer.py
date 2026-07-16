@@ -6,16 +6,17 @@ import math
 import psutil
 import logging
 import sys
+import re
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
 from tf_keras.callbacks import ReduceLROnPlateau
 
 import tensorflow as tf
 import tf_keras
 
 from src.projects.lumbar_spine.lumbar_dicom_tfrecord_dataset import LumbarDicomTFRecordDataset
-from src.core.utils.logger import get_current_logger, log_method
+from src.core.utils.logger import get_current_logger, log_method, get_current_log_file
 from src.core.callbacks.log_training_callback import LogTrainingCallback
 from src.core.callbacks.system_resource_monitor_callback import SystemResourceMonitorCallback
 from src.core.callbacks.dynamic_loss_balancer_callback import DynamicLossBalancerCallback
@@ -358,7 +359,8 @@ class ModelTrainer:
         memory_threshold_percent = float(memory_threshold_percent_str)
 
         monitor_callback = SystemResourceMonitorCallback(
-            memory_threshold_percent=float(memory_threshold_percent)
+            memory_threshold_percent=memory_threshold_percent,
+            logger=logger
         )
 
         # Simplified print callback for batch monitoring
@@ -398,9 +400,9 @@ class ModelTrainer:
         )
 
         kaggle_sync_callback = KaggleSync(
-            dataset_id='olivierrochat/rsna-lumbar-spine-logs_and_checkpoints',
+            dataset_id='olivierrochat/rsna-lumbar-spine-logs-and-checkpoints',
             config=self._config,
-            logs=self._logger
+            logger=logger
         )
 
         lr_scheduler = ReduceLROnPlateau(
@@ -501,23 +503,41 @@ class ModelTrainer:
                 verbose=0
             )
 
+            # Access the training history dictionary safely
+            history_dict = history.history
+
+            # Check if training actually ran (history is not empty)
+            if not history_dict:
+                logger.warning(
+                    "Training completed with no epochs run. This happens when the starting epoch "
+                    f"({self._current_initial_epoch}) is greater than or equal "
+                    f"to the target total epochs ({epochs_cfg}). "
+                    "If you intended to continue training, please increase the 'epochs' value "
+                    "in your configuration."
+                )
+                return history
+
+            # Temporary debug print
+            logger.info(f"Available history keys: {history_dict.keys()}")
+
             # Calculation of the average accuracy for the logger
-            acc_keys = [k for k in history.history.keys() if k.endswith('_accuracy')]
-            if acc_keys:
-                final_acc = sum([history.history[k][-1] for k in acc_keys]) / len(acc_keys)
+            # Add a check to prevent division by zero if no accuracy metrics exist
+            acc_keys = [k for k in history_dict.keys() if k.endswith('_accuracy')]
+
+            if len(acc_keys) > 0:
+                final_acc = sum([history_dict[k][-1] for k in acc_keys]) / len(acc_keys)
             else:
                 final_acc = 0
+
+            # Safely retrieve 'loss', default to 0.0 if not found
+            final_loss = history_dict.get('loss', [0.0])[-1]
 
             logger.info(
                 "Model training completed successfully.",
                 extra={
-                        "final_loss": history.history['loss'][-1],
+                        "final_loss": final_loss,
                         "final_accuracy": final_acc
                 })
-
-            # Upload in the dataset
-            kaggle_sync_callback._update_logs_and_checkpoints_dataset(epoch=epochs_cfg)
-            logger.info("Final Kaggle synchronization triggered.")
 
             return history
 
@@ -554,62 +574,89 @@ class ModelTrainer:
         use_json = self._config['logging'].get('use_json', False)
         pattern = "train_*.json" if use_json else "train_*.log"
 
-        latest_log = self._get_latest_file(log_dir, pattern)
-        self._logger.info(f"Latest log file identified: {latest_log}")
-        if not latest_log:
-            self._logger.info("No existing log file found.")
-            return 0
-
         try:
-            return self._extract_epoch_from_file(latest_log, use_json)
+            latest_log, last_epoch = self._get_previous_log_file_and_epoch(log_dir, pattern)
+
+            if not latest_log:
+                self._logger.info("No existing log file found.")
+                return 0
+
+            self._logger.info(f"Resuming from {latest_log}, last completed epoch: {last_epoch}")
+            return last_epoch
+
         except Exception as e:
             self._logger.warning(f"Failed to read latest log {latest_log}: {e}", exc_info=True)
             return 0
 
-    def _get_latest_file(self, directory: Path, pattern: str) -> Path | None:
+    def _get_previous_log_file_and_epoch(
+        self,
+        directory: Path,
+        pattern: str
+    ) -> Tuple[Path | None, int]:
         """
-        Identifies the most recently modified file matching a specific pattern.
-
-        Args:
-            directory (Path): The directory path to search in.
-            pattern (str): The glob pattern (e.g., "*.log").
+        Identifies the previous log file and extracts the last successfully
+        completed epoch by reading the log in reverse.
 
         Returns:
-            Path | None: The Path object of the most recent file, or None if no
-                         files match the pattern or the directory does not exist.
+            Tuple[Path | None, int]: The path to the valid log file and the
+                                    epoch number. Returns (None, 0) if not found.
         """
-        files = list(directory.glob(pattern))
-        if not files:
-            return None
-        return max(files, key=lambda f: f.stat().st_mtime)
+        # Retrieve the name and address of the current log file
+        current_log = get_current_log_file()
 
-    def _extract_epoch_from_file(self, file_path: Path, use_json: bool) -> int:
-        """
-        Parses a log file to extract the epoch for the next training session.
+        # Get and sort the list of candidate log files
+        files = sorted(directory.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True)
 
-        Reads the log file in either JSON or plain text format, identifies the
-        last completed epoch, and returns the incremented value to define the
-        starting epoch for resumed training.
+        # Remove from the list the current log file (when it exists)
+        files = [f for f in files if current_log is None or f.resolve() != current_log]
 
-        Args:
-            file_path (Path): Path to the log file to parse.
-            use_json (bool): If True, parses the file as JSON; otherwise,
-                parses as plain text line-by-line.
+        # Regex to capture the epoch number
+        epoch_regex = re.compile(r"Finished Epoch (\d+)")
 
-        Returns:
-            int: The epoch number to resume training from, or 0 if no valid
-                 epoch data is found.
-        """
-        if use_json:
-            import json
-            with open(file_path, 'r') as f:
-                logs = json.load(f)
-                return logs[-1].get('epoch', 0) + 1 if logs else 0
+        for log_file in files:
+            # Skip the current active log file (assumed to be the most recent one)
+            # Note: If the file is small, this simple check works.
+            try:
+                with open(log_file, "rb") as f:
+                    f.seek(0, 2)  # Seek to end
+                    file_size = f.tell()
+                    buffer = b""
+                    pointer = file_size
+                    chunk_size = 4096
 
-        # Text parsing
-        next_epoch = 0
-        with open(file_path, 'r') as f:
-            for line in f:
-                if line.startswith("Epoch"):
-                    next_epoch = max(next_epoch, int(line.split()[1]) + 1)
-        return next_epoch
+                    found_epoch = False
+                    found_checkpoint = False
+                    epoch_number = 0
+
+                    # Read backwards in chunks
+                    while pointer > 0:
+                        read_size = min(pointer, chunk_size)
+                        pointer -= read_size
+                        f.seek(pointer)
+                        buffer = f.read(read_size) + buffer
+
+                        text_content = buffer.decode("utf-8", errors="ignore")
+
+                        # Search for markers
+                        if not found_checkpoint and "Successfully saved checkpoint" in text_content:
+                            found_checkpoint = True
+
+                        if not found_epoch:
+                            match = epoch_regex.search(text_content)
+                            if match:
+                                epoch_number = int(match.group(1))
+                                found_epoch = True
+
+                        if found_checkpoint and found_epoch:
+                            return log_file, epoch_number
+
+                        # Keep a small safety margin for strings split across chunks
+                        # Keep a size equal to the length of the longest search string.
+                        if len(buffer) > 2048:
+                            buffer = buffer[-2048:]
+
+            except Exception as e:
+                self._logger.debug(f"Could not parse {log_file}: {e}")
+                continue
+
+        return None, 0
